@@ -3,12 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:app": "pnpm --filter @charismiaticalli/skate-app build",
     "dev:app": "pnpm --filter @charismaticalli/skate-app dev",
 	"fmt": "pnpm fmt:app && pnpm fmt:objects",
 	"fmt:app": "pnpm --filter @charismaticalli/skate-app fmt",
 	"fmt:objects": "pnpm --filter @charismaticalli/skate-objects fmt",
-    "start:app": "pnpm --filter @charismaticalli/skate-app start",
 	"typecheck": "pnpm typecheck:app && pnpm typecheck:objects",
     "typecheck:app": "pnpm --filter @charismaticalli/skate-app typecheck",
 	"typecheck:objects": "pnpm --filter @charismaticalli/skate-objects typecheck"
