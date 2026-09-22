@@ -1,0 +1,13 @@
+{
+  "name": "@charismaticalli/skate-objects",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+	"typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+	"typescript": "catalog:"
+  }
+}

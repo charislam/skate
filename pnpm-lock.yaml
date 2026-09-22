@@ -69,6 +69,15 @@ importers:
         specifier: ^8.0.3
         version: 8.3.0(@types/node@24.13.4)(jiti@2.7.0)
 
+  packages/objects:
+    dependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.0-rc.115
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
 packages:
 
   '@babel/code-frame@7.29.7':
