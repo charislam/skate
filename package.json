@@ -1,29 +1,12 @@
 {
-  "name": "skate",
+  "name": "@charismaticalli/skate",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "react-router build",
-    "dev": "react-router dev",
-    "start": "react-router-serve ./build/server/index.js",
-    "typecheck": "react-router typegen && tsc"
+    "build:app": "pnpm --filter @charismiaticalli/skate-app build",
+    "dev:app": "pnpm --filter @charismaticalli/skate-app dev",
+    "start:app": "pnpm --filter @charismaticalli/skate-app start",
+    "typecheck:app": "pnpm --filter @charismaticalli/skate-app typecheck"
   },
-  "dependencies": {
-    "@react-router/node": "^8.4.0",
-    "@react-router/serve": "^8.4.0",
-    "isbot": "^5.1.36",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router": "^8.4.0"
-  },
-  "devDependencies": {
-    "@react-router/dev": "^8.4.0",
-    "@tailwindcss/vite": "^4.2.2",
-    "@types/node": "^22",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
-    "tailwindcss": "^4.2.2",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.3"
-  }
+  "packageManager": "pnpm@11.27.1+sha512.a81d4c21b9b09a4b0aebf90ef5e527d4262bdda322d26082978cb549023ac6d9cafc98b19fffaa5c71db438a65f70224edb78d7311187861ff96480d1cdca23c"
 }

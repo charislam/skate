@@ -1,0 +1,15 @@
+blockExoticSubdeps: true
+
+catalog:
+  '@types/node': ^24 
+  effect: 4.0.0-rc.115
+  typescript: ^6
+
+engineStrict: true
+
+packages:
+  - apps/*
+  - packages/*
+
+minimumReleaseAge: 10080
+
