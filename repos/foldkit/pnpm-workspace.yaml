@@ -1,0 +1,33 @@
+packages:
+  - 'packages/*'
+  - 'packages/typing-game/*'
+  - 'examples/*'
+  - 'comparisons/*'
+  - 'internal/*'
+
+allowBuilds:
+  '@parcel/watcher': true
+  # Nothing here builds with esbuild any more, and its binary comes from the
+  # platform package rather than the install script; Vite 7 and tsx still
+  # install it, and a fresh install refuses while an ignored build has no
+  # entry.
+  esbuild: false
+  msgpackr-extract: true
+  simple-git-hooks: true
+
+minimumReleaseAgeExclude:
+  - '@effect/platform-browser@4.0.0-rc.115'
+  - '@effect/platform-node-shared@4.0.0-rc.115'
+  - '@effect/platform-node@4.0.0-rc.115'
+  - '@effect/vitest@4.0.0-rc.115'
+  - effect@4.0.0-rc.115
+
+overrides:
+  '@mapbox/jsonlint-lines-primitives': 2.0.2
+  '@types/node': 26.4.0
+  effect: 4.0.0-rc.115
+  '@effect/platform-browser': 4.0.0-rc.115
+  '@effect/platform-node': 4.0.0-rc.115
+  '@effect/platform-node-shared': 4.0.0-rc.115
+  '@effect/vitest': 4.0.0-rc.115
+  'monaco-editor>dompurify': 3.4.14
