@@ -4,10 +4,14 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-	"typecheck": "tsc --noEmit"
+    "fmt": "oxfmt",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "effect": "catalog:",
-	"typescript": "catalog:"
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "oxfmt": "catalog:",
+    "typescript": "catalog:"
   }
 }

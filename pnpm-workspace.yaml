@@ -3,6 +3,7 @@ blockExoticSubdeps: true
 catalog:
   '@types/node': ^24 
   effect: 4.0.0-rc.115
+  oxfmt: ^0.68.0
   typescript: ^6
 
 engineStrict: true
