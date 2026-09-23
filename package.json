@@ -14,6 +14,7 @@
 	"lint:cli": "pnpm --filter @charismaticalli/skate-cli lint",
 	"lint:inflow": "pnpm --filter @charismaticalli/skate-inflow lint",
 	"lint:objects": "pnpm --filter @charismaticalli/skate-objects lint",
+	"test:contract:inflow": "pnpm --filter @charismaticalli/skate-inflow test:contract",
     "typecheck": "pnpm typecheck:app && pnpm typecheck:cli && pnpm typecheck:inflow && pnpm typecheck:objects",
     "typecheck:app": "pnpm --filter @charismaticalli/skate-app typecheck",
 	"typecheck:cli": "pnpm --filter @charismaticalli/skate-cli typecheck",
