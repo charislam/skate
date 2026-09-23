@@ -1,12 +1,13 @@
 import { Runtime } from "foldkit";
-import { Model, init, update, view } from "./main";
+import { Flags, Model, flags, init, update, view } from "./main";
 
 const application = Runtime.makeApplication({
   Model,
+  Flags,
   init,
   update,
   view,
   container: document.getElementById("root"),
 });
 
-Runtime.run(application);
+Runtime.run(application, { flags });
