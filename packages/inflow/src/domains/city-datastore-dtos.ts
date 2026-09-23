@@ -9,4 +9,13 @@ export const ResourceSchema = Schema.Struct({
 
 export type Resource = typeof ResourceSchema.Type;
 
+export const PackageShowResponseSchema = Schema.Struct({
+  success: Schema.Boolean,
+  result: Schema.Struct({
+    resources: Schema.Array(ResourceSchema),
+  }),
+});
+
+export type PackageShowResponse = typeof PackageShowResponseSchema.Type;
+
 export * as CityDatastoreDtos from "./city-datastore-dtos.js";
