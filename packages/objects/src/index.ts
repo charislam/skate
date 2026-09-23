@@ -1,2 +1,2 @@
-export { Geo } from "./geo";
-export { Rinks } from "./rinks";
+export { Geo } from "./geo.js";
+export { Rinks } from "./rinks.js";

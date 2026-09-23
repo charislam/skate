@@ -19,4 +19,4 @@ export const Coordinates = Schema.Struct({
 
 export type Coordinates = typeof Coordinates.Type;
 
-export * as Geo from "./geo";
+export * as Geo from "./geo.js";

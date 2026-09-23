@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { Geo } from "./geo";
+import { Geo } from "./geo.js";
 
 export const Id = Schema.NonEmptyString.pipe(Schema.brand("RinkId"));
 
@@ -12,4 +12,4 @@ export const Struct = Schema.Struct({
 
 export type Struct = typeof Struct.Type;
 
-export * as Rinks from "./rinks";
+export * as Rinks from "./rinks.js";
