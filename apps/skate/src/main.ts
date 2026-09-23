@@ -3,9 +3,9 @@ import { type Runtime, type Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
-import { ActiveDate } from "./domain/active-date";
+import { ActiveDate } from "./domain";
 import { Message } from "./message";
-import { GetCurrentDate } from "./command";
+import { ResolveCurrentDateRange } from "./command";
 
 // MODEL
 
@@ -36,7 +36,7 @@ export const update = (model: Model, message: Message) =>
       "SelectedDayView",
       "SelectedWeekView",
       "SelectedMonthView",
-      "ReceivedCurrentDate",
+      "ResolvedCurrentDateRange",
       () => foldActiveDate(model, message),
     ),
     Match.exhaustive,
@@ -53,5 +53,5 @@ export const view = (_model: Model, h: HtmlBuilder<Message>): Document => ({
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: { activeDateRange: ActiveDate.machine.initial },
-  commands: [GetCurrentDate()],
+  commands: [ResolveCurrentDateRange({ granularity: "Day" })],
 });

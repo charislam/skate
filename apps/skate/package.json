@@ -7,6 +7,7 @@
     "fmt": "oxfmt",
     "lint": "oxlint src",
     "prepare": "effect-tsgo patch --no-typescript --oxlint",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "oxlint-tsgolint": "catalog:",
     "tailwindcss": "^4.2.2",
     "typescript": "catalog:",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "vitest": "catalog:"
   }
 }

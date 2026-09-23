@@ -1,5 +1,5 @@
 import { defineMessageUnion } from "foldkit/message";
-import { ActiveDate } from "./domain/active-date";
+import { ActiveDate } from "./domain";
 
 export const Message = defineMessageUnion({
   ...ActiveDate.Message,
