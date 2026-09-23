@@ -11,37 +11,37 @@ const mapHttpClientError = (cause: HttpClientError.HttpClientError) =>
     cause,
   });
 
-export const fetchDatastoreMetadata: Effect.Effect<
+export const fetchDatastoreMetadata = (
+  datasourceId: CityDatastoreConstants.DatastoreId,
+): Effect.Effect<
   ReadonlyArray<CityDatastoreDtos.Resource>,
   ErrorsExternalFetch.Error,
   HttpClient.HttpClient
-> = Effect.gen(function* () {
-  const httpClient = yield* HttpClient.HttpClient;
-  const endpoint =
-    CityDatastoreConstants.API_URL +
-    "package_show?id=" +
-    CityDatastoreConstants.PACKAGE_ID_OUTDOOR_RINK;
+> =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const endpoint = CityDatastoreConstants.API_URL + "package_show?id=" + datasourceId;
 
-  const response = yield* httpClient.get(endpoint).pipe(Effect.mapError(mapHttpClientError));
-  const successfulResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(
-    Effect.mapError(mapHttpClientError),
-  );
-  const packageMetadata = yield* HttpClientResponse.schemaBodyJson(
-    CityDatastoreDtos.PackageShowResponseSchema,
-  )(successfulResponse).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof Schema.SchemaError
-        ? new ErrorsExternalFetch.Error({
-            code: ErrorsExternalFetch.ErrorCodes.SCHEMA_MISMATCH,
-            message: cause.message,
-            cause,
-          })
-        : mapHttpClientError(cause),
-    ),
-  );
+    const response = yield* httpClient.get(endpoint).pipe(Effect.mapError(mapHttpClientError));
+    const successfulResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(
+      Effect.mapError(mapHttpClientError),
+    );
+    const packageMetadata = yield* HttpClientResponse.schemaBodyJson(
+      CityDatastoreDtos.PackageShowResponseSchema,
+    )(successfulResponse).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof Schema.SchemaError
+          ? new ErrorsExternalFetch.Error({
+              code: ErrorsExternalFetch.ErrorCodes.SCHEMA_MISMATCH,
+              message: cause.message,
+              cause,
+            })
+          : mapHttpClientError(cause),
+      ),
+    );
 
-  return packageMetadata.result.resources;
-});
+    return packageMetadata.result.resources;
+  });
 
 export const streamRecordOfShape = <S extends Schema.Schema<unknown>>(
   resourceId: CityDatastoreDtos.ResourceId,
@@ -86,5 +86,7 @@ export const streamRecordOfShape = <S extends Schema.Schema<unknown>>(
       return [page.result.records, nextOffset] as const;
     }),
   );
+
+export const streamDatastoreRecordsOfShape = <S extends Schema.Schema<unknown>>() => {};
 
 export * as CityDatastore from "./city-datastore.js";
