@@ -11,6 +11,10 @@ const mapHttpClientError = (cause: HttpClientError.HttpClientError) =>
     cause,
   });
 
+export type StreamRecordResult<A> =
+  | { readonly _tag: "Record"; readonly record: A }
+  | { readonly _tag: "Error"; readonly error: ErrorsExternalFetch.Error };
+
 export const fetchDatastoreMetadata = (
   datastoreId: CityDatastoreConstants.DatastoreId,
 ): Effect.Effect<
@@ -48,8 +52,8 @@ export const streamRecordOfShape = <S extends Schema.Schema<unknown>>(
   shape: S,
   options?: { batchSize?: number },
 ): Stream.Stream<
-  S["Type"],
-  ErrorsExternalFetch.Error,
+  StreamRecordResult<S["Type"]>,
+  never,
   HttpClient.HttpClient | S["DecodingServices"]
 > =>
   Stream.paginate(0, (offset) =>
@@ -60,30 +64,49 @@ export const streamRecordOfShape = <S extends Schema.Schema<unknown>>(
         CityDatastoreConstants.API_URL +
         `datastore_search?id=${resourceId}&limit=${limit}&offset=${offset}`;
 
-      const response = yield* httpClient.get(endpoint).pipe(Effect.mapError(mapHttpClientError));
-      const successfulResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(
-        Effect.mapError(mapHttpClientError),
-      );
-      const page = yield* HttpClientResponse.schemaBodyJson(
-        Schema.Struct({
-          success: Schema.Boolean,
-          result: Schema.Struct({ records: Schema.Array(shape) }),
+      const pageResult = yield* Effect.match(
+        Effect.gen(function* () {
+          const response = yield* httpClient
+            .get(endpoint)
+            .pipe(Effect.mapError(mapHttpClientError));
+          const successfulResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(
+            Effect.mapError(mapHttpClientError),
+          );
+          return yield* HttpClientResponse.schemaBodyJson(
+            Schema.Struct({
+              success: Schema.Boolean,
+              result: Schema.Struct({ records: Schema.Array(shape) }),
+            }),
+          )(successfulResponse).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof Schema.SchemaError
+                ? new ErrorsExternalFetch.Error({
+                    code: ErrorsExternalFetch.ErrorCodes.SCHEMA_MISMATCH,
+                    message: cause.message,
+                    cause,
+                  })
+                : mapHttpClientError(cause),
+            ),
+          );
         }),
-      )(successfulResponse).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof Schema.SchemaError
-            ? new ErrorsExternalFetch.Error({
-                code: ErrorsExternalFetch.ErrorCodes.SCHEMA_MISMATCH,
-                message: cause.message,
-                cause,
-              })
-            : mapHttpClientError(cause),
-        ),
+        {
+          onFailure: (error) => ({ _tag: "Error" as const, error }),
+          onSuccess: (page) => ({ _tag: "Page" as const, page }),
+        },
       );
 
-      const nextOffset =
-        page.result.records.length === limit ? Option.some(offset + limit) : Option.none();
-      return [page.result.records, nextOffset] as const;
+      if (pageResult._tag === "Error") {
+        const events: ReadonlyArray<StreamRecordResult<S["Type"]>> = [pageResult];
+        return [events, Option.none()] as const;
+      }
+
+      const records = pageResult.page.result.records;
+      const nextOffset = records.length === limit ? Option.some(offset + limit) : Option.none();
+      const events: ReadonlyArray<StreamRecordResult<S["Type"]>> = records.map((record) => ({
+        _tag: "Record",
+        record,
+      }));
+      return [events, nextOffset] as const;
     }),
   );
 
@@ -91,7 +114,7 @@ export const streamDatastoreRecordsOfShape = <S extends Schema.Schema<unknown>>(
   datastoreId: CityDatastoreConstants.DatastoreId,
   shape: S,
 ): Stream.Stream<
-  S["Type"],
+  StreamRecordResult<S["Type"]>,
   ErrorsExternalFetch.Error,
   HttpClient.HttpClient | S["DecodingServices"]
 > =>

@@ -28,6 +28,9 @@ describe("streamDatastoreRecordsOfShape", () => {
           CityRinkDtos.Schema,
         ).pipe(Stream.runHead);
         expect(firstRecord._tag).toBe("Some");
+        if (firstRecord._tag === "Some") {
+          expect(firstRecord.value._tag).toBe("Record");
+        }
       }),
     );
   });

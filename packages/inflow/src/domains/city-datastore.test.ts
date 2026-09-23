@@ -47,7 +47,7 @@ describe("streamRecordOfShape", () => {
           { batchSize: 2 },
         ).pipe(Stream.runCollect);
 
-        expect(result).toEqual(records);
+        expect(result).toEqual(records.map((record) => ({ _tag: "Record", record })));
       }),
     );
 
@@ -59,7 +59,7 @@ describe("streamRecordOfShape", () => {
           { batchSize: records.length },
         ).pipe(Stream.runCollect);
 
-        expect(result).toEqual(records);
+        expect(result).toEqual(records.map((record) => ({ _tag: "Record", record })));
       }),
     );
 
@@ -75,47 +75,35 @@ describe("streamRecordOfShape", () => {
       }),
     );
 
-    it.effect("fails with a schema mismatch for invalid records", () =>
+    it.effect("emits a schema mismatch and stops for invalid records", () =>
       Effect.gen(function* () {
         const result = yield* CityDatastore.streamRecordOfShape(
           Schema.decodeUnknownSync(CityDatastoreDtos.ResourceId)("invalid-record"),
           Schema.Struct({ id: Schema.String }),
           { batchSize: 2 },
-        )
-          .pipe(Stream.runCollect)
-          .pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: "Failure" as const, error }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
-            }),
-          );
+        ).pipe(Stream.runCollect);
 
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
-          expect(result.error.code).toBe("schema_mismatch");
-        }
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          _tag: "Error",
+          error: { code: "schema_mismatch" },
+        });
       }),
     );
 
-    it.effect("maps unsuccessful HTTP statuses to an external fetch error", () =>
+    it.effect("emits an HTTP error and stops after an unsuccessful status", () =>
       Effect.gen(function* () {
         const result = yield* CityDatastore.streamRecordOfShape(
           Schema.decodeUnknownSync(CityDatastoreDtos.ResourceId)("http-error"),
           Schema.Struct({ id: Schema.String }),
           { batchSize: 2 },
-        )
-          .pipe(Stream.runCollect)
-          .pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: "Failure" as const, error }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
-            }),
-          );
+        ).pipe(Stream.runCollect);
 
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
-          expect(result.error.code).toBe("http_client");
-        }
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          _tag: "Error",
+          error: { code: "http_client" },
+        });
       }),
     );
   });
