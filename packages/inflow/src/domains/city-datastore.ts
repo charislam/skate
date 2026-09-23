@@ -1,7 +1,7 @@
 import { Effect } from "effect";
-import type { CityDatastoreDtos } from "./city-datastore-dtos.js";
 import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { CityDatastoreConstants } from "./city-datastore-constants.js";
+import type { CityDatastoreDtos } from "./city-datastore-dtos.js";
 
 export const fetchDatastoreMetadata: Effect.Effect<
   ReadonlyArray<CityDatastoreDtos.Resource>,

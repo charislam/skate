@@ -1,3 +1,10 @@
+## Conventions
+
+The following commands are used to enforce repository conventions:
+- `pnpm fmt`
+- `pnpm lint`
+- `pnpm typecheck`
+
 ## Vendored Repositories
 
 This project vendors external repositories under @repos/
