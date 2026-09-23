@@ -12,7 +12,7 @@ const mapHttpClientError = (cause: HttpClientError.HttpClientError) =>
   });
 
 export const fetchDatastoreMetadata = (
-  datasourceId: CityDatastoreConstants.DatastoreId,
+  datastoreId: CityDatastoreConstants.DatastoreId,
 ): Effect.Effect<
   ReadonlyArray<CityDatastoreDtos.Resource>,
   ErrorsExternalFetch.Error,
@@ -20,7 +20,7 @@ export const fetchDatastoreMetadata = (
 > =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const endpoint = CityDatastoreConstants.API_URL + "package_show?id=" + datasourceId;
+    const endpoint = CityDatastoreConstants.API_URL + "package_show?id=" + datastoreId;
 
     const response = yield* httpClient.get(endpoint).pipe(Effect.mapError(mapHttpClientError));
     const successfulResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -87,6 +87,22 @@ export const streamRecordOfShape = <S extends Schema.Schema<unknown>>(
     }),
   );
 
-export const streamDatastoreRecordsOfShape = <S extends Schema.Schema<unknown>>() => {};
+export const streamDatastoreRecordsOfShape = <S extends Schema.Schema<unknown>>(
+  datastoreId: CityDatastoreConstants.DatastoreId,
+  shape: S,
+): Stream.Stream<
+  S["Type"],
+  ErrorsExternalFetch.Error,
+  HttpClient.HttpClient | S["DecodingServices"]
+> =>
+  Stream.unwrap(
+    fetchDatastoreMetadata(datastoreId).pipe(
+      Effect.map((resources) =>
+        Stream.fromIterable(resources.filter((resource) => resource.datastore_active)).pipe(
+          Stream.flatMap((resource) => streamRecordOfShape(resource.id, shape)),
+        ),
+      ),
+    ),
+  );
 
 export * as CityDatastore from "./city-datastore.js";
