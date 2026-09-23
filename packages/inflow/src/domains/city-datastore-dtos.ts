@@ -2,6 +2,8 @@ import { Schema } from "effect";
 
 export const ResourceId = Schema.String.pipe(Schema.brand("@inflow/city-datastore/ResourceId"));
 
+export type ResourceId = typeof ResourceId.Type;
+
 export const ResourceSchema = Schema.Struct({
   datastore_active: Schema.Boolean,
   id: ResourceId,
