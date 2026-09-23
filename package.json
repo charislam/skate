@@ -4,12 +4,18 @@
   "type": "module",
   "scripts": {
     "dev:app": "pnpm --filter @charismaticalli/skate-app dev",
-	"fmt": "pnpm fmt:app && pnpm fmt:objects",
-	"fmt:app": "pnpm --filter @charismaticalli/skate-app fmt",
-	"fmt:objects": "pnpm --filter @charismaticalli/skate-objects fmt",
-	"typecheck": "pnpm typecheck:app && pnpm typecheck:objects",
+    "fmt": "pnpm fmt:app && pnpm fmt:objects",
+    "fmt:app": "pnpm --filter @charismaticalli/skate-app fmt",
+    "fmt:objects": "pnpm --filter @charismaticalli/skate-objects fmt",
+	"lint": "pnpm lint:app && pnpm lint:objects",
+	"lint:app": "pnpm --filter @charismaticalli/skate-app lint",
+	"lint:objects": "pnpm --filter @charismaticalli/skate-objects lint",
+    "typecheck": "pnpm typecheck:app && pnpm typecheck:objects",
     "typecheck:app": "pnpm --filter @charismaticalli/skate-app typecheck",
-	"typecheck:objects": "pnpm --filter @charismaticalli/skate-objects typecheck"
+    "typecheck:objects": "pnpm --filter @charismaticalli/skate-objects typecheck"
   },
-  "packageManager": "pnpm@11.27.1+sha512.a81d4c21b9b09a4b0aebf90ef5e527d4262bdda322d26082978cb549023ac6d9cafc98b19fffaa5c71db438a65f70224edb78d7311187861ff96480d1cdca23c"
+  "packageManager": "pnpm@11.27.1+sha512.a81d4c21b9b09a4b0aebf90ef5e527d4262bdda322d26082978cb549023ac6d9cafc98b19fffaa5c71db438a65f70224edb78d7311187861ff96480d1cdca23c",
+  "devDependencies": {
+    "@foldkit/devtools-mcp": "^0.20.0"
+  }
 }
