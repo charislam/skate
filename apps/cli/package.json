@@ -1,0 +1,21 @@
+{
+  "name": "@charismaticalli/skate-cli",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fmt": "oxfmt",
+    "lint": "oxlint src",
+    "prepare": "effect-tsgo patch --no-typescript --oxlint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

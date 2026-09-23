@@ -33,6 +33,28 @@ importers:
         specifier: ^0.20.0
         version: 0.20.0(effect@4.0.0-rc.115)(foldkit@0.160.0(@effect/platform-browser@4.0.0-rc.115(effect@4.0.0-rc.115))(effect@4.0.0-rc.115))(zod@4.6.5)
 
+  apps/cli:
+    dependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.0-rc.115
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 'catalog:'
+        version: 0.45.0
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.68.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.82.0(oxlint-tsgolint@7.0.2001)
+      oxlint-tsgolint:
+        specifier: 'catalog:'
+        version: 7.0.2001
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   apps/skate:
     dependencies:
       '@effect/platform-browser':
