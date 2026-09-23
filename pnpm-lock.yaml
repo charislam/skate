@@ -112,6 +112,9 @@ importers:
 
   packages/inflow:
     dependencies:
+      '@charismaticalli/skate-objects':
+        specifier: workspace:*
+        version: link:../objects
       effect:
         specifier: 'catalog:'
         version: 4.0.0-rc.115

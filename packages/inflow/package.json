@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@charismaticalli/skate-objects": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

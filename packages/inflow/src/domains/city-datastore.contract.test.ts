@@ -17,3 +17,11 @@ describe("fetchDatastoreMetadata", () => {
     );
   });
 });
+
+describe("streamDatastoreRecordsOfShape", () => {
+  it.layer(FetchHttpClient.layer)("with the fetch HTTP client", (it) => {
+    it.effect("streams records of a specific shape from city datastore API", () =>
+      Effect.gen(function* () {}),
+    );
+  });
+});
