@@ -13,6 +13,7 @@
   "dependencies": {
     "@effect/platform-browser": "4.0.0-rc.115",
     "@foldkit/ui": "^0.160.0",
+    "cn": "^0.3.0",
     "effect": "catalog:",
     "foldkit": "^0.160.0"
   },
