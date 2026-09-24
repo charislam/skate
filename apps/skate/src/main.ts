@@ -4,11 +4,14 @@ import { Effect, Match, Option, Schema, Stream } from "effect";
 import { Calendar, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
+import { UrlRequest } from "foldkit/navigation";
 import { evo } from "foldkit/struct";
-import { Command } from "./command";
+import { toString as urlToString } from "foldkit/url";
+import { Command, LoadExternal, NavigateInternal } from "./command";
 import { ActiveDate, MainMenu, Theme } from "./domain";
 import { Message } from "./message";
 import type { Model } from "./model";
+import { urlToAppRoute } from "./route";
 import { MainMenuView, WeekMonthSelector } from "./view";
 
 // FLAGS
@@ -78,6 +81,19 @@ const foldPopoverClose = Update.foldChildStep({
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
     Match.withReturnType<Update.Return<Model, Message>>(),
+    Match.tag("CompletedNavigateInternal", "CompletedLoadExternal", () => ({ model })),
+    Match.tag("ClickedLink", ({ request }) =>
+      UrlRequest.match<Update.Return<Model, Message>>(request, {
+        Internal: ({ url }) => ({
+          model,
+          commands: [NavigateInternal({ url: urlToString(url) })],
+        }),
+        External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
+      }),
+    ),
+    Match.tag("ChangedUrl", ({ url }) => ({
+      model: evo(model, { route: () => urlToAppRoute(url) }),
+    })),
     Match.tag(
       "SelectedNextDateRange",
       "SelectedPreviousDateRange",
@@ -140,6 +156,13 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 // VIEW
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
+  if (model.route._tag === "NotFound") {
+    return {
+      title: "skate.to",
+      body: h.main([h.Class("p-8")], [h.h1([], [`Page not found: ${model.route.path}`])]),
+    };
+  }
+
   const isDayView = model.activeDateRange._tag === "Day";
 
   return {
@@ -292,11 +315,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flags) => {
+export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags: Flags, url) => {
   const { model: themeModel } = Theme.boot({ systemTheme: flags.theme });
 
   return {
     model: {
+      route: urlToAppRoute(url),
       today: flags.today,
       activeDateRange: ActiveDate.machine.initial,
       menu: Popover.init({ id: "main-menu", contentFocus: true }),

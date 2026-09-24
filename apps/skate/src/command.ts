@@ -1,6 +1,27 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Calendar, Command as FoldkitCommand } from "foldkit";
+import { load, pushUrl } from "foldkit/navigation";
 import { Message } from "~/message";
+
+export const NavigateInternal = FoldkitCommand.define("NavigateInternal", {
+  args: { url: Schema.String },
+  messages: [Message.CompletedNavigateInternal],
+  execute: ({ url }) =>
+    pushUrl(url).pipe(
+      Effect.as(Message.CompletedNavigateInternal()),
+      Effect.catch(() => Effect.succeed(Message.CompletedNavigateInternal())),
+    ),
+});
+
+export const LoadExternal = FoldkitCommand.define("LoadExternal", {
+  args: { href: Schema.String },
+  messages: [Message.CompletedLoadExternal],
+  execute: ({ href }) =>
+    load(href).pipe(
+      Effect.as(Message.CompletedLoadExternal()),
+      Effect.catch(() => Effect.succeed(Message.CompletedLoadExternal())),
+    ),
+});
 
 export const SyncInitialDate = FoldkitCommand.define("SyncInitialDate", {
   args: {
