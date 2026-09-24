@@ -1,41 +1,13 @@
-import { Clock, Effect, Match } from "effect";
-import { Command as FoldkitCommand } from "foldkit";
+import { Effect } from "effect";
+import { Calendar, Command as FoldkitCommand } from "foldkit";
 import { Message } from "~/message";
-import { ActiveDateUtils } from "./domain/active-date-utils";
 
-export const ResolveCurrentDateRange = FoldkitCommand.define("ResolveCurrentDateRange", {
+export const SyncInitialDate = FoldkitCommand.define("SyncInitialDate", {
   args: {
-    granularity: ActiveDateUtils.Granularity,
+    today: Calendar.CalendarDate,
   },
-  messages: [Message.ResolvedCurrentDateRange],
-  execute: ({ granularity }) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.map((millis) => {
-        const now = new Date(millis);
-
-        return Match.value(granularity).pipe(
-          Match.when("Day", () =>
-            Message.ResolvedCurrentDateRange({
-              granularity,
-              date: ActiveDateUtils.getStartOfDay(now),
-            }),
-          ),
-          Match.when("Week", () =>
-            Message.ResolvedCurrentDateRange({
-              granularity,
-              date: ActiveDateUtils.getStartOfWeek(now),
-            }),
-          ),
-          Match.when("Month", () =>
-            Message.ResolvedCurrentDateRange({
-              granularity,
-              date: ActiveDateUtils.getStartOfMonth(now),
-            }),
-          ),
-          Match.exhaustive,
-        );
-      }),
-    ),
+  messages: [Message.SyncedInitialDate],
+  execute: ({ today }) => Effect.succeed(Message.SyncedInitialDate({ date: today })),
 });
 
 export * as Command from "./command";

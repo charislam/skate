@@ -1,24 +1,23 @@
 import { Schema } from "effect";
+import { Calendar } from "foldkit";
 import { Machine } from "foldkit/experimental";
-import { to, when } from "foldkit/experimental/machine";
+import { to } from "foldkit/experimental/machine";
 import { defineTaggedUnion } from "foldkit/schema";
 import { evo } from "foldkit/struct";
-import { ActiveDateUtils } from "./active-date-utils";
 import { Message as ActiveDateMessage, MessageSchema } from "./active-date-message";
-import { Command } from "~/command";
 
 // MODEL
 
 export const Model = defineTaggedUnion({
   Initial: {},
   Day: {
-    date: Schema.Date,
+    date: Calendar.CalendarDate,
   },
   Week: {
-    startDate: Schema.Date,
+    startDate: Calendar.CalendarDate,
   },
   Month: {
-    startDate: Schema.Date,
+    startDate: Calendar.CalendarDate,
   },
 });
 
@@ -33,73 +32,45 @@ export const Message = MessageSchema;
 export const machine = Machine.define({
   state: Model,
   message: ActiveDateMessage,
+  context: Schema.Struct({ today: Calendar.CalendarDate }),
 })({
   initial: Model.Initial(),
-  shared: [
-    Machine.forStates(["Initial", "Day", "Week", "Month"]).on({
-      ResolvedCurrentDateRange: [
-        when(
-          (_state, message) => message.granularity === "Day",
-          "Day",
-          ({ message }) => ({
-            model: Model.Day({ date: message.date }),
-          }),
-        ),
-        when(
-          (_state, message) => message.granularity === "Week",
-          "Week",
-          ({ message }) => ({
-            model: Model.Week({ startDate: message.date }),
-          }),
-        ),
-        when(
-          (_state, message) => message.granularity === "Month",
-          "Month",
-          ({ message }) => ({
-            model: Model.Month({ startDate: message.date }),
-          }),
-        ),
-      ],
-    }),
-  ],
   states: {
+    Initial: {
+      on: {
+        SyncedInitialDate: to("Day", ({ message }) => ({
+          model: Model.Day({ date: message.date }),
+        })),
+      },
+    },
+
     Day: {
       on: {
         SelectedNextDateRange: to("Day", ({ state }) => ({
           model: evo(state, {
-            date: () => ActiveDateUtils.incrementDay(state.date),
+            date: () => Calendar.addDays(state.date, 1),
           }),
         })),
         SelectedPreviousDateRange: to("Day", ({ state }) => ({
           model: evo(state, {
-            date: () => ActiveDateUtils.decrementDay(state.date),
+            date: () => Calendar.subtractDays(state.date, 1),
           }),
         })),
-        SelectedCurrentDateRange: to("Day", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Day",
-            }),
-          ],
+        SelectedCurrentDateRange: to("Day", ({ state, context }) => ({
+          model: evo(state, {
+            date: () => context.today,
+          }),
         })),
 
         SelectedDayView: to("Day", ({ state }) => ({
           model: state,
         })),
-        SelectedWeekView: to("Week", ({ state }) => {
-          const startDate = ActiveDateUtils.getStartOfWeek(state.date);
-
-          return {
-            model: Model.Week({ startDate }),
-          };
-        }),
-        SelectedMonthView: to("Month", ({ state }) => {
-          const startDate = new Date(state.date.getFullYear(), state.date.getMonth(), 1);
-          return {
-            model: Model.Month({ startDate }),
-          };
-        }),
+        SelectedWeekView: to("Week", ({ state }) => ({
+          model: Model.Week({ startDate: Calendar.startOfWeek(state.date, "Monday") }),
+        })),
+        SelectedMonthView: to("Month", ({ state }) => ({
+          model: Model.Month({ startDate: Calendar.firstOfMonth(state.date) }),
+        })),
       },
     },
 
@@ -107,41 +78,28 @@ export const machine = Machine.define({
       on: {
         SelectedNextDateRange: to("Week", ({ state }) => ({
           model: evo(state, {
-            startDate: () => ActiveDateUtils.incrementWeek(state.startDate),
+            startDate: () => Calendar.addDays(state.startDate, 7),
           }),
         })),
         SelectedPreviousDateRange: to("Week", ({ state }) => ({
           model: evo(state, {
-            startDate: () => ActiveDateUtils.decrementWeek(state.startDate),
+            startDate: () => Calendar.subtractDays(state.startDate, 7),
           }),
         })),
-        SelectedCurrentDateRange: to("Week", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Week",
-            }),
-          ],
+        SelectedCurrentDateRange: to("Week", ({ state, context }) => ({
+          model: evo(state, {
+            startDate: () => Calendar.startOfWeek(context.today, "Monday"),
+          }),
         })),
 
-        SelectedDayView: to("Week", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Day",
-            }),
-          ],
+        SelectedDayView: to("Day", ({ state }) => ({
+          model: Model.Day({ date: state.startDate }),
         })),
         SelectedWeekView: to("Week", ({ state }) => ({
           model: state,
         })),
-        SelectedMonthView: to("Week", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Month",
-            }),
-          ],
+        SelectedMonthView: to("Month", ({ state }) => ({
+          model: Model.Month({ startDate: Calendar.firstOfMonth(state.startDate) }),
         })),
       },
     },
@@ -150,38 +108,25 @@ export const machine = Machine.define({
       on: {
         SelectedNextDateRange: to("Month", ({ state }) => ({
           model: evo(state, {
-            startDate: () => ActiveDateUtils.incrementMonth(state.startDate),
+            startDate: () => Calendar.addMonths(state.startDate, 1),
           }),
         })),
         SelectedPreviousDateRange: to("Month", ({ state }) => ({
           model: evo(state, {
-            startDate: () => ActiveDateUtils.decrementMonth(state.startDate),
+            startDate: () => Calendar.subtractMonths(state.startDate, 1),
           }),
         })),
-        SelectedCurrentDateRange: to("Month", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Month",
-            }),
-          ],
+        SelectedCurrentDateRange: to("Month", ({ state, context }) => ({
+          model: evo(state, {
+            startDate: () => Calendar.firstOfMonth(context.today),
+          }),
         })),
 
-        SelectedDayView: to("Month", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Day",
-            }),
-          ],
+        SelectedDayView: to("Day", ({ state }) => ({
+          model: Model.Day({ date: state.startDate }),
         })),
-        SelectedWeekView: to("Month", ({ state }) => ({
-          model: state,
-          commands: [
-            Command.ResolveCurrentDateRange({
-              granularity: "Week",
-            }),
-          ],
+        SelectedWeekView: to("Week", ({ state }) => ({
+          model: Model.Week({ startDate: Calendar.startOfWeek(state.startDate, "Monday") }),
         })),
         SelectedMonthView: to("Month", ({ state }) => ({
           model: state,

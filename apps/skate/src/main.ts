@@ -1,5 +1,5 @@
-import { Match, Option, Schema } from "effect";
-import { type Runtime, type Update } from "foldkit";
+import { Effect, Match, Option, Schema } from "effect";
+import { Calendar, type Runtime, type Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
@@ -11,15 +11,30 @@ import { cn } from "cn";
 // MODEL
 
 export const Model = Schema.Struct({
+  today: Calendar.CalendarDate,
   activeDateRange: ActiveDate.Model,
 });
 
 export type Model = typeof Model.Type;
 
+// FLAGS
+
+export const Flags = Schema.Struct({
+  today: Calendar.CalendarDate,
+});
+
+export type Flags = typeof Flags.Type;
+
+export const flags = Effect.gen(function* () {
+  const today = yield* Calendar.today.local;
+  return { today };
+});
+
 // UPDATE
 
 const foldActiveDate = Machine.fold({
   machine: ActiveDate.machine,
+  context: (model: Model) => ({ today: model.today }),
   read: (model: Model) => Option.some(model.activeDateRange),
   write: (model: Model, nextActiveDateRange: ActiveDate.Model) =>
     evo(model, {
@@ -37,7 +52,7 @@ export const update = (model: Model, message: Message) =>
       "SelectedDayView",
       "SelectedWeekView",
       "SelectedMonthView",
-      "ResolvedCurrentDateRange",
+      "SyncedInitialDate",
       () => foldActiveDate(model, message),
     ),
     Match.exhaustive,
@@ -72,20 +87,21 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                     h.h2(
                       [h.Class("flex gap-2")],
                       [
-                        h.span(
-                          [h.Class("text-6xl")],
-                          [Intl.DateTimeFormat("en-US", { day: "numeric" }).format(date)],
-                        ),
+                        h.span([h.Class("text-6xl")], [date.day.toString()]),
                         h.span(
                           [h.Class("py-2 flex flex-col justify-between")],
                           [
                             h.span(
                               [h.Class("uppercase text-sm text-slate-600")],
-                              [Intl.DateTimeFormat("en-US", { month: "short" }).format(date)],
+                              [
+                                Calendar.formatShort(Calendar.defaultEnglishLocale)(date).split(
+                                  " ",
+                                )[0] ?? "",
+                              ],
                             ),
                             h.span(
                               [h.Class("text-slate-600 font-light tracking-wide")],
-                              [Intl.DateTimeFormat("en-US", { weekday: "long" }).format(date)],
+                              [Calendar.dayOfWeek(date)],
                             ),
                           ],
                         ),
@@ -145,7 +161,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: { activeDateRange: ActiveDate.machine.initial },
-  commands: [Command.ResolveCurrentDateRange({ granularity: "Day" })],
+export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flags) => ({
+  model: { today: flags.today, activeDateRange: ActiveDate.machine.initial },
+  commands: [Command.SyncInitialDate({ today: flags.today })],
 });

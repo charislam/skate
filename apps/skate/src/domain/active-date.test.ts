@@ -1,162 +1,136 @@
 import { describe, expect, it } from "vitest";
+import { Calendar } from "foldkit";
 import { Message as GlobalMessage } from "~/message";
 import { ActiveDate } from "./active-date";
 
 const { machine, Model } = ActiveDate;
+const context = { today: Calendar.make(2024, 5, 17) };
+const transition = (state: ActiveDate.Model, message: GlobalMessage) =>
+  machine.transition(state, message, context);
+const step = (state: ActiveDate.Model, message: GlobalMessage) =>
+  machine.step(state, message, context);
 
 describe("ActiveDate machine", () => {
   describe("date range navigation", () => {
     it("moves the selected day forwards and backwards across boundaries", () => {
-      const day = Model.Day({ date: new Date(2024, 1, 29) });
+      const day = Model.Day({ date: Calendar.make(2024, 2, 29) });
 
-      expect(machine.transition(day, GlobalMessage.SelectedNextDateRange()).model).toEqual(
-        Model.Day({ date: new Date(2024, 2, 1) }),
+      expect(transition(day, GlobalMessage.SelectedNextDateRange()).model).toEqual(
+        Model.Day({ date: Calendar.make(2024, 3, 1) }),
       );
-      expect(machine.transition(day, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
-        Model.Day({ date: new Date(2024, 1, 28) }),
+      expect(transition(day, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
+        Model.Day({ date: Calendar.make(2024, 2, 28) }),
       );
     });
 
     it("moves the selected week forwards and backwards", () => {
-      const week = Model.Week({ startDate: new Date(2024, 11, 30) });
+      const week = Model.Week({ startDate: Calendar.make(2024, 12, 30) });
 
-      expect(machine.transition(week, GlobalMessage.SelectedNextDateRange()).model).toEqual(
-        Model.Week({ startDate: new Date(2025, 0, 6) }),
+      expect(transition(week, GlobalMessage.SelectedNextDateRange()).model).toEqual(
+        Model.Week({ startDate: Calendar.make(2025, 1, 6) }),
       );
-      expect(machine.transition(week, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
-        Model.Week({ startDate: new Date(2024, 11, 23) }),
+      expect(transition(week, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
+        Model.Week({ startDate: Calendar.make(2024, 12, 23) }),
       );
     });
 
     it("moves the selected month forwards and backwards", () => {
-      const month = Model.Month({ startDate: new Date(2024, 11, 1) });
+      const month = Model.Month({ startDate: Calendar.make(2024, 12, 1) });
 
-      expect(machine.transition(month, GlobalMessage.SelectedNextDateRange()).model).toEqual(
-        Model.Month({ startDate: new Date(2025, 0, 1) }),
+      expect(transition(month, GlobalMessage.SelectedNextDateRange()).model).toEqual(
+        Model.Month({ startDate: Calendar.make(2025, 1, 1) }),
       );
-      expect(machine.transition(month, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
-        Model.Month({ startDate: new Date(2024, 10, 1) }),
+      expect(transition(month, GlobalMessage.SelectedPreviousDateRange()).model).toEqual(
+        Model.Month({ startDate: Calendar.make(2024, 11, 1) }),
       );
     });
   });
 
   describe("view selection", () => {
     it("keeps the day date when selecting day view", () => {
-      const day = Model.Day({ date: new Date(2024, 4, 17, 14, 30) });
-      expect(machine.transition(day, GlobalMessage.SelectedDayView()).model).toEqual(day);
+      const day = Model.Day({ date: Calendar.make(2024, 5, 17) });
+      expect(transition(day, GlobalMessage.SelectedDayView()).model).toEqual(day);
     });
 
     it("converts a day to its containing Monday-start week", () => {
       expect(
-        machine.transition(
-          Model.Day({ date: new Date(2024, 4, 19, 12) }),
+        transition(
+          Model.Day({ date: Calendar.make(2024, 5, 19) }),
           GlobalMessage.SelectedWeekView(),
         ).model,
-      ).toEqual(Model.Week({ startDate: new Date(2024, 4, 13) }));
+      ).toEqual(Model.Week({ startDate: Calendar.make(2024, 5, 13) }));
     });
 
     it("converts a day to the first of its month", () => {
       expect(
-        machine.transition(
-          Model.Day({ date: new Date(2024, 4, 17, 12) }),
+        transition(
+          Model.Day({ date: Calendar.make(2024, 5, 17) }),
           GlobalMessage.SelectedMonthView(),
         ).model,
-      ).toEqual(Model.Month({ startDate: new Date(2024, 4, 1) }));
+      ).toEqual(Model.Month({ startDate: Calendar.make(2024, 5, 1) }));
     });
 
-    it("requests resolution when changing from a week to day or month view", () => {
-      const week = Model.Week({ startDate: new Date(2024, 4, 13) });
+    it("converts a week to day or month view using its start date", () => {
+      const week = Model.Week({ startDate: Calendar.make(2024, 5, 13) });
 
-      for (const [message, granularity] of [
-        [GlobalMessage.SelectedDayView(), "Day"],
-        [GlobalMessage.SelectedMonthView(), "Month"],
-      ] as const) {
-        const result = machine.transition(week, message);
-        expect(result.model).toEqual(week);
-        expect(result.commands).toHaveLength(1);
-        expect(result.commands?.[0]).toMatchObject({ args: { granularity } });
-      }
+      expect(transition(week, GlobalMessage.SelectedDayView()).model).toEqual(
+        Model.Day({ date: Calendar.make(2024, 5, 13) }),
+      );
+      expect(transition(week, GlobalMessage.SelectedMonthView()).model).toEqual(
+        Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
+      );
     });
 
     it("keeps the week when selecting week view", () => {
-      const week = Model.Week({ startDate: new Date(2024, 4, 13) });
-      expect(machine.transition(week, GlobalMessage.SelectedWeekView()).model).toEqual(week);
+      const week = Model.Week({ startDate: Calendar.make(2024, 5, 13) });
+      expect(transition(week, GlobalMessage.SelectedWeekView()).model).toEqual(week);
     });
 
-    it("requests resolution when changing from a month to day or week view", () => {
-      const month = Model.Month({ startDate: new Date(2024, 4, 1) });
+    it("converts a month to day or week view using its start date", () => {
+      const month = Model.Month({ startDate: Calendar.make(2024, 5, 1) });
 
-      for (const [message, granularity] of [
-        [GlobalMessage.SelectedDayView(), "Day"],
-        [GlobalMessage.SelectedWeekView(), "Week"],
-      ] as const) {
-        const result = machine.transition(month, message);
-        expect(result.model).toEqual(month);
-        expect(result.commands).toHaveLength(1);
-        expect(result.commands?.[0]).toMatchObject({ args: { granularity } });
-      }
+      expect(transition(month, GlobalMessage.SelectedDayView()).model).toEqual(
+        Model.Day({ date: Calendar.make(2024, 5, 1) }),
+      );
+      expect(transition(month, GlobalMessage.SelectedWeekView()).model).toEqual(
+        Model.Week({ startDate: Calendar.make(2024, 4, 29) }),
+      );
     });
 
     it("keeps the month when selecting month view", () => {
-      const month = Model.Month({ startDate: new Date(2024, 4, 1) });
-      expect(machine.transition(month, GlobalMessage.SelectedMonthView()).model).toEqual(month);
+      const month = Model.Month({ startDate: Calendar.make(2024, 5, 1) });
+      expect(transition(month, GlobalMessage.SelectedMonthView()).model).toEqual(month);
     });
   });
 
   describe("current range selection", () => {
     it.each([
-      [Model.Initial(), "Day"],
-      [Model.Day({ date: new Date(2024, 4, 17) }), "Day"],
-      [Model.Week({ startDate: new Date(2024, 4, 13) }), "Week"],
-      [Model.Month({ startDate: new Date(2024, 4, 1) }), "Month"],
-    ] as const)("requests the current range in %s", (state, expectedGranularity) => {
-      if (state._tag === "Initial") {
-        expect(machine.step(state, GlobalMessage.SelectedCurrentDateRange())).toMatchObject({
-          _tag: "Ignored",
-          reason: "NotApplicable",
-        });
-        return;
-      }
-
-      const result = machine.transition(state, GlobalMessage.SelectedCurrentDateRange());
-      expect(result.model).toEqual(state);
-      expect(result.commands).toHaveLength(1);
-      expect(result.commands?.[0]).toMatchObject({ args: { granularity: expectedGranularity } });
+      [Model.Day({ date: Calendar.make(2020, 1, 1) }), Model.Day({ date: context.today })],
+      [
+        Model.Week({ startDate: Calendar.make(2020, 1, 6) }),
+        Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
+      ],
+      [
+        Model.Month({ startDate: Calendar.make(2020, 1, 1) }),
+        Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
+      ],
+    ] as const)("selects the current range from %s", (state, expected) => {
+      const result = transition(state, GlobalMessage.SelectedCurrentDateRange());
+      expect(result.model).toEqual(expected);
+      expect(result.commands).toEqual([]);
     });
 
-    it.each([
-      ["Day", new Date(2024, 4, 17), Model.Day({ date: new Date(2024, 4, 17) })],
-      ["Week", new Date(2024, 4, 13), Model.Week({ startDate: new Date(2024, 4, 13) })],
-      ["Month", new Date(2024, 4, 1), Model.Month({ startDate: new Date(2024, 4, 1) })],
-    ] as const)(
-      "resolves the shared current range as %s from every state",
-      (granularity, date, expected) => {
-        const states = [
-          Model.Initial(),
-          Model.Day({ date: new Date(2020, 0, 1) }),
-          Model.Week({ startDate: new Date(2020, 0, 6) }),
-          Model.Month({ startDate: new Date(2020, 0, 1) }),
-        ];
-
-        for (const state of states) {
-          const result = machine.step(
-            state,
-            GlobalMessage.ResolvedCurrentDateRange({ granularity, date }),
-          );
-          expect(result._tag).toBe("Transitioned");
-          if (result._tag === "Transitioned") {
-            expect(result.target).toBe(expected._tag);
-            expect(result.state).toEqual(expected);
-            expect(result.commands).toEqual([]);
-          }
-        }
-      },
-    );
+    it("ignores current range selection from Initial", () => {
+      expect(step(Model.Initial(), GlobalMessage.SelectedCurrentDateRange())).toMatchObject({
+        _tag: "Ignored",
+        reason: "NotApplicable",
+      });
+    });
   });
 
   it("reports unhandled range navigation from Initial as ignored", () => {
     const initial = Model.Initial();
-    expect(machine.step(initial, GlobalMessage.SelectedNextDateRange())).toEqual({
+    expect(step(initial, GlobalMessage.SelectedNextDateRange())).toEqual({
       _tag: "Ignored",
       stateTag: "Initial",
       messageTag: "SelectedNextDateRange",

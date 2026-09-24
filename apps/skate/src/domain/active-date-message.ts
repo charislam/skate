@@ -1,17 +1,17 @@
-import { Schema } from "effect";
+import { Calendar } from "foldkit";
 import { defineMessageUnion } from "foldkit/message";
-import { ActiveDateUtils } from "./active-date-utils";
 
 export const MessageSchema = {
   SelectedNextDateRange: {},
   SelectedPreviousDateRange: {},
   SelectedCurrentDateRange: {},
+
   SelectedDayView: {},
   SelectedWeekView: {},
   SelectedMonthView: {},
-  ResolvedCurrentDateRange: {
-    granularity: ActiveDateUtils.Granularity,
-    date: Schema.Date,
+
+  SyncedInitialDate: {
+    date: Calendar.CalendarDate,
   },
 } as const;
 
