@@ -1,6 +1,7 @@
 import { Runtime } from "foldkit";
-import { Flags, Model, flags, init, subscriptions, update, view } from "./main";
+import { Flags, flags, init, subscriptions, update, view } from "./main";
 import { Message } from "./message";
+import { Model } from "./model";
 
 const application = Runtime.makeApplication({
   Model,

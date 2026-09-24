@@ -6,33 +6,26 @@ import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
 import { Command } from "./command";
-import { ActiveDate, MainMenu } from "./domain";
+import { ActiveDate, MainMenu, Theme } from "./domain";
 import { Message } from "./message";
-
-// MODEL
-
-export const Model = Schema.Struct({
-  today: Calendar.CalendarDate,
-  activeDateRange: ActiveDate.Model,
-  menu: Popover.Model,
-  tabletOrAbove: Schema.Boolean,
-});
-
-export type Model = typeof Model.Type;
+import type { Model } from "./model";
+import { MainMenuView, WeekMonthSelector } from "./view";
 
 // FLAGS
 
 export const Flags = Schema.Struct({
   today: Calendar.CalendarDate,
+  theme: Theme.Theme_,
   tabletOrAbove: Schema.Boolean,
 });
 
 export type Flags = typeof Flags.Type;
 
-export const flags = Effect.gen(function* () {
+export const flags: Effect.Effect<Flags> = Effect.gen(function* () {
   const today = yield* Calendar.today.local;
   const tabletOrAbove = window.matchMedia("(min-width: 1024px)").matches;
-  return { today, tabletOrAbove };
+  const theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return { today, tabletOrAbove, theme };
 });
 
 // UPDATE
@@ -45,6 +38,20 @@ const foldActiveDate = Machine.fold({
     evo(model, {
       activeDateRange: () => nextActiveDateRange,
     }),
+});
+
+const foldTheme = Update.foldChild({
+  update: Theme.update,
+  read: (model: Model) => Option.some(model.theme),
+  write: (model, nextTheme) => evo(model, { theme: () => nextTheme }),
+  toParentMessage: (message) => Message.GotThemeMessage({ message }),
+});
+
+const foldThemeSet = Update.foldChild({
+  update: Theme.setTheme,
+  read: (model: Model) => Option.some(model.theme),
+  write: (model, nextTheme) => evo(model, { theme: () => nextTheme }),
+  toParentMessage: (message) => Message.GotThemeMessage({ message }),
 });
 
 const foldPopoverOutMessage = Popover.OutMessage.match<Update.Step<Model, Message>>({
@@ -86,6 +93,8 @@ export const update = (model: Model, message: Message) =>
       ...(tabletOrAbove ? {} : { commands: [Command.SelectDayView()] }),
     })),
     Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
+    Match.tag("GotThemeMessage", ({ message }) => foldTheme(model, message)),
+    Match.tag("SelectedTheme", ({ theme }) => foldThemeSet(model, theme)),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
       Update.combine(model, [
         foldPopoverClose,
@@ -130,46 +139,6 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 
 // VIEW
 
-const weekMonthSelector = (
-  { granularity, startDate }: { granularity: "Week" | "Month"; startDate: Calendar.CalendarDate },
-  h: HtmlBuilder<Message>,
-) => {
-  const formattedMonth = Option.match(ActiveDate.formatMonth({ format: "long" }, startDate), {
-    onSome: (month) => month,
-    onNone: () => "",
-  });
-
-  return h.div(
-    [h.Class("flex gap-2 items-center")],
-    [
-      h.button(
-        [
-          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
-          h.AriaLabel("Previous week"),
-          h.OnClick(Message.SelectedPreviousDateRange()),
-        ],
-        [h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")])],
-      ),
-      h.h2(
-        [h.Class("text-md text-slate-600 font-light uppercase tracking-widest")],
-        [
-          granularity === "Week"
-            ? `${formattedMonth} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`
-            : `${formattedMonth} ${startDate.year}`,
-        ],
-      ),
-      h.button(
-        [
-          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
-          h.AriaLabel("Next week"),
-          h.OnClick(Message.SelectedNextDateRange()),
-        ],
-        [h.span([h.AriaHidden(true), h.InnerHTML("&#8827")])],
-      ),
-    ],
-  );
-};
-
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const isDayView = model.activeDateRange._tag === "Day";
 
@@ -197,8 +166,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             ),
             Match.value(model.activeDateRange).pipe(
               Match.tags({
-                Week: ({ startDate }) => weekMonthSelector({ granularity: "Week", startDate }, h),
-                Month: ({ startDate }) => weekMonthSelector({ granularity: "Month", startDate }, h),
+                Week: ({ startDate }) =>
+                  WeekMonthSelector.selector({ granularity: "Week", startDate }, h),
+                Month: ({ startDate }) =>
+                  WeekMonthSelector.selector({ granularity: "Month", startDate }, h),
               }),
               Match.orElse(() => null),
             ),
@@ -295,73 +266,23 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
         h.footer(
           [h.Class("flex gap-2 justify-between items-baseline")],
           [
-            ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
-              ? h.span([])
-              : h.button([
-                  h.Class(
-                    "text-sm text-slate-600 hover:bg-slate-100 underline-offset-2 cursor-pointer",
-                  ),
-                  h.OnClick(Message.SelectedCurrentDateRange()),
-                  h.InnerHTML("Go to today &rarr;"),
-                ]),
-            h.submodel({
-              slotId: "main-menu",
-              model: model.menu,
-              view: MainMenu.Popover.view,
-              toParentMessage: (message) => Message.GotPopoverMessage({ message }),
-              viewInputs: {
-                ariaLabel: "Main menu",
-                anchor: { placement: "top-end" },
-                toView: ({ button, panel, backdrop, isVisible }) =>
-                  h.div(
-                    [h.Class("relative")],
-                    [
-                      h.button(
-                        [
-                          ...button,
-                          h.Class("text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer"),
-                        ],
-                        [h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")])],
-                      ),
-                      ...(isVisible
-                        ? [
-                            h.div([...backdrop, h.Class("fixed inset-0")]),
-                            h.div(
-                              [
-                                ...panel,
-                                h.Class(
-                                  "z-10 rounded border border-slate-200 bg-white shadow-lg outline-none",
-                                ),
-                              ],
-                              [
-                                h.div(
-                                  [],
-                                  [
-                                    h.span([], ["Menu"]),
-                                    ...(model.tabletOrAbove
-                                      ? MainMenu.actions.map((action) =>
-                                          h.keyed("button")(
-                                            action,
-                                            [
-                                              h.Class(
-                                                "block w-full px-3 py-2 text-left hover:bg-slate-100 cursor-pointer",
-                                              ),
-                                              h.OnClick(Message.SelectedMainMenuAction({ action })),
-                                            ],
-                                            [action],
-                                          ),
-                                        )
-                                      : []),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ]
-                        : []),
-                    ],
-                  ),
-              },
-            }),
+            h.div(
+              [h.Class("flex divide-x-2 divide-slate-300")],
+              [
+                h.button(
+                  [h.Class("px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer")],
+                  ["Showing all"],
+                ),
+                ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
+                  ? null
+                  : h.button([
+                      h.Class("px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer"),
+                      h.OnClick(Message.SelectedCurrentDateRange()),
+                      h.InnerHTML("Go to today &rarr;"),
+                    ]),
+              ],
+            ),
+            MainMenuView.view(model, h),
           ],
         ),
       ],
@@ -371,12 +292,17 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flags) => ({
-  model: {
-    today: flags.today,
-    activeDateRange: ActiveDate.machine.initial,
-    menu: Popover.init({ id: "main-menu", contentFocus: true }),
-    tabletOrAbove: flags.tabletOrAbove,
-  },
-  commands: [Command.SyncInitialDate({ today: flags.today })],
-});
+export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flags) => {
+  const { model: themeModel } = Theme.boot({ systemTheme: flags.theme });
+
+  return {
+    model: {
+      today: flags.today,
+      activeDateRange: ActiveDate.machine.initial,
+      menu: Popover.init({ id: "main-menu", contentFocus: true }),
+      theme: themeModel,
+      tabletOrAbove: flags.tabletOrAbove,
+    },
+    commands: [Command.SyncInitialDate({ today: flags.today })],
+  };
+};
