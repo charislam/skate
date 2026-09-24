@@ -30,7 +30,7 @@ export type Message = typeof Message.Type;
 
 // COMMAND
 
-const ResolveTheme = Command.define("ResolveTheme", {
+export const ResolveTheme = Command.define("ResolveTheme", {
   args: {
     userTheme: Schema.Option(Theme_),
     systemTheme: Theme_,

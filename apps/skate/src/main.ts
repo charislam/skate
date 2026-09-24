@@ -314,13 +314,15 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                 ),
                 ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
                   ? null
-                  : h.button([
-                      h.Class(
-                        "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                      ),
-                      h.OnClick(Message.SelectedCurrentDateRange()),
-                      h.InnerHTML("Go to today &rarr;"),
-                    ]),
+                  : h.button(
+                      [
+                        h.Class(
+                          "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
+                        ),
+                        h.OnClick(Message.SelectedCurrentDateRange()),
+                      ],
+                      ["Go to today →"],
+                    ),
               ],
             ),
             MainMenuView.view(model, h),

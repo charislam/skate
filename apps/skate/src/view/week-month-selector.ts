@@ -12,6 +12,7 @@ export const selector = (
     onSome: (month) => month,
     onNone: () => "",
   });
+  const rangeName = granularity === "Week" ? "week" : "month";
 
   return h.div(
     [h.Class("flex gap-2 items-center")],
@@ -21,7 +22,7 @@ export const selector = (
           h.Class(
             "text-slate-400 hover:bg-slate-100 cursor-pointer dark:text-slate-500 dark:hover:bg-slate-800",
           ),
-          h.AriaLabel("Previous week"),
+          h.AriaLabel(`Previous ${rangeName}`),
           h.OnClick(Message.SelectedPreviousDateRange()),
         ],
         [h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")])],
@@ -43,7 +44,7 @@ export const selector = (
           h.Class(
             "text-slate-400 hover:bg-slate-100 cursor-pointer dark:text-slate-500 dark:hover:bg-slate-800",
           ),
-          h.AriaLabel("Next week"),
+          h.AriaLabel(`Next ${rangeName}`),
           h.OnClick(Message.SelectedNextDateRange()),
         ],
         [h.span([h.AriaHidden(true), h.InnerHTML("&#8827")])],

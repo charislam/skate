@@ -23,6 +23,7 @@
     "@foldkit/oxlint-plugin": "^0.13.0",
     "@foldkit/vite-plugin": "^0.22.0",
     "@tailwindcss/vite": "^4.2.2",
+    "happy-dom": "^20.14.5",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
