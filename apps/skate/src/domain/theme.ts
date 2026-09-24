@@ -18,13 +18,6 @@ export type Model = typeof Model.Type;
 
 // BOOT
 
-export const boot = (flags: { systemTheme: Theme_ }): Update.Return<Model, Message> => ({
-  model: {
-    userTheme: Option.none(),
-    systemTheme: flags.systemTheme,
-  },
-});
-
 // MESSAGE
 
 export const Message = defineMessageUnion({
@@ -56,6 +49,17 @@ const ResolveTheme = Command.define("ResolveTheme", {
     return Effect.succeed(Message.CompletedResolveTheme());
   },
 });
+
+export const boot = (flags: { systemTheme: Theme_ }): Update.Return<Model, Message> => {
+  const userTheme = Option.none<Theme_>();
+  return {
+    model: {
+      userTheme,
+      systemTheme: flags.systemTheme,
+    },
+    commands: [ResolveTheme({ userTheme, systemTheme: flags.systemTheme })],
+  };
+};
 
 // UPDATE
 

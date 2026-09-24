@@ -1,7 +1,7 @@
 import { Popover } from "@foldkit/ui";
 import { cn } from "cn";
 import { Effect, Match, Option, Schema, Stream } from "effect";
-import { Calendar, type Runtime, Subscription, Update } from "foldkit";
+import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { UrlRequest } from "foldkit/navigation";
@@ -110,7 +110,12 @@ export const update = (model: Model, message: Message) =>
     })),
     Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
     Match.tag("GotThemeMessage", ({ message }) => foldTheme(model, message)),
-    Match.tag("SelectedTheme", ({ theme }) => foldThemeSet(model, theme)),
+    Match.tag("SelectedTheme", ({ theme }) =>
+      Update.combine(model, [
+        foldPopoverClose,
+        (currentModel) => foldThemeSet(currentModel, theme),
+      ]),
+    ),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
       Update.combine(model, [
         foldPopoverClose,
@@ -171,7 +176,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
       [
         h.Class(
           cn(
-            "h-screen mx-auto px-4 xl:px-12 py-6 flex flex-col gap-8 lg:gap-12",
+            "h-screen mx-auto px-4 xl:px-12 py-6 flex flex-col gap-8 lg:gap-12 bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
             isDayView && "max-w-xl",
           ),
         ),
@@ -184,7 +189,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
               [h.Class("flex items-baseline")],
               [
                 h.h1([h.Class("text-4xl")], ["skate"]),
-                h.p([h.Class("text-sm text-slate-800 translate-y-1/4")], ["TO"]),
+                h.p(
+                  [h.Class("text-sm text-slate-800 dark:text-slate-300 translate-y-1/4")],
+                  ["TO"],
+                ),
               ],
             ),
             Match.value(model.activeDateRange).pipe(
@@ -215,7 +223,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                           [h.Class("py-2 flex flex-col justify-between")],
                           [
                             h.span(
-                              [h.Class("uppercase text-sm text-slate-600")],
+                              [h.Class("uppercase text-sm text-slate-600 dark:text-slate-400")],
                               [
                                 Option.match(ActiveDate.formatMonth({ format: "short" }, date), {
                                   onSome: (month) => month,
@@ -224,7 +232,11 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                               ],
                             ),
                             h.span(
-                              [h.Class("text-slate-600 font-light tracking-wide")],
+                              [
+                                h.Class(
+                                  "text-slate-600 dark:text-slate-400 font-light tracking-wide",
+                                ),
+                              ],
                               [Calendar.dayOfWeek(date)],
                             ),
                           ],
@@ -237,7 +249,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.button(
                           [
                             h.Class(
-                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer",
+                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
                             ),
                             h.OnClick(Message.SelectedPreviousDateRange()),
                           ],
@@ -249,7 +261,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.button(
                           [
                             h.Class(
-                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer",
+                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
                             ),
                             h.OnClick(Message.SelectedNextDateRange()),
                           ],
@@ -290,16 +302,22 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
           [h.Class("flex gap-2 justify-between items-baseline")],
           [
             h.div(
-              [h.Class("flex divide-x-2 divide-slate-300")],
+              [h.Class("flex divide-x-2 divide-slate-300 dark:divide-slate-700")],
               [
                 h.button(
-                  [h.Class("px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer")],
+                  [
+                    h.Class(
+                      "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
+                    ),
+                  ],
                   ["Showing all"],
                 ),
                 ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
                   ? null
                   : h.button([
-                      h.Class("px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer"),
+                      h.Class(
+                        "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
+                      ),
                       h.OnClick(Message.SelectedCurrentDateRange()),
                       h.InnerHTML("Go to today &rarr;"),
                     ]),
@@ -316,7 +334,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 // INIT
 
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags: Flags, url) => {
-  const { model: themeModel } = Theme.boot({ systemTheme: flags.theme });
+  const themeBoot = Theme.boot({ systemTheme: flags.theme });
 
   return {
     model: {
@@ -324,9 +342,14 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
       today: flags.today,
       activeDateRange: ActiveDate.machine.initial,
       menu: Popover.init({ id: "main-menu", contentFocus: true }),
-      theme: themeModel,
+      theme: themeBoot.model,
       tabletOrAbove: flags.tabletOrAbove,
     },
-    commands: [Command.SyncInitialDate({ today: flags.today })],
+    commands: [
+      ...FoldkitCommand.mapMessages(themeBoot.commands, (message) =>
+        Message.GotThemeMessage({ message }),
+      ),
+      Command.SyncInitialDate({ today: flags.today }),
+    ],
   };
 };

@@ -18,14 +18,20 @@ export const selector = (
     [
       h.button(
         [
-          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+          h.Class(
+            "text-slate-400 hover:bg-slate-100 cursor-pointer dark:text-slate-500 dark:hover:bg-slate-800",
+          ),
           h.AriaLabel("Previous week"),
           h.OnClick(Message.SelectedPreviousDateRange()),
         ],
         [h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")])],
       ),
       h.h2(
-        [h.Class("text-md text-slate-600 font-light uppercase tracking-widest")],
+        [
+          h.Class(
+            "text-md text-slate-600 font-light uppercase tracking-widest dark:text-slate-300",
+          ),
+        ],
         [
           granularity === "Week"
             ? `${formattedMonth} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`
@@ -34,7 +40,9 @@ export const selector = (
       ),
       h.button(
         [
-          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+          h.Class(
+            "text-slate-400 hover:bg-slate-100 cursor-pointer dark:text-slate-500 dark:hover:bg-slate-800",
+          ),
           h.AriaLabel("Next week"),
           h.OnClick(Message.SelectedNextDateRange()),
         ],
