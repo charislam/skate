@@ -1,9 +1,9 @@
 import { Clock, Effect, Match } from "effect";
-import { Command } from "foldkit";
-import { Message } from "./message";
-import { ActiveDateUtils } from "./domain";
+import { Command as FoldkitCommand } from "foldkit";
+import { Message } from "~/message";
+import { ActiveDateUtils } from "./domain/active-date-utils";
 
-export const ResolveCurrentDateRange = Command.define("ResolveCurrentDateRange", {
+export const ResolveCurrentDateRange = FoldkitCommand.define("ResolveCurrentDateRange", {
   args: {
     granularity: ActiveDateUtils.Granularity,
   },
@@ -37,3 +37,5 @@ export const ResolveCurrentDateRange = Command.define("ResolveCurrentDateRange",
       }),
     ),
 });
+
+export * as Command from "./command";

@@ -5,7 +5,7 @@ import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
 import { ActiveDate } from "./domain";
 import { Message } from "./message";
-import { ResolveCurrentDateRange } from "./command";
+import { Command } from "./command";
 
 // MODEL
 
@@ -53,5 +53,5 @@ export const view = (_model: Model, h: HtmlBuilder<Message>): Document => ({
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: { activeDateRange: ActiveDate.machine.initial },
-  commands: [ResolveCurrentDateRange({ granularity: "Day" })],
+  commands: [Command.ResolveCurrentDateRange({ granularity: "Day" })],
 });

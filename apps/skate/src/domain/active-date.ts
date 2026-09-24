@@ -3,9 +3,9 @@ import { Machine } from "foldkit/experimental";
 import { to, when } from "foldkit/experimental/machine";
 import { defineTaggedUnion } from "foldkit/schema";
 import { evo } from "foldkit/struct";
-import { Message as GlobalMessage } from "~/message";
 import { ActiveDateUtils } from "./active-date-utils";
-import { ResolveCurrentDateRange } from "~/command";
+import { Message as ActiveDateMessage, MessageSchema } from "./active-date-message";
+import { Command } from "~/command";
 
 // MODEL
 
@@ -26,26 +26,13 @@ export type Model = typeof Model.Type;
 
 // MESSAGE
 
-export const Message = {
-  SelectedNextDateRange: {},
-  SelectedPreviousDateRange: {},
-  SelectedCurrentDateRange: {},
-
-  SelectedDayView: {},
-  SelectedWeekView: {},
-  SelectedMonthView: {},
-
-  ResolvedCurrentDateRange: {
-    granularity: ActiveDateUtils.Granularity,
-    date: Schema.Date,
-  },
-} as const;
+export const Message = MessageSchema;
 
 // MACHINE
 
 export const machine = Machine.define({
   state: Model,
-  message: GlobalMessage,
+  message: ActiveDateMessage,
 })({
   initial: Model.Initial(),
   shared: [
@@ -91,7 +78,7 @@ export const machine = Machine.define({
         SelectedCurrentDateRange: to("Day", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Day",
             }),
           ],
@@ -131,7 +118,7 @@ export const machine = Machine.define({
         SelectedCurrentDateRange: to("Week", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Week",
             }),
           ],
@@ -140,7 +127,7 @@ export const machine = Machine.define({
         SelectedDayView: to("Week", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Day",
             }),
           ],
@@ -151,7 +138,7 @@ export const machine = Machine.define({
         SelectedMonthView: to("Week", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Month",
             }),
           ],
@@ -174,7 +161,7 @@ export const machine = Machine.define({
         SelectedCurrentDateRange: to("Month", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Month",
             }),
           ],
@@ -183,7 +170,7 @@ export const machine = Machine.define({
         SelectedDayView: to("Month", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Day",
             }),
           ],
@@ -191,7 +178,7 @@ export const machine = Machine.define({
         SelectedWeekView: to("Month", ({ state }) => ({
           model: state,
           commands: [
-            ResolveCurrentDateRange({
+            Command.ResolveCurrentDateRange({
               granularity: "Week",
             }),
           ],
