@@ -83,6 +83,7 @@ export const update = (model: Model, message: Message) =>
     ),
     Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => ({
       model: evo(model, { tabletOrAbove: () => tabletOrAbove }),
+      ...(tabletOrAbove ? {} : { commands: [Command.SelectDayView()] }),
     })),
     Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
@@ -129,11 +130,51 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 
 // VIEW
 
+const weekMonthSelector = (
+  { granularity, startDate }: { granularity: "Week" | "Month"; startDate: Calendar.CalendarDate },
+  h: HtmlBuilder<Message>,
+) => {
+  const formattedMonth = Option.match(ActiveDate.formatMonth({ format: "long" }, startDate), {
+    onSome: (month) => month,
+    onNone: () => "",
+  });
+
+  return h.div(
+    [h.Class("flex gap-2 items-center")],
+    [
+      h.button(
+        [
+          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+          h.AriaLabel("Previous week"),
+          h.OnClick(Message.SelectedPreviousDateRange()),
+        ],
+        [h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")])],
+      ),
+      h.h2(
+        [h.Class("text-md text-slate-600 font-light uppercase tracking-widest")],
+        [
+          granularity === "Week"
+            ? `${formattedMonth} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`
+            : `${formattedMonth} ${startDate.year}`,
+        ],
+      ),
+      h.button(
+        [
+          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+          h.AriaLabel("Next week"),
+          h.OnClick(Message.SelectedNextDateRange()),
+        ],
+        [h.span([h.AriaHidden(true), h.InnerHTML("&#8827")])],
+      ),
+    ],
+  );
+};
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const isDayView = model.activeDateRange._tag === "Day";
 
   return {
-    title: "skate",
+    title: "skate.to",
     body: h.div(
       [
         h.Class(
@@ -156,38 +197,8 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             ),
             Match.value(model.activeDateRange).pipe(
               Match.tags({
-                Week: ({ startDate }) =>
-                  h.div(
-                    [h.Class("flex gap-2 items-center")],
-                    [
-                      h.button(
-                        [
-                          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
-                          h.AriaLabel("Previous week"),
-                          h.OnClick(Message.SelectedPreviousDateRange()),
-                        ],
-                        [h.span([h.AriaHidden(true)], ["<"])],
-                      ),
-                      h.h2(
-                        [h.Class("text-md text-slate-600 font-light uppercase tracking-widest")],
-                        [
-                          `${Option.match(ActiveDate.formatMonth({ format: "long" }, startDate), {
-                            onSome: (month) => month,
-                            onNone: () => "",
-                          })} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`,
-                        ],
-                      ),
-                      h.button(
-                        [
-                          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
-                          h.AriaLabel("Next week"),
-                          h.OnClick(Message.SelectedNextDateRange()),
-                        ],
-                        [h.span([h.AriaHidden(true)], [">"])],
-                      ),
-                    ],
-                  ),
-                Month: () => null,
+                Week: ({ startDate }) => weekMonthSelector({ granularity: "Week", startDate }, h),
+                Month: ({ startDate }) => weekMonthSelector({ granularity: "Month", startDate }, h),
               }),
               Match.orElse(() => null),
             ),
@@ -322,17 +333,28 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                   "z-10 rounded border border-slate-200 bg-white shadow-lg outline-none",
                                 ),
                               ],
-                              MainMenu.actions.map((action) =>
-                                h.button(
+                              [
+                                h.div(
+                                  [],
                                   [
-                                    h.Class(
-                                      "block w-full px-3 py-2 text-left hover:bg-slate-100 cursor-pointer",
-                                    ),
-                                    h.OnClick(Message.SelectedMainMenuAction({ action })),
+                                    h.span([], ["Menu"]),
+                                    ...(model.tabletOrAbove
+                                      ? MainMenu.actions.map((action) =>
+                                          h.keyed("button")(
+                                            action,
+                                            [
+                                              h.Class(
+                                                "block w-full px-3 py-2 text-left hover:bg-slate-100 cursor-pointer",
+                                              ),
+                                              h.OnClick(Message.SelectedMainMenuAction({ action })),
+                                            ],
+                                            [action],
+                                          ),
+                                        )
+                                      : []),
                                   ],
-                                  [action],
                                 ),
-                              ),
+                              ],
                             ),
                           ]
                         : []),
