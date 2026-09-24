@@ -1,3 +1,4 @@
+import { cn } from "cn";
 import type { HtmlBuilder } from "foldkit/html";
 import { MainMenu } from "~/domain";
 import { Message } from "~/message";
@@ -11,7 +12,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>) =>
     toParentMessage: (message) => Message.GotPopoverMessage({ message }),
     viewInputs: {
       ariaLabel: "Main menu",
-      anchor: { placement: "top-end" },
+      anchor: { placement: "top-end", gap: 8 },
       toView: (childAttributes) =>
         h.div(
           [h.Class("relative")],
@@ -30,31 +31,57 @@ export const view = (model: Model, h: HtmlBuilder<Message>) =>
                     [
                       ...childAttributes.panel,
                       h.Class(
-                        "z-10 rounded border border-slate-200 bg-white shadow-lg outline-none",
+                        "z-10 rounded-lg border border-slate-200 bg-white p-3 shadow-lg outline-none",
                       ),
                     ],
-                    [
-                      h.div(
-                        [],
-                        [
-                          h.span([], ["Menu"]),
-                          ...(model.tabletOrAbove
-                            ? MainMenu.actions.map((action) =>
-                                h.keyed("button")(
-                                  action,
-                                  [
-                                    h.Class(
-                                      "block w-full px-3 py-2 text-left hover:bg-slate-100 cursor-pointer",
-                                    ),
-                                    h.OnClick(Message.SelectedMainMenuAction({ action })),
-                                  ],
-                                  [action],
-                                ),
-                              )
-                            : []),
-                        ],
-                      ),
-                    ],
+                    model.tabletOrAbove
+                      ? [
+                          h.div(
+                            [],
+                            [
+                              h.h3(
+                                [
+                                  h.Id("main-menu-view-label"),
+                                  h.Class("mb-2 text-xs font-medium text-slate-600"),
+                                ],
+                                ["View"],
+                              ),
+                              h.div(
+                                [
+                                  h.Role("group"),
+                                  h.AriaLabelledBy("main-menu-view-label"),
+                                  h.Class("inline-flex"),
+                                ],
+                                MainMenu.actions.map((action, index, arr) => {
+                                  const isActive = model.activeDateRange._tag === action;
+                                  return h.keyed("button")(
+                                    action,
+                                    [
+                                      h.Type("button"),
+                                      h.AriaPressed(isActive ? "true" : "false"),
+                                      ...(isActive ? [h.Disabled(true)] : []),
+                                      h.Class(
+                                        cn(
+                                          "px-3 py-1.5 text-xs font-medium border-t border-b border-r border-slate-200",
+                                          index === 0 && "rounded-l-lg border-l",
+                                          index === arr.length - 1 && "rounded-r-lg border-r",
+                                          isActive
+                                            ? "bg-slate-100 text-slate-900"
+                                            : "text-slate-600 hover:bg-slate-100 cursor-pointer",
+                                        ),
+                                      ),
+                                      ...(!isActive
+                                        ? [h.OnClick(Message.SelectedMainMenuAction({ action }))]
+                                        : []),
+                                    ],
+                                    [action],
+                                  );
+                                }),
+                              ),
+                            ],
+                          ),
+                        ]
+                      : [],
                   ),
                 ]
               : []),
