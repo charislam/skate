@@ -38,6 +38,9 @@ importers:
       '@foldkit/devtools-mcp':
         specifier: ^0.20.0
         version: 0.20.0(effect@4.0.0-rc.115)(foldkit@0.160.0(@effect/platform-browser@4.0.0-rc.115(effect@4.0.0-rc.115))(effect@4.0.0-rc.115))(zod@4.6.5)
+      supabase:
+        specifier: 2.118.0-beta.52
+        version: 2.118.0-beta.52
 
   apps/cli:
     dependencies:
@@ -174,6 +177,12 @@ importers:
 
 packages:
 
+  '@ecies/ciphers@0.2.6':
+    resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
+    engines: {bun: '>=1', deno: '>=2.7.10', node: '>=16'}
+    peerDependencies:
+      '@noble/ciphers': ^1.0.0
+
   '@effect/platform-browser@4.0.0-rc.115':
     resolution: {integrity: sha512-RwpnxRYSBHBL1HYYlRwIrwz0+1hwmn5RvgqkKI0Tb+ChOIR9UCMpXsAhnwQcGP+mBidrC7dlloL42poGHZW4yw==}
     peerDependencies:
@@ -300,6 +309,18 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@noble/ciphers@1.3.0':
+    resolution: {integrity: sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw==}
+    engines: {node: ^14.21.3 || >=16}
+
+  '@noble/curves@1.9.7':
+    resolution: {integrity: sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw==}
+    engines: {node: ^14.21.3 || >=16}
+
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha512-Efcc+iF0j3Bf67YjEqIqWXbX5XddXoK/Mw4K1/JuXwRCZ8N16VR7iT23nlCc9XrveFVh/E5Rqs2StT0V8v9LdA==}
@@ -681,6 +702,50 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
+  '@supabase/cli-darwin-arm64@2.118.0-beta.52':
+    resolution: {integrity: sha512-1dMa22UY7rymvW9lx30CmtBnwESleKYmmHD2/qwUO2IaokY6F9XTLpL64a5cvWj2gbERr342jOdts2ZVkEGbBA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@supabase/cli-darwin-x64@2.118.0-beta.52':
+    resolution: {integrity: sha512-NYcvU4MpKckZwNLLw6pzrzjEGDw+mJ1kGq02C2unwEZ2p7X4jAhcS5DtVdR9rtfsINbHhLKBvdWUSyzRQEgteA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@supabase/cli-linux-arm64-musl@2.118.0-beta.52':
+    resolution: {integrity: sha512-disucwnfyKkKSNJII2oObO0Ig9bMtcNvp5K3CcpegIUKP9jX2bIiFrUNqp1hblHwRr0mZC4ZrJXaoL7O3eALSA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@supabase/cli-linux-arm64@2.118.0-beta.52':
+    resolution: {integrity: sha512-3Eun6mlV4L1yGV3QJtA9ScK6zodiiQhwuAPD6XZU4DbRzs9Bp9im0IKsaZFQMz7vmyyzQktFeJmpdy6UGRfEpQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@supabase/cli-linux-x64-musl@2.118.0-beta.52':
+    resolution: {integrity: sha512-JVZwDlg4wmyeGH+S87h3LAYPQ8e57hGjcQdYxaYrMLNlrBycCOVuVZmvMpH5daGXk8KIx6NYfb9okY9HVFS1nA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@supabase/cli-linux-x64@2.118.0-beta.52':
+    resolution: {integrity: sha512-ppqpBLLz2ESq9uRcdt6vP/wGEGlqZHIZaGf3xJP1eaQVQ44/4dgrV8I/DxyD2LzR/uKMVRn70sk7WgoDRbwLDA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@supabase/cli-windows-arm64@2.118.0-beta.52':
+    resolution: {integrity: sha512-/SQXXe6nWR+qU3Wfokm1v+5srHvP0xoWG5p4GuYkCJlRjjkZyzAGKMTbE1sVre3omSo4oZtHi1wclzciypqy+w==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@supabase/cli-windows-x64@2.118.0-beta.52':
+    resolution: {integrity: sha512-5CTV55UeCu6YEmuID7ghbao1QPDzyNpJyTSyDsweb0gm62BuHbmZL43jlosKEZAEwe3t1KGXamDtGudLEhZoUg==}
+    cpu: [x64]
+    os: [win32]
+
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
 
@@ -1027,6 +1092,10 @@ packages:
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
+
+  eciesjs@0.5.0:
+    resolution: {integrity: sha512-s0J9SEVYAEPg7J63GFMApLYzPH9VNIQIyC6s15JpnqVc0TqcKWdbgFlnAweEBRyMmko2dcs2sfC83Hj4J43tuA==}
+    engines: {bun: '>=1', deno: '>=2.7.10', node: '>=16'}
 
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
@@ -1561,6 +1630,10 @@ packages:
   std-env@4.2.0:
     resolution: {integrity: sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==}
 
+  supabase@2.118.0-beta.52:
+    resolution: {integrity: sha512-YrfZMR//BNJbiPIEc5bHq46Fa+AAkunMEhx2YJVwqtRay8j7iEv2un0SQ/EQhaYX6rRK5IE9XliaIr6gZ+XtWw==}
+    hasBin: true
+
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
@@ -1731,6 +1804,10 @@ packages:
 
 snapshots:
 
+  '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
+    dependencies:
+      '@noble/ciphers': 1.3.0
+
   '@effect/platform-browser@4.0.0-rc.115(effect@4.0.0-rc.115)':
     dependencies:
       effect: 4.0.0-rc.115
@@ -1870,6 +1947,14 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.6.5)
     transitivePeerDependencies:
       - supports-color
+
+  '@noble/ciphers@1.3.0': {}
+
+  '@noble/curves@1.9.7':
+    dependencies:
+      '@noble/hashes': 1.8.0
+
+  '@noble/hashes@1.8.0': {}
 
   '@oxc-project/types@0.149.0': {}
 
@@ -2053,6 +2138,30 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@supabase/cli-darwin-arm64@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-darwin-x64@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-linux-arm64-musl@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-linux-arm64@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-linux-x64-musl@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-linux-x64@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-windows-arm64@2.118.0-beta.52':
+    optional: true
+
+  '@supabase/cli-windows-x64@2.118.0-beta.52':
+    optional: true
 
   '@tailwindcss/node@4.3.3':
     dependencies:
@@ -2300,6 +2409,13 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-errors: 1.3.0
       gopd: 1.2.0
+
+  eciesjs@0.5.0:
+    dependencies:
+      '@ecies/ciphers': 0.2.6(@noble/ciphers@1.3.0)
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
 
   ee-first@1.1.1: {}
 
@@ -2837,6 +2953,20 @@ snapshots:
   statuses@2.0.2: {}
 
   std-env@4.2.0: {}
+
+  supabase@2.118.0-beta.52:
+    dependencies:
+      eciesjs: 0.5.0
+      jose: 6.2.12
+    optionalDependencies:
+      '@supabase/cli-darwin-arm64': 2.118.0-beta.52
+      '@supabase/cli-darwin-x64': 2.118.0-beta.52
+      '@supabase/cli-linux-arm64': 2.118.0-beta.52
+      '@supabase/cli-linux-arm64-musl': 2.118.0-beta.52
+      '@supabase/cli-linux-x64': 2.118.0-beta.52
+      '@supabase/cli-linux-x64-musl': 2.118.0-beta.52
+      '@supabase/cli-windows-arm64': 2.118.0-beta.52
+      '@supabase/cli-windows-x64': 2.118.0-beta.52
 
   tailwindcss@4.3.3: {}
 
