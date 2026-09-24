@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { Calendar } from "foldkit";
 import { Message as GlobalMessage } from "~/message";
 import { ActiveDate } from "./active-date";
+import { ActiveDateMessage } from "./active-date-message";
 
 const { machine, Model } = ActiveDate;
 const context = { today: Calendar.make(2024, 5, 17) };
-const transition = (state: ActiveDate.Model, message: GlobalMessage) =>
+const transition = (state: ActiveDate.Model, message: typeof ActiveDateMessage.Message.Type) =>
   machine.transition(state, message, context);
-const step = (state: ActiveDate.Model, message: GlobalMessage) =>
+const step = (state: ActiveDate.Model, message: typeof ActiveDateMessage.Message.Type) =>
   machine.step(state, message, context);
 
 describe("ActiveDate machine", () => {

@@ -1,5 +1,5 @@
-import { Effect, Match, Option, Schema } from "effect";
-import { Calendar, type Runtime, type Update } from "foldkit";
+import { Effect, Match, Option, Schema, Stream } from "effect";
+import { Calendar, type Runtime, Subscription, type Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
@@ -13,6 +13,7 @@ import { cn } from "cn";
 export const Model = Schema.Struct({
   today: Calendar.CalendarDate,
   activeDateRange: ActiveDate.Model,
+  tabletOrAbove: Schema.Boolean,
 });
 
 export type Model = typeof Model.Type;
@@ -21,13 +22,15 @@ export type Model = typeof Model.Type;
 
 export const Flags = Schema.Struct({
   today: Calendar.CalendarDate,
+  tabletOrAbove: Schema.Boolean,
 });
 
 export type Flags = typeof Flags.Type;
 
 export const flags = Effect.gen(function* () {
   const today = yield* Calendar.today.local;
-  return { today };
+  const tabletOrAbove = window.matchMedia("(min-width: 1024px)").matches;
+  return { today, tabletOrAbove };
 });
 
 // UPDATE
@@ -53,10 +56,36 @@ export const update = (model: Model, message: Message) =>
       "SelectedWeekView",
       "SelectedMonthView",
       "SyncedInitialDate",
-      () => foldActiveDate(model, message),
+      (activeDateMessage) => foldActiveDate(model, activeDateMessage),
     ),
+    Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => ({
+      model: evo(model, { tabletOrAbove: () => tabletOrAbove }),
+    })),
     Match.exhaustive,
   );
+
+// SUBSCRIPTION
+
+export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
+  mediaWidth: entry(
+    {},
+    {
+      modelToDependencies: () => ({}),
+      dependenciesToStream: () =>
+        Stream.unwrap(
+          Effect.sync(() => {
+            const mediaQuery = window.matchMedia("(min-width: 1024px)");
+
+            return Subscription.fromEvent<MediaQueryListEvent, Message>({
+              target: mediaQuery,
+              type: "change",
+              toMessage: (event) => Message.MediaWidthChanged({ tabletOrAbove: event.matches }),
+            });
+          }),
+        ),
+    },
+  ),
+}));
 
 // VIEW
 
@@ -145,13 +174,22 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
           ),
         ),
         h.footer(
-          [],
+          [h.Class("flex gap-2 justify-between items-baseline")],
           [
             h.button([
-              h.Class("text-sm text-slate-600 hover:underline underline-offset-2 cursor-pointer"),
+              h.Class(
+                "text-sm text-slate-600 hover:bg-slate-100 underline-offset-2 cursor-pointer",
+              ),
               h.OnClick(Message.SelectedCurrentDateRange()),
               h.InnerHTML("Go to today &rarr;"),
             ]),
+            h.button(
+              [h.Class("text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer")],
+              [
+                h.span([h.Class("sr-only")], ["Menu"]),
+                h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")]),
+              ],
+            ),
           ],
         ),
       ],
@@ -162,6 +200,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 // INIT
 
 export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flags) => ({
-  model: { today: flags.today, activeDateRange: ActiveDate.machine.initial },
+  model: {
+    today: flags.today,
+    activeDateRange: ActiveDate.machine.initial,
+    tabletOrAbove: flags.tabletOrAbove,
+  },
   commands: [Command.SyncInitialDate({ today: flags.today })],
 });
