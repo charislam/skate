@@ -1,4 +1,4 @@
-import { Match, Schema } from "effect";
+import { Match, Option, Schema } from "effect";
 import { Calendar } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import { to } from "foldkit/experimental/machine";
@@ -29,6 +29,16 @@ export const Message = MessageSchema;
 
 // UTILS
 
+export const DAYS_OF_WEEK = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+] as const;
+
 export const isDateRangeCurrent = (dateRange: Model, today: Calendar.CalendarDate): boolean =>
   Match.value(dateRange).pipe(
     Match.tagsExhaustive({
@@ -38,6 +48,17 @@ export const isDateRangeCurrent = (dateRange: Model, today: Calendar.CalendarDat
       Month: ({ startDate }) => Calendar.isEqual(startDate, Calendar.firstOfMonth(today)),
     }),
   );
+
+export const formatMonth = (
+  options: { format: "long" | "short" },
+  date: Calendar.CalendarDate,
+): Option.Option<string> => {
+  const fullFormattedDate =
+    options.format === "long"
+      ? Calendar.formatLong(Calendar.defaultEnglishLocale)(date)
+      : Calendar.formatShort(Calendar.defaultEnglishLocale)(date);
+  return Option.fromUndefinedOr(fullFormattedDate.split(" ")[0]);
+};
 
 // MACHINE
 

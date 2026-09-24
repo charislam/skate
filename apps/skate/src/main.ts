@@ -60,6 +60,14 @@ const foldPopover = Update.foldChild({
   foldOutMessage: foldPopoverOutMessage,
 });
 
+const foldPopoverClose = Update.foldChildStep({
+  update: Popover.close,
+  read: (model: Model) => Option.some(model.menu),
+  write: (model, nextMenu) => evo(model, { menu: () => nextMenu }),
+  toParentMessage: (message) => Message.GotPopoverMessage({ message }),
+  foldOutMessage: foldPopoverOutMessage,
+});
+
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
     Match.withReturnType<Update.Return<Model, Message>>(),
@@ -79,7 +87,7 @@ export const update = (model: Model, message: Message) =>
     Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
       Update.combine(model, [
-        (currentModel) => foldPopover(currentModel, Popover.Message.RequestedClose()),
+        foldPopoverClose,
         (currentModel) => ({
           model: currentModel,
           commands: [
@@ -127,13 +135,62 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   return {
     title: "skate",
     body: h.div(
-      [h.Class(cn("h-screen mx-auto px-4 py-6 flex flex-col gap-8", isDayView && "max-w-xl"))],
       [
-        h.hgroup(
-          [h.Class("flex items-baseline")],
+        h.Class(
+          cn(
+            "h-screen mx-auto px-4 xl:px-12 py-6 flex flex-col gap-8 lg:gap-12",
+            isDayView && "max-w-xl",
+          ),
+        ),
+      ],
+      [
+        h.div(
+          [h.Class("flex gap-2 justify-between items-baseline")],
           [
-            h.h1([h.Class("text-4xl")], ["skate"]),
-            h.p([h.Class("text-sm text-slate-800 translate-y-1/4")], ["TO"]),
+            h.hgroup(
+              [h.Class("flex items-baseline")],
+              [
+                h.h1([h.Class("text-4xl")], ["skate"]),
+                h.p([h.Class("text-sm text-slate-800 translate-y-1/4")], ["TO"]),
+              ],
+            ),
+            Match.value(model.activeDateRange).pipe(
+              Match.tags({
+                Week: ({ startDate }) =>
+                  h.div(
+                    [h.Class("flex gap-2 items-center")],
+                    [
+                      h.button(
+                        [
+                          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+                          h.AriaLabel("Previous week"),
+                          h.OnClick(Message.SelectedPreviousDateRange()),
+                        ],
+                        [h.span([h.AriaHidden(true)], ["<"])],
+                      ),
+                      h.h2(
+                        [h.Class("text-md text-slate-600 font-light uppercase tracking-widest")],
+                        [
+                          `${Option.match(ActiveDate.formatMonth({ format: "long" }, startDate), {
+                            onSome: (month) => month,
+                            onNone: () => "",
+                          })} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`,
+                        ],
+                      ),
+                      h.button(
+                        [
+                          h.Class("text-slate-400 hover:bg-slate-100 cursor-pointer"),
+                          h.AriaLabel("Next week"),
+                          h.OnClick(Message.SelectedNextDateRange()),
+                        ],
+                        [h.span([h.AriaHidden(true)], [">"])],
+                      ),
+                    ],
+                  ),
+                Month: () => null,
+              }),
+              Match.orElse(() => null),
+            ),
           ],
         ),
         h.main(
@@ -155,9 +212,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                             h.span(
                               [h.Class("uppercase text-sm text-slate-600")],
                               [
-                                Calendar.formatShort(Calendar.defaultEnglishLocale)(date).split(
-                                  " ",
-                                )[0] ?? "",
+                                Option.match(ActiveDate.formatMonth({ format: "short" }, date), {
+                                  onSome: (month) => month,
+                                  onNone: () => "",
+                                }),
                               ],
                             ),
                             h.span(
@@ -179,7 +237,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                             h.OnClick(Message.SelectedPreviousDateRange()),
                           ],
                           [
-                            h.span([h.Class("sr-only")], ["Previous"]),
+                            h.span([h.Class("sr-only")], ["Previous day"]),
                             h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")]),
                           ],
                         ),
@@ -191,7 +249,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                             h.OnClick(Message.SelectedNextDateRange()),
                           ],
                           [
-                            h.span([h.Class("sr-only")], ["Next"]),
+                            h.span([h.Class("sr-only")], ["Next day"]),
                             h.span([h.AriaHidden(true), h.InnerHTML("&#8827;")]),
                           ],
                         ),
@@ -200,7 +258,25 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                   ],
                 ),
               ],
-              Week: () => [],
+              Week: ({ startDate }) => [
+                h.div(
+                  [h.Class("flex flex-col gap-2")],
+                  [
+                    h.div(
+                      [h.Class("grid grid-cols-7 gap-2")],
+                      [
+                        ...ActiveDate.DAYS_OF_WEEK.map((dayOfWeek, index) =>
+                          h.keyed("div")(
+                            dayOfWeek,
+                            [h.Class("text-md tracking-wide")],
+                            [`${dayOfWeek.slice(0, 3)} ${Calendar.addDays(startDate, index).day}`],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
               Month: () => [],
             }),
           ),
