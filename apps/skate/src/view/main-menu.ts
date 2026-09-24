@@ -37,56 +37,66 @@ export const view = (model: Model, h: HtmlBuilder<Message>) =>
                         "z-10 rounded-lg border border-slate-200 bg-white p-3 shadow-lg outline-none dark:border-slate-700 dark:bg-slate-900",
                       ),
                     ],
-                    model.tabletOrAbove
-                      ? [
-                          h.div(
-                            [],
-                            [
-                              h.h3(
-                                [
-                                  h.Id("main-menu-view-label"),
-                                  h.Class(
-                                    "mb-2 text-xs font-medium text-slate-600 dark:text-slate-300",
-                                  ),
-                                ],
-                                ["View"],
-                              ),
-                              h.div(
-                                [
-                                  h.Role("group"),
-                                  h.AriaLabelledBy("main-menu-view-label"),
-                                  h.Class("inline-flex"),
-                                ],
-                                MainMenu.actions.map((action, index, arr) => {
-                                  const isActive = model.activeDateRange._tag === action;
-                                  return h.keyed("button")(
-                                    action,
-                                    [
-                                      h.Type("button"),
-                                      h.AriaPressed(isActive ? "true" : "false"),
-                                      ...(isActive ? [h.Disabled(true)] : []),
-                                      h.Class(
-                                        cn(
-                                          "px-3 py-1.5 text-xs font-medium border-t border-b border-r border-slate-200 dark:border-slate-700",
-                                          index === 0 && "rounded-l-lg border-l",
-                                          index === arr.length - 1 && "rounded-r-lg border-r",
-                                          isActive
-                                            ? "bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-white"
-                                            : "text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
+                    [
+                      h.div(
+                        [h.Class("flex flex-col divide-y divide-slate-200 dark:divide-slate-700")],
+                        [
+                          ...(model.tabletOrAbove
+                            ? [
+                                h.div(
+                                  [h.Class("pb-3")],
+                                  [
+                                    h.h3(
+                                      [
+                                        h.Id("main-menu-view-label"),
+                                        h.Class(
+                                          "mb-2 text-xs font-medium text-slate-600 dark:text-slate-300",
                                         ),
-                                      ),
-                                      ...(!isActive
-                                        ? [h.OnClick(Message.SelectedMainMenuAction({ action }))]
-                                        : []),
-                                    ],
-                                    [action],
-                                  );
-                                }),
-                              ),
-                            ],
-                          ),
+                                      ],
+                                      ["View"],
+                                    ),
+                                    h.div(
+                                      [
+                                        h.Role("group"),
+                                        h.AriaLabelledBy("main-menu-view-label"),
+                                        h.Class("inline-flex"),
+                                      ],
+                                      MainMenu.actions.map((action, index, arr) => {
+                                        const isActive = model.activeDateRange._tag === action;
+                                        return h.keyed("button")(
+                                          action,
+                                          [
+                                            h.Type("button"),
+                                            h.AriaPressed(isActive ? "true" : "false"),
+                                            ...(isActive ? [h.Disabled(true)] : []),
+                                            h.Class(
+                                              cn(
+                                                "px-3 py-1.5 text-xs font-medium border-t border-b border-r border-slate-200 dark:border-slate-700",
+                                                index === 0 && "rounded-l-lg border-l",
+                                                index === arr.length - 1 && "rounded-r-lg border-r",
+                                                isActive
+                                                  ? "bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-white"
+                                                  : "text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
+                                              ),
+                                            ),
+                                            ...(!isActive
+                                              ? [
+                                                  h.OnClick(
+                                                    Message.SelectedMainMenuAction({ action }),
+                                                  ),
+                                                ]
+                                              : []),
+                                          ],
+                                          [action],
+                                        );
+                                      }),
+                                    ),
+                                  ],
+                                ),
+                              ]
+                            : []),
                           h.div(
-                            [h.Class("mt-3 border-t border-slate-200 pt-3 dark:border-slate-700")],
+                            [h.Class(cn(model.tabletOrAbove && "pt-3"))],
                             [
                               h.h3(
                                 [
@@ -149,8 +159,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>) =>
                               ),
                             ],
                           ),
-                        ]
-                      : [],
+                        ],
+                      ),
+                    ],
                   ),
                 ]
               : []),
