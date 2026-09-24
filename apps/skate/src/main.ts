@@ -1,4 +1,4 @@
-import { Menu } from "@foldkit/ui";
+import { Popover } from "@foldkit/ui";
 import { cn } from "cn";
 import { Effect, Match, Option, Schema, Stream } from "effect";
 import { Calendar, type Runtime, Subscription, Update } from "foldkit";
@@ -14,7 +14,7 @@ import { Message } from "./message";
 export const Model = Schema.Struct({
   today: Calendar.CalendarDate,
   activeDateRange: ActiveDate.Model,
-  menu: Menu.Model,
+  menu: Popover.Model,
   tabletOrAbove: Schema.Boolean,
 });
 
@@ -47,31 +47,17 @@ const foldActiveDate = Machine.fold({
     }),
 });
 
-const foldMenuOutMessage = Menu.OutMessage.match<
-  Update.Step<Model, Message>,
-  Menu.OutMessage<MainMenu.Action>
->({
-  Selected:
-    ({ value }) =>
-    (model) => ({
-      model,
-      commands: [
-        Match.value(value).pipe(
-          Match.when("Day", () => Command.SelectDayView()),
-          Match.when("Week", () => Command.SelectWeekView()),
-          Match.when("Month", () => Command.SelectMonthView()),
-          Match.exhaustive,
-        ),
-      ],
-    }),
+const foldPopoverOutMessage = Popover.OutMessage.match<Update.Step<Model, Message>>({
+  Opened: () => (model) => ({ model }),
+  Closed: () => (model) => ({ model }),
 });
 
-const foldMenu = Update.foldChild({
-  update: MainMenu.Menu.update,
+const foldPopover = Update.foldChild({
+  update: MainMenu.Popover.update,
   read: (model: Model) => Option.some(model.menu),
   write: (model, nextMenu) => evo(model, { menu: () => nextMenu }),
-  toParentMessage: (message) => Message.GotMenuMessage({ message }),
-  foldOutMessage: foldMenuOutMessage,
+  toParentMessage: (message) => Message.GotPopoverMessage({ message }),
+  foldOutMessage: foldPopoverOutMessage,
 });
 
 export const update = (model: Model, message: Message) =>
@@ -90,7 +76,23 @@ export const update = (model: Model, message: Message) =>
     Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => ({
       model: evo(model, { tabletOrAbove: () => tabletOrAbove }),
     })),
-    Match.tag("GotMenuMessage", ({ message }) => foldMenu(model, message)),
+    Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
+    Match.tag("SelectedMainMenuAction", ({ action }) =>
+      Update.combine(model, [
+        (currentModel) => foldPopover(currentModel, Popover.Message.RequestedClose()),
+        (currentModel) => ({
+          model: currentModel,
+          commands: [
+            Match.value(action).pipe(
+              Match.when("Day", () => Command.SelectDayView()),
+              Match.when("Week", () => Command.SelectWeekView()),
+              Match.when("Month", () => Command.SelectMonthView()),
+              Match.exhaustive,
+            ),
+          ],
+        }),
+      ]),
+    ),
     Match.exhaustive,
   );
 
@@ -218,21 +220,48 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             h.submodel({
               slotId: "main-menu",
               model: model.menu,
-              view: MainMenu.Menu.view,
-              toParentMessage: (message) => Message.GotMenuMessage({ message }),
+              view: MainMenu.Popover.view,
+              toParentMessage: (message) => Message.GotPopoverMessage({ message }),
               viewInputs: {
                 ariaLabel: "Main menu",
-                items: MainMenu.actions,
-                buttonContent: h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")]),
-                buttonClassName: "text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer",
-                itemToConfig: (action, { isActive }) => ({
-                  className: isActive ? "bg-slate-100" : "",
-                  content: h.div([h.Class("px-3 py-2")], [action]),
-                }),
-                backdropClassName: "fixed inset-0",
-                anchor: {
-                  placement: "top-end",
-                },
+                anchor: { placement: "top-end" },
+                toView: ({ button, panel, backdrop, isVisible }) =>
+                  h.div(
+                    [h.Class("relative")],
+                    [
+                      h.button(
+                        [
+                          ...button,
+                          h.Class("text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer"),
+                        ],
+                        [h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")])],
+                      ),
+                      ...(isVisible
+                        ? [
+                            h.div([...backdrop, h.Class("fixed inset-0")]),
+                            h.div(
+                              [
+                                ...panel,
+                                h.Class(
+                                  "z-10 rounded border border-slate-200 bg-white shadow-lg outline-none",
+                                ),
+                              ],
+                              MainMenu.actions.map((action) =>
+                                h.button(
+                                  [
+                                    h.Class(
+                                      "block w-full px-3 py-2 text-left hover:bg-slate-100 cursor-pointer",
+                                    ),
+                                    h.OnClick(Message.SelectedMainMenuAction({ action })),
+                                  ],
+                                  [action],
+                                ),
+                              ),
+                            ),
+                          ]
+                        : []),
+                    ],
+                  ),
               },
             }),
           ],
@@ -248,7 +277,7 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flag
   model: {
     today: flags.today,
     activeDateRange: ActiveDate.machine.initial,
-    menu: Menu.init({ id: "main-menu" }),
+    menu: Popover.init({ id: "main-menu", contentFocus: true }),
     tabletOrAbove: flags.tabletOrAbove,
   },
   commands: [Command.SyncInitialDate({ today: flags.today })],

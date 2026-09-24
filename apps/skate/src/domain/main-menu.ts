@@ -1,8 +1,8 @@
-import { Menu as FoldkitMenu } from "@foldkit/ui";
+import { Popover } from "@foldkit/ui";
 
 export type Action = "Day" | "Week" | "Month";
 export const actions: ReadonlyArray<Action> = ["Day", "Week", "Month"];
 
-export const Menu = FoldkitMenu.create<Action>();
+export { Popover };
 
 export * as MainMenu from "./main-menu";

@@ -1,0 +1,27 @@
+[mcp_servers.foldkit-devtools]
+command = "pnpm"
+args = ["exec", "foldkit-devtools-mcp"]
+
+[mcp_servers.foldkit-devtools.tools.foldkit_list_runtimes]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_get_runtime_state]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_list_messages]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_get_message_schema]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_get_init]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_dispatch_message]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_get_model]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_count_messages_by_tag]
+approval_mode = "approve"

@@ -1,4 +1,4 @@
-import { Menu } from "@foldkit/ui";
+import { Popover } from "@foldkit/ui";
 import { Schema } from "effect";
 import { defineMessageUnion } from "foldkit/message";
 import { ActiveDateMessage } from "./domain/active-date-message";
@@ -8,8 +8,11 @@ export const Message = defineMessageUnion({
   MediaWidthChanged: {
     tabletOrAbove: Schema.Boolean,
   },
-  GotMenuMessage: {
-    message: Menu.Message,
+  GotPopoverMessage: {
+    message: Popover.Message,
+  },
+  SelectedMainMenuAction: {
+    action: Schema.Literals(["Day", "Week", "Month"]),
   },
 });
 
