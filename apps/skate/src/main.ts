@@ -1,18 +1,20 @@
+import { Menu } from "@foldkit/ui";
+import { cn } from "cn";
 import { Effect, Match, Option, Schema, Stream } from "effect";
-import { Calendar, type Runtime, Subscription, type Update } from "foldkit";
+import { Calendar, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { evo } from "foldkit/struct";
-import { ActiveDate } from "./domain";
-import { Message } from "./message";
 import { Command } from "./command";
-import { cn } from "cn";
+import { ActiveDate, MainMenu } from "./domain";
+import { Message } from "./message";
 
 // MODEL
 
 export const Model = Schema.Struct({
   today: Calendar.CalendarDate,
   activeDateRange: ActiveDate.Model,
+  menu: Menu.Model,
   tabletOrAbove: Schema.Boolean,
 });
 
@@ -45,6 +47,33 @@ const foldActiveDate = Machine.fold({
     }),
 });
 
+const foldMenuOutMessage = Menu.OutMessage.match<
+  Update.Step<Model, Message>,
+  Menu.OutMessage<MainMenu.Action>
+>({
+  Selected:
+    ({ value }) =>
+    (model) => ({
+      model,
+      commands: [
+        Match.value(value).pipe(
+          Match.when("Day", () => Command.SelectDayView()),
+          Match.when("Week", () => Command.SelectWeekView()),
+          Match.when("Month", () => Command.SelectMonthView()),
+          Match.exhaustive,
+        ),
+      ],
+    }),
+});
+
+const foldMenu = Update.foldChild({
+  update: MainMenu.Menu.update,
+  read: (model: Model) => Option.some(model.menu),
+  write: (model, nextMenu) => evo(model, { menu: () => nextMenu }),
+  toParentMessage: (message) => Message.GotMenuMessage({ message }),
+  foldOutMessage: foldMenuOutMessage,
+});
+
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
     Match.withReturnType<Update.Return<Model, Message>>(),
@@ -61,6 +90,7 @@ export const update = (model: Model, message: Message) =>
     Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => ({
       model: evo(model, { tabletOrAbove: () => tabletOrAbove }),
     })),
+    Match.tag("GotMenuMessage", ({ message }) => foldMenu(model, message)),
     Match.exhaustive,
   );
 
@@ -176,20 +206,35 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
         h.footer(
           [h.Class("flex gap-2 justify-between items-baseline")],
           [
-            h.button([
-              h.Class(
-                "text-sm text-slate-600 hover:bg-slate-100 underline-offset-2 cursor-pointer",
-              ),
-              h.OnClick(Message.SelectedCurrentDateRange()),
-              h.InnerHTML("Go to today &rarr;"),
-            ]),
-            h.button(
-              [h.Class("text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer")],
-              [
-                h.span([h.Class("sr-only")], ["Menu"]),
-                h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")]),
-              ],
-            ),
+            ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
+              ? h.span([])
+              : h.button([
+                  h.Class(
+                    "text-sm text-slate-600 hover:bg-slate-100 underline-offset-2 cursor-pointer",
+                  ),
+                  h.OnClick(Message.SelectedCurrentDateRange()),
+                  h.InnerHTML("Go to today &rarr;"),
+                ]),
+            h.submodel({
+              slotId: "main-menu",
+              model: model.menu,
+              view: MainMenu.Menu.view,
+              toParentMessage: (message) => Message.GotMenuMessage({ message }),
+              viewInputs: {
+                ariaLabel: "Main menu",
+                items: MainMenu.actions,
+                buttonContent: h.span([h.AriaHidden(true), h.InnerHTML("&#x2630;")]),
+                buttonClassName: "text-3xl text-slate-600 hover:bg-slate-100 cursor-pointer",
+                itemToConfig: (action, { isActive }) => ({
+                  className: isActive ? "bg-slate-100" : "",
+                  content: h.div([h.Class("px-3 py-2")], [action]),
+                }),
+                backdropClassName: "fixed inset-0",
+                anchor: {
+                  placement: "top-end",
+                },
+              },
+            }),
           ],
         ),
       ],
@@ -203,6 +248,7 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags> = (flags: Flag
   model: {
     today: flags.today,
     activeDateRange: ActiveDate.machine.initial,
+    menu: Menu.init({ id: "main-menu" }),
     tabletOrAbove: flags.tabletOrAbove,
   },
   commands: [Command.SyncInitialDate({ today: flags.today })],
