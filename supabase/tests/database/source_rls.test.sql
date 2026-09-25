@@ -1,6 +1,6 @@
 begin;
 
-select plan(16);
+select plan(25);
 
 insert into public.role (id, name, source_read, source_write)
 values
@@ -30,6 +30,12 @@ values (900000001, 'web_scrape', 'https://example.test/source', null);
 select ok(has_column_privilege('authenticated', 'public.source', 'type', 'select'), 'authenticated can select source type');
 select ok(has_column_privilege('authenticated', 'public.source', 'url', 'select'), 'authenticated can select source url');
 select ok(has_column_privilege('authenticated', 'public.source', 'notes', 'select'), 'authenticated can select source notes');
+select ok(has_column_privilege('authenticated', 'public.source', 'enabled', 'select'), 'authenticated can select source enabled');
+select ok(has_column_privilege('authenticated', 'public.source', 'last_fetched', 'select'), 'authenticated can select source last_fetched');
+select ok(has_column_privilege('authenticated', 'public.source', 'enabled', 'insert'), 'authenticated can insert source enabled');
+select ok(not has_column_privilege('authenticated', 'public.source', 'last_fetched', 'insert'), 'authenticated cannot insert source last_fetched');
+select ok(has_column_privilege('authenticated', 'public.source', 'enabled', 'update'), 'authenticated can update source enabled');
+select ok(not has_column_privilege('authenticated', 'public.source', 'last_fetched', 'update'), 'authenticated cannot update source last_fetched');
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000001';
@@ -52,9 +58,9 @@ set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000002';
 
 select is((select count(*)::integer from public.source), 1, 'source reader can read sources');
 select is((
-  select type || '|' || url || '|' || coalesce(notes, '<null>')
+  select type || '|' || url || '|' || coalesce(notes, '<null>') || '|' || enabled::text || '|' || coalesce(last_fetched::text, '<null>')
   from public.source where id = 900000001
-), 'web_scrape|https://example.test/source|<null>', 'source reader can select source columns');
+), 'web_scrape|https://example.test/source|<null>|true|<null>', 'source reader can select source columns');
 select throws_ok(
   $$insert into public.source (type, url, notes) values ('web_scrape', 'https://example.test/reader', null)$$,
   '42501', null, 'source reader cannot insert sources'
@@ -76,8 +82,18 @@ select lives_ok(
   'source writer can insert sources'
 );
 update public.source set url = 'https://example.test/updated' where id = 900000001;
+update public.source set enabled = false where id = 900000001;
+select throws_ok(
+  $$update public.source set last_fetched = now() where id = 900000001$$,
+  '42501', null, 'source writer cannot update last_fetched'
+);
+select throws_ok(
+  $$insert into public.source (type, url, last_fetched) values ('web_scrape', 'https://example.test/last-fetched', now())$$,
+  '42501', null, 'source writer cannot insert last_fetched'
+);
 reset role;
 select is((select url from public.source where id = 900000001), 'https://example.test/updated', 'source writer can update sources');
+select is((select enabled from public.source where id = 900000001), false, 'source writer can update enabled');
 set local role authenticated;
 delete from public.source where id = 900000001;
 reset role;
