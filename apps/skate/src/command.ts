@@ -3,7 +3,6 @@ import { Calendar, Command as FoldkitCommand } from "foldkit";
 import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { Auth } from "./domain/auth";
 import { Message } from "~/message";
-import { UserId } from "./domain/session";
 import {
   type RedirectDestination,
   RedirectDestination as RedirectDestinationSchema,
@@ -82,17 +81,6 @@ export const SignOut = FoldkitCommand.define("SignOut", {
       Effect.succeed(Message.FailedSignOut({ kind: error.kind })),
     ),
   ),
-});
-
-export const FetchAdminAccess = FoldkitCommand.define("FetchAdminAccess", {
-  args: { userId: UserId, requestId: Schema.Number },
-  messages: [Message.SettledFetchAdminAccess],
-  execute: ({ userId, requestId }) =>
-    Effect.gen(function* () {
-      const auth = yield* Auth.Service;
-      const result = yield* Effect.result(auth.hasAdminAccess());
-      return Message.SettledFetchAdminAccess({ userId, requestId, result });
-    }),
 });
 
 export * as Command from "./command";

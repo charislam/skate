@@ -9,17 +9,9 @@ import { Session } from "./domain/session";
 import { Auth } from "./domain/auth";
 import { Toast } from "./toast";
 import * as Login from "./page/login/message";
-import { PermissionError } from "./domain/admin-access";
-import { UserId } from "./domain/session";
+import * as Admin from "./page/admin/message";
 
 export const Message = defineMessageUnion({
-  ClickedRetryAdminAccess: {},
-  InvalidatedAdminAccess: {},
-  SettledFetchAdminAccess: {
-    userId: UserId,
-    requestId: Schema.Number,
-    result: Schema.Result(Schema.Boolean, PermissionError),
-  },
   ...ActiveDateMessage.MessageSchema,
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
@@ -29,6 +21,7 @@ export const Message = defineMessageUnion({
   FailedSignOut: { kind: Auth.ErrorKind },
   AuthStateChanged: { maybeSession: Schema.Option(Session) },
   GotLoginMessage: { message: Login.Message },
+  GotAdminMessage: { message: Admin.Message },
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   MediaWidthChanged: {

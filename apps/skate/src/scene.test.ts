@@ -13,6 +13,7 @@ import { AppRoute, LoggedOutRoute } from "./route";
 import * as Login from "./page/login/model";
 import { Message as LoginMessage } from "./page/login/message";
 import { SignInWithPassword } from "./page/login/update";
+import * as Admin from "./page/admin/model";
 import { update, view } from "./main";
 
 const today = Calendar.make(2024, 5, 17);
@@ -28,7 +29,6 @@ const modelWith = (
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
-  adminAccessRequestId: 0,
   toast: Toast.init({ id: "app-toast" }),
   loginModel: Login.init(),
 });
@@ -48,7 +48,10 @@ describe("view", () => {
     ...modelWith(calendar),
     _tag: "LoggedIn",
     route: AppRoute.Admin(),
-    adminAccess: AdminAccess.Success({ data: true }),
+    adminModel: {
+      ...Admin.init(),
+      adminAccess: AdminAccess.Success({ data: true }),
+    },
     session: { userId: UserId.make("user-1"), email: Option.none() },
   };
 
@@ -65,7 +68,7 @@ describe("view", () => {
   ] as const)("admin navigation is permission gated when %s", (_, adminAccess, allowed) => {
     scene(
       { update, view },
-      given({ ...admin, route: AppRoute.Home(), adminAccess }),
+      given({ ...admin, route: AppRoute.Home(), adminModel: { ...admin.adminModel, adminAccess } }),
       click(role("button", { name: "Main menu" })),
       acknowledgeAnchor,
       acknowledgeBackdrop,
@@ -79,7 +82,10 @@ describe("view", () => {
   test("admin content stays hidden during permission revalidation", () => {
     scene(
       { update, view },
-      given({ ...admin, adminAccess: AdminAccess.Refreshing({ data: true }) }),
+      given({
+        ...admin,
+        adminModel: { ...admin.adminModel, adminAccess: AdminAccess.Refreshing({ data: true }) },
+      }),
       expect(role("heading", { name: "Admin" })).not.toExist(),
       expect(role("status")).toHaveText("Checking admin access…"),
     );

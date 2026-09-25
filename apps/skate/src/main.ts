@@ -1,14 +1,7 @@
 import { Popover } from "@foldkit/ui";
 import { BrowserKeyValueStore } from "@effect/platform-browser";
 import { Console, Effect, Match, Option, Schema, Stream } from "effect";
-import {
-  AsyncData,
-  Calendar,
-  Command as FoldkitCommand,
-  type Runtime,
-  Subscription,
-  Update,
-} from "foldkit";
+import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { UrlRequest } from "foldkit/navigation";
@@ -24,7 +17,11 @@ import {
 import { ActiveDate, MainMenu, Theme } from "./domain";
 import { Auth } from "./domain/auth";
 import { Session } from "./domain/session";
-import { AdminAccess, canAccessAdmin } from "./domain/admin-access";
+import { canAccessAdmin } from "./domain/admin-access";
+import * as Admin from "./page/admin/model";
+import * as AdminMessage from "./page/admin/message";
+import { invalidate as invalidateAdmin, update as updateAdmin } from "./page/admin/update";
+import { view as adminView } from "./page/admin/view";
 import { Message } from "./message";
 import { LoggedInModel, LoggedOutModel, type Model } from "./model";
 import { Toast } from "./toast";
@@ -159,6 +156,39 @@ const foldLogin = Update.foldChild({
   }),
 });
 
+const foldAdminOutMessage = AdminMessage.OutMessage.match<
+  Update.Step<Model, Message, Auth.Service>
+>({
+  RequestedLogout: () => (stepModel) => ({ model: stepModel, commands: [SignOut()] }),
+  DeniedAccess: () => (stepModel) =>
+    stepModel._tag === "LoggedIn" && stepModel.route._tag === "Admin"
+      ? withRouteRedirect(evo(stepModel, { route: () => AppRoute.Home() }), Option.some("Home"))
+      : { model: stepModel },
+});
+
+const foldAdmin = (session: Session) =>
+  Update.foldChild({
+    update: (adminModel: Admin.Model, message: AdminMessage.Message) =>
+      updateAdmin(adminModel, message, { userId: session.userId }),
+    read: (model: Model) =>
+      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
+    write: (model, nextAdminModel) =>
+      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
+    toParentMessage: (message) => Message.GotAdminMessage({ message }),
+    foldOutMessage: foldAdminOutMessage,
+  });
+
+const foldAdminInvalidation = (session: Session) =>
+  Update.foldChildStep({
+    update: (adminModel: Admin.Model) => invalidateAdmin(adminModel, { userId: session.userId }),
+    read: (model: Model) =>
+      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
+    write: (model, nextAdminModel) =>
+      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
+    toParentMessage: (message) => Message.GotAdminMessage({ message }),
+    foldOutMessage: foldAdminOutMessage,
+  });
+
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
     Match.withReturnType<Update.Return<Model, Message, Auth.Service>>(),
@@ -210,31 +240,9 @@ export const update = (model: Model, message: Message) =>
         onSome: (session) => updateLoggedInSession(model, session),
       }),
     ),
-    Match.tag("ClickedRetryAdminAccess", "InvalidatedAdminAccess", () =>
-      revalidateAdminAccess(model),
+    Match.tag("GotAdminMessage", ({ message }) =>
+      model._tag === "LoggedIn" ? foldAdmin(model.session)(model, message) : { model },
     ),
-    Match.tag("SettledFetchAdminAccess", ({ userId, requestId, result }) => {
-      if (
-        model._tag !== "LoggedIn" ||
-        model.session.userId !== userId ||
-        model.adminAccessRequestId !== requestId ||
-        !AsyncData.isPending(model.adminAccess)
-      ) {
-        return { model };
-      }
-      const nextModel = evo(model, { adminAccess: AsyncData.settle(result) });
-      if (
-        nextModel.route._tag === "Admin" &&
-        nextModel.adminAccess._tag === "Success" &&
-        !nextModel.adminAccess.data
-      ) {
-        return withRouteRedirect(
-          evo(nextModel, { route: () => AppRoute.Home() }),
-          Option.some("Home"),
-        );
-      }
-      return { model: nextModel };
-    }),
     Match.tag(
       "SelectedNextDateRange",
       "SelectedPreviousDateRange",
@@ -350,7 +358,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                   ({ route }) =>
                     route !== model.route._tag &&
                     (route !== "Admin" ||
-                      (model._tag === "LoggedIn" && canAccessAdmin(model.adminAccess))),
+                      (model._tag === "LoggedIn" && canAccessAdmin(model.adminModel.adminAccess))),
                 ),
                 sections:
                   model.route._tag === "Home" && model.tabletOrAbove
@@ -429,46 +437,19 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
   }
 
   if (model.route._tag === "Admin") {
-    if (model._tag !== "LoggedIn" || !canAccessAdmin(model.adminAccess)) {
-      const maybeError =
-        model._tag === "LoggedIn" ? AsyncData.getError(model.adminAccess) : Option.none();
-      return {
-        title: "Admin · skate.to",
-        width: "compact",
-        content: Option.match(maybeError, {
-          onNone: () => h.p([h.Role("status")], ["Checking admin access…"]),
-          onSome: (error) =>
-            h.section(
-              [],
-              [
-                h.p([h.Role("alert")], [error.message]),
-                h.button([h.OnClick(Message.ClickedRetryAdminAccess())], ["Try again"]),
-              ],
-            ),
-        }),
-      };
-    }
     return {
       title: "Admin · skate.to",
       width: "compact",
-      content: h.section(
-        [],
-        [
-          h.h1([h.Class("text-3xl")], ["Admin"]),
-          h.p(
-            [],
-            [
-              model._tag === "LoggedIn"
-                ? Option.match(model.session.email, {
-                    onNone: () => "Signed in",
-                    onSome: (email) => `Signed in as ${email}`,
-                  })
-                : "",
-            ],
-          ),
-          h.button([h.OnClick(Message.ClickedLogout())], ["Sign out"]),
-        ],
-      ),
+      content:
+        model._tag === "LoggedIn"
+          ? h.submodel({
+              slotId: "admin",
+              model: model.adminModel,
+              view: adminView,
+              viewInputs: { session: model.session },
+              toParentMessage: (message) => Message.GotAdminMessage({ message }),
+            })
+          : h.empty,
     };
   }
 
@@ -487,7 +468,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Se
   });
   const route = urlToAppRoute(url);
   const common = {
-    adminAccessRequestId: 0,
     today: flags.today,
     activeDateRange: ActiveDate.machine.initial,
     menu: Popover.init({ id: "main-menu", contentFocus: true }),
@@ -505,7 +485,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Se
     },
     onSome: (session) => {
       const access = guardLoggedInRoute(route);
-      const permissionLoad = revalidateAdminAccess(makeLoggedIn(common, session, access.route));
+      const permissionLoad = revalidateAdminOnRoot(makeLoggedIn(common, session, access.route));
       return {
         model: permissionLoad.model,
         commands: [
@@ -529,19 +509,12 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Se
 
 type HomeState = Pick<
   Model,
-  | "today"
-  | "activeDateRange"
-  | "menu"
-  | "theme"
-  | "tabletOrAbove"
-  | "toast"
-  | "adminAccessRequestId"
+  "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove" | "toast"
 > & {
   readonly loginModel?: typeof Login.Model.Type;
 };
 
 const homeState = (model: HomeState) => ({
-  adminAccessRequestId: model.adminAccessRequestId,
   today: model.today,
   activeDateRange: model.activeDateRange,
   menu: model.menu,
@@ -559,7 +532,7 @@ const makeLoggedOut = (model: HomeState, route: LoggedOutRoute) =>
 
 const makeLoggedIn = (model: HomeState, session: Session, route: LoggedInRoute = AppRoute.Home()) =>
   LoggedInModel({
-    adminAccess: AdminAccess.Idle(),
+    adminModel: Admin.init(),
     route,
     session,
     ...homeState(model),
@@ -592,7 +565,7 @@ const updateLoggedInRoute = (
   const access = guardLoggedInRoute(route);
   const nextModel = evo(model, { route: () => access.route });
   return route._tag === "Admin"
-    ? revalidateAdminAccess(nextModel)
+    ? revalidateAdminOnRoot(nextModel)
     : withRouteRedirect(nextModel, access.maybeRedirect);
 };
 
@@ -601,31 +574,19 @@ const updateLoggedInSession = (
   session: Session,
 ): Update.Return<Model, Message, Auth.Service> => {
   if (model._tag === "LoggedIn" && model.session.userId === session.userId) {
-    return revalidateAdminAccess(evo(model, { session: () => session }));
+    return revalidateAdminOnRoot(evo(model, { session: () => session }));
   }
   const access = guardLoggedInRoute(model.route);
-  const permissionLoad = revalidateAdminAccess(makeLoggedIn(model, session, access.route));
+  const permissionLoad = revalidateAdminOnRoot(makeLoggedIn(model, session, access.route));
   return {
     model: permissionLoad.model,
     commands: [...routeRedirectCommands(access.maybeRedirect), ...(permissionLoad.commands ?? [])],
   };
 };
 
-const revalidateAdminAccess = (model: Model): Update.Return<Model, Message, Auth.Service> => {
+const revalidateAdminOnRoot = (model: Model): Update.Return<Model, Message, Auth.Service> => {
   if (model._tag !== "LoggedIn") {
     return { model };
   }
-  return Option.match(AsyncData.revalidateOrLoad(model.adminAccess), {
-    onNone: () => ({ model }),
-    onSome: (adminAccess) => {
-      const requestId = model.adminAccessRequestId + 1;
-      return {
-        model: evo(model, {
-          adminAccess: () => adminAccess,
-          adminAccessRequestId: () => requestId,
-        }),
-        commands: [Command.FetchAdminAccess({ userId: model.session.userId, requestId })],
-      };
-    },
-  });
+  return foldAdminInvalidation(model.session)(model);
 };

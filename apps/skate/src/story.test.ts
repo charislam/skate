@@ -8,6 +8,7 @@ import { describe, expect, test } from "vitest";
 import { Command as AppCommand } from "./command";
 import { ActiveDate } from "./domain";
 import { AdminAccess } from "./domain/admin-access";
+import * as Admin from "./page/admin/model";
 import { UserId } from "./domain/session";
 import { Message } from "./message";
 import type { Model } from "./model";
@@ -28,7 +29,6 @@ const initialModel: Model = {
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
-  adminAccessRequestId: 0,
   toast: Toast.init({ id: "app-toast" }),
   loginModel: Login.init(),
 };
@@ -54,7 +54,10 @@ describe("update", () => {
         ...initialModel,
         _tag: "LoggedIn" as const,
         route: AppRoute.Home(),
-        adminAccess: AdminAccess.Success({ data: true }),
+        adminModel: {
+          ...Admin.init(),
+          adminAccess: AdminAccess.Success({ data: true }),
+        },
         session: { userId: UserId.make("user-1"), email: Option.none() },
       };
       story(
@@ -75,7 +78,10 @@ describe("update", () => {
     const loggedIn = {
       ...initialModel,
       _tag: "LoggedIn" as const,
-      adminAccess: AdminAccess.Success({ data: true }),
+      adminModel: {
+        ...Admin.init(),
+        adminAccess: AdminAccess.Success({ data: true }),
+      },
       session: { userId: UserId.make("user-1"), email: Option.none() },
     };
     story(
