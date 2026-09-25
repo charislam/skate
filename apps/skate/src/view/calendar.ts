@@ -1,4 +1,3 @@
-import { cn } from "cn";
 import { Match, Option } from "effect";
 import { Calendar } from "foldkit";
 import type { HtmlBuilder } from "foldkit/html";
@@ -6,6 +5,7 @@ import { ActiveDate, MainMenu } from "../domain";
 import { Message } from "../message";
 import type { Model } from "../model";
 import * as Layout from "./layout";
+import { selectorButtonClass } from "./selector-button";
 import { WeekMonthSelector } from "./week-month-selector";
 
 export const slots = (model: Model, h: HtmlBuilder<Message>): Layout.PageSlots => ({
@@ -156,14 +156,11 @@ export const calendarViewSection = (
               h.AriaPressed(isActive ? "true" : "false"),
               ...(isActive ? [h.Disabled(true)] : []),
               h.Class(
-                cn(
-                  "px-3 py-1.5 text-xs font-medium border-t border-b border-r border-slate-200 dark:border-slate-700",
-                  index === 0 && "rounded-l-lg border-l",
-                  index === arr.length - 1 && "rounded-r-lg border-r",
-                  isActive
-                    ? "bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-white"
-                    : "text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                ),
+                selectorButtonClass({
+                  isFirst: index === 0,
+                  isLast: index === arr.length - 1,
+                  isActive,
+                }),
               ),
               ...(!isActive ? [h.OnClick(Message.SelectedMainMenuAction({ action }))] : []),
             ],

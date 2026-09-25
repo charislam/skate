@@ -1,10 +1,10 @@
-import { cn } from "cn";
 import { Option } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { MainMenu } from "~/domain";
 import { Message } from "~/message";
 import type { Model } from "~/model";
 import { navigationHref } from "~/route";
+import { selectorButtonClass } from "./selector-button";
 
 export const view = (
   model: Pick<Model, "menu" | "theme">,
@@ -66,8 +66,8 @@ export const view = (
                                 ["Go to"],
                               ),
                               h.ul(
-                                [h.Class("flex divide-x divide-slate-200 dark:divide-slate-700")],
-                                inputs.navigationLinks.map(({ label, route }) =>
+                                [h.Class("inline-flex")],
+                                inputs.navigationLinks.map(({ label, route }, index, arr) =>
                                   h.li(
                                     [],
                                     [
@@ -76,7 +76,11 @@ export const view = (
                                           h.Href(navigationHref[route]),
                                           h.OnClick(Message.SelectedNavigationLink()),
                                           h.Class(
-                                            "block px-2 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800",
+                                            selectorButtonClass({
+                                              isFirst: index === 0,
+                                              isLast: index === arr.length - 1,
+                                              isActive: false,
+                                            }),
                                           ),
                                         ],
                                         [label],
@@ -124,14 +128,11 @@ export const view = (
                                       h.AriaPressed(isActive ? "true" : "false"),
                                       ...(isActive ? [h.Disabled(true)] : []),
                                       h.Class(
-                                        cn(
-                                          "px-3 py-1.5 text-xs font-medium border-t border-b border-r border-slate-200 dark:border-slate-700",
-                                          index === 0 && "rounded-l-lg border-l",
-                                          index === arr.length - 1 && "rounded-r-lg border-r",
-                                          isActive
-                                            ? "bg-slate-100 text-slate-900 dark:bg-slate-700 dark:text-white"
-                                            : "text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                                        ),
+                                        selectorButtonClass({
+                                          isFirst: index === 0,
+                                          isLast: index === arr.length - 1,
+                                          isActive,
+                                        }),
                                       ),
                                       ...(!isActive
                                         ? [
