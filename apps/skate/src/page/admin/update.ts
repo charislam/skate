@@ -14,6 +14,9 @@ export const update = (model: Model, message: Message, context: Context) =>
     ClickedRetryAccess: () => revalidate(model, context),
     InvalidatedAccess: () => revalidate(model, context),
     ClickedLogout: () => ({ model, outMessage: OutMessage.RequestedLogout() }),
+    ToggledNavigation: ({ isOpen }) => ({
+      model: evo(model, { isNavigationOpen: () => isOpen }),
+    }),
     SettledFetchAccess: ({ userId, requestId, result }) => {
       if (
         context.userId !== userId ||

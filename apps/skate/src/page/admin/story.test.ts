@@ -18,8 +18,8 @@ describe("admin submodel", () => {
       pending.commands?.some(
         (command) =>
           command.name === "FetchAdminAccess" &&
-          command.args?.requestId === 1 &&
-          command.args?.userId === session.userId,
+          command.args?.["requestId"] === 1 &&
+          command.args?.["userId"] === session.userId,
       ),
     ).toBe(true);
     const settled = update(

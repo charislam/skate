@@ -3,6 +3,7 @@ import { Calendar } from "foldkit";
 import type { HtmlBuilder } from "foldkit/html";
 import { ActiveDate } from "~/domain";
 import { Message } from "~/message";
+import { Heading } from "./heading";
 
 export const selector = (
   { granularity, startDate }: { granularity: "Week" | "Month"; startDate: Calendar.CalendarDate },
@@ -28,11 +29,7 @@ export const selector = (
         [h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")])],
       ),
       h.h2(
-        [
-          h.Class(
-            "text-md text-slate-600 font-light uppercase tracking-widest dark:text-slate-300",
-          ),
-        ],
+        [h.Class(Heading.capsHeadingStyle)],
         [
           granularity === "Week"
             ? `${formattedMonth} ${startDate.day}-${Calendar.addDays(startDate, 6).day}`

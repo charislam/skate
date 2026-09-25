@@ -1,7 +1,18 @@
 import { Popover } from "@foldkit/ui";
 import { Option } from "effect";
 import { Calendar } from "foldkit";
-import { Command, Mount, click, expect, given, role, scene, text, type } from "foldkit/scene";
+import {
+  Command,
+  Mount,
+  click,
+  expect,
+  given,
+  role,
+  scene,
+  selector,
+  text,
+  type,
+} from "foldkit/scene";
 import { describe, test } from "vitest";
 
 import { ActiveDate, Theme } from "./domain";
@@ -47,7 +58,7 @@ describe("view", () => {
   const admin: Model = {
     ...modelWith(calendar),
     _tag: "LoggedIn",
-    route: AppRoute.Admin(),
+    route: AppRoute.Admin({ section: "Overview" }),
     adminModel: {
       ...Admin.init(),
       adminAccess: AdminAccess.Success({ data: true }),
@@ -88,6 +99,34 @@ describe("view", () => {
       }),
       expect(role("heading", { name: "Admin" })).not.toExist(),
       expect(role("status")).toHaveText("Checking admin access…"),
+    );
+  });
+
+  test("tablet admin navigation is a sidebar with the active section", () => {
+    scene(
+      { update, view },
+      given({ ...admin, route: AppRoute.Admin({ section: "Sources" }) }),
+      expect(role("navigation", { name: "Admin navigation" })).toExist(),
+      expect(role("link", { name: "Sources" })).toHaveAttr("aria-current", "page"),
+      expect(role("link", { name: "Overview" })).toHaveAttr("href", "/admin"),
+      expect(role("heading", { name: "Sources" })).toExist(),
+      expect(role("button", { name: "Sources" })).not.toExist(),
+    );
+  });
+
+  test("below tablet admin navigation opens as a disclosure", () => {
+    scene(
+      { update, view },
+      given({ ...admin, tabletOrAbove: false }),
+      expect(role("button", { name: "Overview" })).toHaveAttr("aria-expanded", "false"),
+      expect(selector('[aria-hidden="true"] #admin-navigation-panel')).toExist(),
+      click(role("button", { name: "Overview" })),
+      expect(role("button", { name: "Overview" })).toHaveAttr("aria-expanded", "true"),
+      expect(role("navigation", { name: "Admin navigation" })).toExist(),
+      expect(selector('[aria-hidden="true"] #admin-navigation-panel')).not.toExist(),
+      expect(role("link", { name: "Sources" })).toHaveAttr("href", "/admin/sources"),
+      click(role("button", { name: "Overview" })),
+      expect(selector('[aria-hidden="true"] #admin-navigation-panel')).toExist(),
     );
   });
 

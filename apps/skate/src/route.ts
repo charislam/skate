@@ -5,7 +5,7 @@ import { defineRouteUnion, literal } from "foldkit/route";
 export const AppRoute = defineRouteUnion({
   Home: {},
   Login: {},
-  Admin: {},
+  Admin: { section: Schema.Literals(["Overview", "Sources"]) },
   NotFound: { path: Schema.String },
 });
 
@@ -19,6 +19,7 @@ export type LoggedInRoute = typeof LoggedInRoute.Type;
 
 export type AppRoute = typeof AppRoute.Type;
 export type AppRouteTag = AppRoute["_tag"];
+export type AdminSection = Extract<AppRoute, { readonly _tag: "Admin" }>["section"];
 
 export const RedirectDestination = Schema.Literals(["Home", "Login"]);
 export type RedirectDestination = typeof RedirectDestination.Type;
@@ -40,15 +41,23 @@ export const guardLoggedInRoute = (route: AppRoute): RouteAccess<LoggedInRoute> 
 
 export const homeRouter = pipe(Route.root, Route.mapTo(AppRoute.Home));
 export const loginRouter = pipe(literal("login"), Route.mapTo(AppRoute.Login));
-export const adminRouter = pipe(literal("admin"), Route.mapTo(AppRoute.Admin));
+export const adminRouter = pipe(
+  literal("admin"),
+  Route.mapTo({ make: () => AppRoute.Admin({ section: "Overview" }) }),
+);
+export const adminSourcesRouter = pipe(
+  literal("admin"),
+  Route.slash(literal("sources")),
+  Route.mapTo({ make: () => AppRoute.Admin({ section: "Sources" }) }),
+);
 
 export const navigationHref: Record<Exclude<AppRouteTag, "NotFound">, string> = {
   Home: homeRouter(),
   Login: loginRouter(),
-  Admin: adminRouter(),
+  Admin: adminRouter({ section: "Overview" }),
 };
 
 export const urlToAppRoute = Route.parseUrlWithFallback(
-  Route.oneOf(loginRouter, adminRouter, homeRouter),
+  Route.oneOf(loginRouter, adminSourcesRouter, adminRouter, homeRouter),
   AppRoute.NotFound,
 );

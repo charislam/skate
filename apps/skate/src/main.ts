@@ -21,7 +21,7 @@ import { canAccessAdmin } from "./domain/admin-access";
 import * as Admin from "./page/admin/model";
 import * as AdminMessage from "./page/admin/message";
 import { invalidate as invalidateAdmin, update as updateAdmin } from "./page/admin/update";
-import { view as adminView } from "./page/admin/view";
+import { headerEnd as adminHeaderEnd, view as adminView } from "./page/admin/view";
 import { Message } from "./message";
 import { LoggedInModel, LoggedOutModel, type Model } from "./model";
 import { Toast } from "./toast";
@@ -439,14 +439,21 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
   if (model.route._tag === "Admin") {
     return {
       title: "Admin · skate.to",
-      width: "compact",
+      width: "wide",
+      headerEnd:
+        model._tag === "LoggedIn" && canAccessAdmin(model.adminModel.adminAccess)
+          ? adminHeaderEnd(h)
+          : h.empty,
       content:
         model._tag === "LoggedIn"
           ? h.submodel({
               slotId: "admin",
               model: model.adminModel,
               view: adminView,
-              viewInputs: { session: model.session },
+              viewInputs: {
+                section: model.route.section,
+                tabletOrAbove: model.tabletOrAbove,
+              },
               toParentMessage: (message) => Message.GotAdminMessage({ message }),
             })
           : h.empty,
@@ -564,7 +571,7 @@ const updateLoggedInRoute = (
 ) => {
   const access = guardLoggedInRoute(route);
   const nextModel = evo(model, { route: () => access.route });
-  return route._tag === "Admin"
+  return route._tag === "Admin" && model.route._tag !== "Admin"
     ? revalidateAdminOnRoot(nextModel)
     : withRouteRedirect(nextModel, access.maybeRedirect);
 };

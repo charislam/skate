@@ -1,5 +1,5 @@
 import { Popover, Toast as UiToast } from "@foldkit/ui";
-import { Option } from "effect";
+import { Option, Result } from "effect";
 import { Calendar } from "foldkit";
 import { fromString } from "foldkit/url";
 import { Command, given, message, model, story } from "foldkit/story";
@@ -9,11 +9,12 @@ import { Command as AppCommand } from "./command";
 import { ActiveDate } from "./domain";
 import { AdminAccess } from "./domain/admin-access";
 import * as Admin from "./page/admin/model";
+import { Message as AdminMessage } from "./page/admin/message";
 import { UserId } from "./domain/session";
 import { Message } from "./message";
 import type { Model } from "./model";
 import { Toast } from "./toast";
-import { AppRoute } from "./route";
+import { AppRoute, urlToAppRoute } from "./route";
 import * as Login from "./page/login/model";
 import { update } from "./main";
 
@@ -35,11 +36,18 @@ const initialModel: Model = {
 
 describe("update", () => {
   describe("route access", () => {
-    test("redirects logged-out users away from the admin route", () => {
+    test.each([
+      ["/admin", "Overview"],
+      ["/admin/sources", "Sources"],
+    ] as const)("parses %s as an admin section", (path, section) => {
+      expect(urlToAppRoute(url(`http://localhost${path}`))).toEqual(AppRoute.Admin({ section }));
+    });
+
+    test.each(["/admin", "/admin/sources"])("redirects logged-out users away from %s", (path) => {
       story(
         update,
         given(initialModel),
-        message(Message.ChangedUrl({ url: url("http://localhost/admin") })),
+        message(Message.ChangedUrl({ url: url(`http://localhost${path}`) })),
         model((next) => {
           expect(next._tag).toBe("LoggedOut");
           expect(next.route).toEqual(AppRoute.Login());
@@ -47,6 +55,78 @@ describe("update", () => {
         Command.expectHas(AppCommand.RedirectForAuthentication({ destination: "Login" })),
         Command.resolve(AppCommand.RedirectForAuthentication, Message.CompletedRedirect()),
       );
+    });
+
+    test("revalidates access on /admin/sources and redirects when denied", () => {
+      const loggedIn: Model = {
+        ...initialModel,
+        _tag: "LoggedIn",
+        route: AppRoute.Home(),
+        adminModel: {
+          ...Admin.init(),
+          adminAccess: AdminAccess.Success({ data: true }),
+        },
+        session: { userId: UserId.make("user-1"), email: Option.none() },
+      };
+      const navigating = update(
+        loggedIn,
+        Message.ChangedUrl({ url: url("http://localhost/admin/sources") }),
+      );
+      expect(navigating.model.route).toEqual(AppRoute.Admin({ section: "Sources" }));
+      if (navigating.model._tag !== "LoggedIn") {
+        throw new Error("Expected logged-in model");
+      }
+      expect(navigating.model.adminModel.adminAccess._tag).toBe("Refreshing");
+      expect(
+        "commands" in navigating &&
+          navigating.commands?.some((command) => command.name === "FetchAdminAccess"),
+      ).toBe(true);
+
+      const denied = update(
+        navigating.model,
+        Message.GotAdminMessage({
+          message: AdminMessage.SettledFetchAccess({
+            userId: loggedIn.session.userId,
+            requestId: navigating.model.adminModel.requestId,
+            result: Result.succeed(false),
+          }),
+        }),
+      );
+      expect(denied.model.route).toEqual(AppRoute.Home());
+      expect(
+        "commands" in denied &&
+          denied.commands?.some(
+            (command) =>
+              command.name === "RedirectForAuthentication" &&
+              command.args?.["destination"] === "Home",
+          ),
+      ).toBe(true);
+    });
+
+    test.each([
+      ["Overview", "/admin/sources", "Sources"],
+      ["Sources", "/admin", "Overview"],
+    ] as const)("switches from %s to %s without revalidating", (current, path, next) => {
+      const loggedIn: Model = {
+        ...initialModel,
+        _tag: "LoggedIn",
+        route: AppRoute.Admin({ section: current }),
+        adminModel: {
+          ...Admin.init(),
+          adminAccess: AdminAccess.Success({ data: true }),
+        },
+        session: { userId: UserId.make("user-1"), email: Option.none() },
+      };
+      const navigating = update(
+        loggedIn,
+        Message.ChangedUrl({ url: url(`http://localhost${path}`) }),
+      );
+      expect(navigating.model.route).toEqual(AppRoute.Admin({ section: next }));
+      if (navigating.model._tag !== "LoggedIn") {
+        throw new Error("Expected logged-in model");
+      }
+      expect(navigating.model.adminModel).toBe(loggedIn.adminModel);
+      expect("commands" in navigating && navigating.commands?.length).toBeFalsy();
     });
 
     test("redirects logged-in users away from the login route", () => {

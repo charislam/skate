@@ -7,6 +7,7 @@ export const Message = defineMessageUnion({
   ClickedRetryAccess: {},
   InvalidatedAccess: {},
   ClickedLogout: {},
+  ToggledNavigation: { isOpen: Schema.Boolean },
   SettledFetchAccess: {
     userId: UserId,
     requestId: Schema.Number,
