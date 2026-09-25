@@ -571,7 +571,7 @@ const updateLoggedInRoute = (
 ) => {
   const access = guardLoggedInRoute(route);
   const nextModel = evo(model, { route: () => access.route });
-  return route._tag === "Admin" && model.route._tag !== "Admin"
+  return access.route._tag === "Admin" && model.route._tag !== "Admin"
     ? revalidateAdminOnRoot(nextModel)
     : withRouteRedirect(nextModel, access.maybeRedirect);
 };
