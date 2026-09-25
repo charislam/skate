@@ -9,6 +9,7 @@ import { navigationHref } from "~/route";
 export const view = (
   model: Pick<Model, "menu" | "theme">,
   inputs: {
+    readonly loggedIn: boolean;
     readonly sections: ReadonlyArray<Html>;
     readonly navigationLinks: ReadonlyArray<MainMenu.NavigationLink>;
   },
@@ -86,6 +87,9 @@ export const view = (
                               ),
                             ],
                           ),
+                          ...(inputs.loggedIn
+                            ? [h.button([h.OnClick(Message.ClickedLogout())], ["Sign out"])]
+                            : []),
                           ...inputs.sections,
                           h.div(
                             [],

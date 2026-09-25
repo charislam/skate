@@ -8,6 +8,7 @@ import {
   isAuthWeakPasswordError,
 } from "@supabase/supabase-js";
 import { Session as AppSession, UserId } from "./session";
+import { PermissionError } from "./admin-access";
 
 export interface Credentials {
   readonly email: string;
@@ -141,6 +142,7 @@ export const fromAuthFailure = (operation: AuthError["operation"], cause: unknow
 };
 
 export interface Interface {
+  readonly hasAdminAccess: () => Effect.Effect<boolean, PermissionError>;
   readonly getSession: Effect.Effect<Option.Option<AppSession>, AuthError>;
   readonly signInWithPassword: (credentials: Credentials) => Effect.Effect<AppSession, AuthError>;
   readonly signOut: Effect.Effect<void, AuthError>;
@@ -155,6 +157,18 @@ const toSession = (session: SupabaseSession): AppSession => ({
 });
 
 const makeAuthInterface = (client: SupabaseClient): Interface => ({
+  hasAdminAccess: Effect.fn("Auth.hasAdminAccess")(function* () {
+    const failure = () =>
+      new PermissionError({ message: "We couldn't check your admin access. Try again." });
+    const { data, error } = yield* Effect.tryPromise({
+      try: (signal) => client.rpc("has_admin_access", {}, { get: true }).abortSignal(signal),
+      catch: failure,
+    });
+    if (error) {
+      return yield* Effect.fail(failure());
+    }
+    return yield* Schema.decodeUnknownEffect(Schema.Boolean)(data).pipe(Effect.mapError(failure));
+  }),
   getSession: Effect.gen(function* () {
     const { data, error } = yield* Effect.tryPromise({
       try: () => client.auth.getSession(),

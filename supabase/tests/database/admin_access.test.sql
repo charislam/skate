@@ -1,0 +1,38 @@
+begin;
+select plan(13);
+select ok((select admin_read and admin_write from public.role where name = 'owner'), 'owner has both admin permissions');
+select ok((select not admin_read and not admin_write from public.role where name = 'member'), 'member has neither admin permission');
+select ok(not has_function_privilege('anon', 'public.has_admin_access()', 'execute'), 'anonymous callers cannot execute RPC');
+select ok(not has_function_privilege('anon', 'private.has_admin_access()', 'execute'), 'anonymous callers cannot execute helper');
+select ok(not has_table_privilege('authenticated', 'public.role', 'select'), 'role table stays private');
+select is((select provolatile::text from pg_proc where oid = 'public.has_admin_access()'::regprocedure), 's', 'RPC is stable for GET requests');
+insert into public.role (id, name, admin_read, admin_write) values
+ ('00000000-0000-0000-0000-000000000201', 'pgtap_admin_reader', true, false),
+ ('00000000-0000-0000-0000-000000000202', 'pgtap_admin_writer', false, true);
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000021', 'pgtap-admin@example.test');
+set local role authenticated;
+set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000021';
+select is(public.has_admin_access(), false, 'member denied');
+reset role;
+update public."user" set role_id = (select id from public.role where name = 'owner') where id = '00000000-0000-0000-0000-000000000021';
+set local role authenticated;
+select is(public.has_admin_access(), true, 'owner allowed');
+reset role;
+update public."user" set role_id = '00000000-0000-0000-0000-000000000201' where id = '00000000-0000-0000-0000-000000000021';
+set local role authenticated;
+select is(public.has_admin_access(), true, 'read alone allows entry');
+reset role;
+update public."user" set role_id = '00000000-0000-0000-0000-000000000202' where id = '00000000-0000-0000-0000-000000000021';
+set local role authenticated;
+select is(public.has_admin_access(), true, 'write alone allows entry');
+reset role;
+update public.role set admin_write = false where name = 'pgtap_admin_writer';
+set local role authenticated;
+select is(public.has_admin_access(), false, 'revocation reflected without new JWT');
+set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000022';
+select is(public.has_admin_access(), false, 'missing application user denied');
+set local "request.jwt.claim.sub" = '';
+select is(public.has_admin_access(), false, 'missing identity denied');
+reset role;
+select * from finish();
+rollback;

@@ -9,8 +9,17 @@ import { Session } from "./domain/session";
 import { Auth } from "./domain/auth";
 import { Toast } from "./toast";
 import * as Login from "./page/login/message";
+import { PermissionError } from "./domain/admin-access";
+import { UserId } from "./domain/session";
 
 export const Message = defineMessageUnion({
+  ClickedRetryAdminAccess: {},
+  InvalidatedAdminAccess: {},
+  SettledFetchAdminAccess: {
+    userId: UserId,
+    requestId: Schema.Number,
+    result: Schema.Result(Schema.Boolean, PermissionError),
+  },
   ...ActiveDateMessage.MessageSchema,
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},

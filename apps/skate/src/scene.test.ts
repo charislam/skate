@@ -5,6 +5,7 @@ import { Command, Mount, click, expect, given, role, scene, text, type } from "f
 import { describe, test } from "vitest";
 
 import { ActiveDate, Theme } from "./domain";
+import { AdminAccess, PermissionError } from "./domain/admin-access";
 import { UserId } from "./domain/session";
 import { type Model } from "./model";
 import { Toast } from "./toast";
@@ -27,6 +28,7 @@ const modelWith = (
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
+  adminAccessRequestId: 0,
   toast: Toast.init({ id: "app-toast" }),
   loginModel: Login.init(),
 });
@@ -46,8 +48,42 @@ describe("view", () => {
     ...modelWith(calendar),
     _tag: "LoggedIn",
     route: AppRoute.Admin(),
+    adminAccess: AdminAccess.Success({ data: true }),
     session: { userId: UserId.make("user-1"), email: Option.none() },
   };
+
+  test.each([
+    ["allowed", AdminAccess.Success({ data: true }), true],
+    ["denied", AdminAccess.Success({ data: false }), false],
+    ["loading", AdminAccess.Loading(), false],
+    ["refreshing", AdminAccess.Refreshing({ data: true }), false],
+    [
+      "failed refresh",
+      AdminAccess.Stale({ data: true, error: new PermissionError({ message: "Unavailable" }) }),
+      false,
+    ],
+  ] as const)("admin navigation is permission gated when %s", (_, adminAccess, allowed) => {
+    scene(
+      { update, view },
+      given({ ...admin, route: AppRoute.Home(), adminAccess }),
+      click(role("button", { name: "Main menu" })),
+      acknowledgeAnchor,
+      acknowledgeBackdrop,
+      allowed
+        ? expect(role("link", { name: "Admin" })).toExist()
+        : expect(role("link", { name: "Admin" })).not.toExist(),
+      expect(role("button", { name: "Sign out" })).toExist(),
+    );
+  });
+
+  test("admin content stays hidden during permission revalidation", () => {
+    scene(
+      { update, view },
+      given({ ...admin, adminAccess: AdminAccess.Refreshing({ data: true }) }),
+      expect(role("heading", { name: "Admin" })).not.toExist(),
+      expect(role("status")).toHaveText("Checking admin access…"),
+    );
+  });
 
   test.each([
     ["login", modelWith(calendar, AppRoute.Login())],

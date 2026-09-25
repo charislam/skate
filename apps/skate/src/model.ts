@@ -7,8 +7,10 @@ import { Session } from "./domain/session";
 import { LoggedInRoute, LoggedOutRoute } from "./route";
 import * as Login from "./page/login/model";
 import { Toast } from "./toast";
+import { AdminAccess } from "./domain/admin-access";
 
 const HomeFields = {
+  adminAccessRequestId: Schema.Number,
   today: Calendar.CalendarDate,
   activeDateRange: ActiveDate.Model,
   menu: Popover.Model,
@@ -24,6 +26,7 @@ export const LoggedOutModel = taggedStruct("LoggedOut", {
 });
 
 export const LoggedInModel = taggedStruct("LoggedIn", {
+  adminAccess: AdminAccess.schema,
   route: LoggedInRoute,
   session: Session,
   ...HomeFields,

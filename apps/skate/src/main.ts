@@ -1,6 +1,13 @@
 import { Popover } from "@foldkit/ui";
-import { Console, Effect, Equal, Match, Option, Schema, Stream } from "effect";
-import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
+import { Console, Effect, Match, Option, Schema, Stream } from "effect";
+import {
+  AsyncData,
+  Calendar,
+  Command as FoldkitCommand,
+  type Runtime,
+  Subscription,
+  Update,
+} from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { UrlRequest } from "foldkit/navigation";
@@ -16,6 +23,7 @@ import {
 import { ActiveDate, MainMenu, Theme } from "./domain";
 import { Auth } from "./domain/auth";
 import { Session } from "./domain/session";
+import { AdminAccess, canAccessAdmin } from "./domain/admin-access";
 import { Message } from "./message";
 import { LoggedInModel, LoggedOutModel, type Model } from "./model";
 import { Toast } from "./toast";
@@ -137,13 +145,11 @@ const foldLogin = Update.foldChild({
   write: (model, nextLoginModel) =>
     model._tag === "LoggedOut" ? evo(model, { loginModel: () => nextLoginModel }) : model,
   toParentMessage: (message) => Message.GotLoginMessage({ message }),
-  foldOutMessage: LoginMessage.OutMessage.match<Update.Step<Model, Message>>({
+  foldOutMessage: LoginMessage.OutMessage.match<Update.Step<Model, Message, Auth.Service>>({
     SucceededLogin:
       ({ session }) =>
-      (model) => ({
-        model: makeLoggedIn(model, session),
-        commands: [RedirectForAuthentication({ destination: "Home" })],
-      }),
+      (model) =>
+        updateLoggedInSession(model, session),
   }),
 });
 
@@ -195,12 +201,34 @@ export const update = (model: Model, message: Message) =>
       Option.match(maybeSession, {
         onNone: () =>
           model._tag === "LoggedOut" ? { model } : updateLoggedOutRoute(model, model.route),
-        onSome: (session) =>
-          model._tag === "LoggedIn" && Equal.equals(model.session, session)
-            ? { model }
-            : updateLoggedInSession(model, session),
+        onSome: (session) => updateLoggedInSession(model, session),
       }),
     ),
+    Match.tag("ClickedRetryAdminAccess", "InvalidatedAdminAccess", () =>
+      revalidateAdminAccess(model),
+    ),
+    Match.tag("SettledFetchAdminAccess", ({ userId, requestId, result }) => {
+      if (
+        model._tag !== "LoggedIn" ||
+        model.session.userId !== userId ||
+        model.adminAccessRequestId !== requestId ||
+        !AsyncData.isPending(model.adminAccess)
+      ) {
+        return { model };
+      }
+      const nextModel = evo(model, { adminAccess: AsyncData.settle(result) });
+      if (
+        nextModel.route._tag === "Admin" &&
+        nextModel.adminAccess._tag === "Success" &&
+        !nextModel.adminAccess.data
+      ) {
+        return withRouteRedirect(
+          evo(nextModel, { route: () => AppRoute.Home() }),
+          Option.some("Home"),
+        );
+      }
+      return { model: nextModel };
+    }),
     Match.tag(
       "SelectedNextDateRange",
       "SelectedPreviousDateRange",
@@ -298,10 +326,16 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             menu: MainMenuView.view(
               { menu: model.menu, theme: model.theme },
               {
+                loggedIn: model._tag === "LoggedIn",
                 navigationLinks: (model._tag === "LoggedIn"
                   ? MainMenu.navigationLinks.loggedIn
                   : MainMenu.navigationLinks.loggedOut
-                ).filter(({ route }) => route !== model.route._tag),
+                ).filter(
+                  ({ route }) =>
+                    route !== model.route._tag &&
+                    (route !== "Admin" ||
+                      (model._tag === "LoggedIn" && canAccessAdmin(model.adminAccess))),
+                ),
                 sections:
                   model.route._tag === "Home" && model.tabletOrAbove
                     ? [CalendarView.calendarViewSection(model.activeDateRange, h)]
@@ -379,6 +413,25 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
   }
 
   if (model.route._tag === "Admin") {
+    if (model._tag !== "LoggedIn" || !canAccessAdmin(model.adminAccess)) {
+      const maybeError =
+        model._tag === "LoggedIn" ? AsyncData.getError(model.adminAccess) : Option.none();
+      return {
+        title: "Admin · skate.to",
+        width: "compact",
+        content: Option.match(maybeError, {
+          onNone: () => h.p([h.Role("status")], ["Checking admin access…"]),
+          onSome: (error) =>
+            h.section(
+              [],
+              [
+                h.p([h.Role("alert")], [error.message]),
+                h.button([h.OnClick(Message.ClickedRetryAdminAccess())], ["Try again"]),
+              ],
+            ),
+        }),
+      };
+    }
     return {
       title: "Admin · skate.to",
       width: "compact",
@@ -408,10 +461,14 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
 
 // INIT
 
-export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags: Flags, url) => {
+export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Service> = (
+  flags: Flags,
+  url,
+) => {
   const themeBoot = Theme.boot({ systemTheme: flags.theme });
   const route = urlToAppRoute(url);
   const common = {
+    adminAccessRequestId: 0,
     today: flags.today,
     activeDateRange: ActiveDate.machine.initial,
     menu: Popover.init({ id: "main-menu", contentFocus: true }),
@@ -429,9 +486,13 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     },
     onSome: (session) => {
       const access = guardLoggedInRoute(route);
+      const permissionLoad = revalidateAdminAccess(makeLoggedIn(common, session, access.route));
       return {
-        model: makeLoggedIn(common, session, access.route),
-        commands: routeRedirectCommands(access.maybeRedirect),
+        model: permissionLoad.model,
+        commands: [
+          ...routeRedirectCommands(access.maybeRedirect),
+          ...(permissionLoad.commands ?? []),
+        ],
       };
     },
   });
@@ -449,12 +510,19 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
 
 type HomeState = Pick<
   Model,
-  "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove" | "toast"
+  | "today"
+  | "activeDateRange"
+  | "menu"
+  | "theme"
+  | "tabletOrAbove"
+  | "toast"
+  | "adminAccessRequestId"
 > & {
   readonly loginModel?: typeof Login.Model.Type;
 };
 
 const homeState = (model: HomeState) => ({
+  adminAccessRequestId: model.adminAccessRequestId,
   today: model.today,
   activeDateRange: model.activeDateRange,
   menu: model.menu,
@@ -472,6 +540,7 @@ const makeLoggedOut = (model: HomeState, route: LoggedOutRoute) =>
 
 const makeLoggedIn = (model: HomeState, session: Session, route: LoggedInRoute = AppRoute.Home()) =>
   LoggedInModel({
+    adminAccess: AdminAccess.Idle(),
     route,
     session,
     ...homeState(model),
@@ -502,10 +571,42 @@ const updateLoggedInRoute = (
   route: AppRoute,
 ) => {
   const access = guardLoggedInRoute(route);
-  return withRouteRedirect(evo(model, { route: () => access.route }), access.maybeRedirect);
+  const nextModel = evo(model, { route: () => access.route });
+  return route._tag === "Admin"
+    ? revalidateAdminAccess(nextModel)
+    : withRouteRedirect(nextModel, access.maybeRedirect);
 };
 
-const updateLoggedInSession = (model: Model, session: Session) => {
+const updateLoggedInSession = (
+  model: Model,
+  session: Session,
+): Update.Return<Model, Message, Auth.Service> => {
+  if (model._tag === "LoggedIn" && model.session.userId === session.userId) {
+    return revalidateAdminAccess(evo(model, { session: () => session }));
+  }
   const access = guardLoggedInRoute(model.route);
-  return withRouteRedirect(makeLoggedIn(model, session, access.route), access.maybeRedirect);
+  const permissionLoad = revalidateAdminAccess(makeLoggedIn(model, session, access.route));
+  return {
+    model: permissionLoad.model,
+    commands: [...routeRedirectCommands(access.maybeRedirect), ...(permissionLoad.commands ?? [])],
+  };
+};
+
+const revalidateAdminAccess = (model: Model): Update.Return<Model, Message, Auth.Service> => {
+  if (model._tag !== "LoggedIn") {
+    return { model };
+  }
+  return Option.match(AsyncData.revalidateOrLoad(model.adminAccess), {
+    onNone: () => ({ model }),
+    onSome: (adminAccess) => {
+      const requestId = model.adminAccessRequestId + 1;
+      return {
+        model: evo(model, {
+          adminAccess: () => adminAccess,
+          adminAccessRequestId: () => requestId,
+        }),
+        commands: [Command.FetchAdminAccess({ userId: model.session.userId, requestId })],
+      };
+    },
+  });
 };
