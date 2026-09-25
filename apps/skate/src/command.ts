@@ -1,7 +1,22 @@
 import { Effect, Schema } from "effect";
 import { Calendar, Command as FoldkitCommand } from "foldkit";
-import { load, pushUrl } from "foldkit/navigation";
+import { load, pushUrl, replaceUrl } from "foldkit/navigation";
+import { Auth } from "./domain/auth";
 import { Message } from "~/message";
+import {
+  type RedirectDestination,
+  RedirectDestination as RedirectDestinationSchema,
+  homeRouter,
+  loginRouter,
+} from "./route";
+
+const authenticationRedirectRouters: Record<
+  RedirectDestination,
+  () => ReturnType<typeof homeRouter>
+> = {
+  Home: homeRouter,
+  Login: loginRouter,
+};
 
 export const NavigateInternal = FoldkitCommand.define("NavigateInternal", {
   args: { url: Schema.String },
@@ -44,6 +59,28 @@ export const SelectWeekView = FoldkitCommand.define("SelectWeekView", {
 export const SelectMonthView = FoldkitCommand.define("SelectMonthView", {
   messages: [Message.SelectedMonthView],
   execute: Effect.succeed(Message.SelectedMonthView()),
+});
+
+export const RedirectForAuthentication = FoldkitCommand.define("RedirectForAuthentication", {
+  args: { destination: RedirectDestinationSchema },
+  messages: [Message.CompletedRedirect],
+  execute: ({ destination }) =>
+    replaceUrl(authenticationRedirectRouters[destination]())
+      .pipe(Effect.as(Message.CompletedRedirect()))
+      .pipe(Effect.catch(() => Effect.succeed(Message.CompletedRedirect()))),
+});
+
+export const SignOut = FoldkitCommand.define("SignOut", {
+  messages: [Message.SucceededSignOut, Message.FailedSignOut],
+  execute: Effect.gen(function* () {
+    const auth = yield* Auth.Service;
+    yield* auth.signOut;
+    return Message.SucceededSignOut();
+  }).pipe(
+    Effect.catchTag("AuthError", (error) =>
+      Effect.succeed(Message.FailedSignOut({ kind: error.kind })),
+    ),
+  ),
 });
 
 export * as Command from "./command";

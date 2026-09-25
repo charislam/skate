@@ -1,28 +1,95 @@
 import { Popover } from "@foldkit/ui";
 import { Option } from "effect";
 import { Calendar } from "foldkit";
+import { fromString } from "foldkit/url";
 import { Command, given, message, model, story } from "foldkit/story";
 import { describe, expect, test } from "vitest";
 
 import { Command as AppCommand } from "./command";
 import { ActiveDate } from "./domain";
+import { UserId } from "./domain/session";
 import { Message } from "./message";
 import type { Model } from "./model";
 import { AppRoute } from "./route";
+import * as Login from "./page/login/model";
 import { update } from "./main";
 
 const today = Calendar.make(2024, 5, 17);
+const url = (value: string) =>
+  Option.getOrThrowWith(fromString(value), () => new Error("Invalid test URL"));
 
 const initialModel: Model = {
+  _tag: "LoggedOut",
   route: AppRoute.Home(),
   today,
   activeDateRange: ActiveDate.Model.Day({ date: today }),
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
+  loginModel: Login.init(),
 };
 
 describe("update", () => {
+  describe("route access", () => {
+    test("redirects logged-out users away from the admin route", () => {
+      story(
+        update,
+        given(initialModel),
+        message(Message.ChangedUrl({ url: url("http://localhost/admin") })),
+        model((next) => {
+          expect(next._tag).toBe("LoggedOut");
+          expect(next.route).toEqual(AppRoute.Login());
+        }),
+        Command.expectHas(AppCommand.RedirectForAuthentication({ destination: "Login" })),
+        Command.resolve(AppCommand.RedirectForAuthentication, Message.CompletedRedirect()),
+      );
+    });
+
+    test("redirects logged-in users away from the login route", () => {
+      const loggedIn = {
+        ...initialModel,
+        _tag: "LoggedIn" as const,
+        route: AppRoute.Home(),
+        session: { userId: UserId.make("user-1"), email: Option.none() },
+        maybeSignOutError: Option.none(),
+      };
+      story(
+        update,
+        given(loggedIn),
+        message(Message.ChangedUrl({ url: url("http://localhost/login") })),
+        model((next) => {
+          expect(next._tag).toBe("LoggedIn");
+          expect(next.route).toEqual(AppRoute.Home());
+        }),
+        Command.expectHas(AppCommand.RedirectForAuthentication({ destination: "Home" })),
+        Command.resolve(AppCommand.RedirectForAuthentication, Message.CompletedRedirect()),
+      );
+    });
+  });
+
+  test("shows an app-owned error after sign out fails", () => {
+    const loggedIn = {
+      ...initialModel,
+      _tag: "LoggedIn" as const,
+      session: { userId: UserId.make("user-1"), email: Option.none() },
+      maybeSignOutError: Option.none(),
+    };
+    story(
+      update,
+      given(loggedIn),
+      message(Message.ClickedLogout()),
+      Command.expectHas(AppCommand.SignOut),
+      Command.resolve(AppCommand.SignOut, Message.FailedSignOut({ kind: "Unexpected" })),
+      model((next) => {
+        expect(next._tag).toBe("LoggedIn");
+        if (next._tag === "LoggedIn")
+          expect(next.maybeSignOutError).toEqual(
+            Option.some("We couldn't sign you out. Try again."),
+          );
+      }),
+    );
+  });
+
   describe("date range navigation", () => {
     test("moves a day across month boundaries", () => {
       story(

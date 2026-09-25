@@ -5,11 +5,20 @@ import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
 import { Theme } from "./domain";
 import { ActiveDateMessage } from "./domain/active-date-message";
+import { Session } from "./domain/session";
+import { Auth } from "./domain/auth";
+import * as Login from "./page/login/message";
 
 export const Message = defineMessageUnion({
   ...ActiveDateMessage.MessageSchema,
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
+  CompletedRedirect: {},
+  ClickedLogout: {},
+  SucceededSignOut: {},
+  FailedSignOut: { kind: Auth.ErrorKind },
+  AuthStateChanged: { maybeSession: Schema.Option(Session) },
+  GotLoginMessage: { message: Login.Message },
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   MediaWidthChanged: {

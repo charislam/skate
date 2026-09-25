@@ -1,4 +1,7 @@
 import { Runtime } from "foldkit";
+import { Layer } from "effect";
+import { Auth } from "./domain/auth";
+import * as AuthConfig from "./domain/auth-config";
 import { Flags, flags, init, subscriptions, update, view } from "./main";
 import { Message } from "./message";
 import { Model } from "./model";
@@ -9,6 +12,7 @@ const application = Runtime.makeApplication({
   init,
   update,
   subscriptions,
+  resources: Auth.layerConfig.pipe(Layer.provide(AuthConfig.layer)),
   view,
   container: document.getElementById("root"),
   routing: {

@@ -1,26 +1,31 @@
 import { Popover } from "@foldkit/ui";
 import { Option } from "effect";
 import { Calendar } from "foldkit";
-import { Command, Mount, click, expect, given, role, scene, text } from "foldkit/scene";
+import { Command, Mount, click, expect, given, role, scene, text, type } from "foldkit/scene";
 import { describe, test } from "vitest";
 
 import { ActiveDate, Theme } from "./domain";
 import { type Model } from "./model";
-import { AppRoute } from "./route";
+import { AppRoute, LoggedOutRoute } from "./route";
+import * as Login from "./page/login/model";
+import { Message as LoginMessage } from "./page/login/message";
+import { SignInWithPassword } from "./page/login/update";
 import { update, view } from "./main";
 
 const today = Calendar.make(2024, 5, 17);
 
 const modelWith = (
   activeDateRange: ActiveDate.Model,
-  route: Model["route"] = AppRoute.Home(),
+  route: typeof LoggedOutRoute.Type = AppRoute.Home(),
 ): Model => ({
+  _tag: "LoggedOut",
   route,
   today,
   activeDateRange,
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
+  loginModel: Login.init(),
 });
 
 const acknowledgeAnchor = Mount.resolve(
@@ -33,6 +38,24 @@ const acknowledgeBackdrop = Mount.resolve(
 );
 
 describe("view", () => {
+  test("the login page keeps its live alert mounted before and after an error", () => {
+    scene(
+      { update, view },
+      given(modelWith(ActiveDate.Model.Day({ date: today }), AppRoute.Login())),
+      expect(role("heading", { name: "Sign in" })).toExist(),
+      expect(role("alert")).toExist(),
+      type('input[type="email"]', "person@example.com"),
+      type('input[type="password"]', "secret123"),
+      click(role("button", { name: "Sign in" })),
+      Command.expectHas(SignInWithPassword),
+      Command.resolve(
+        SignInWithPassword,
+        LoginMessage.FailedSignIn({ kind: "InvalidCredentials" }),
+      ),
+      expect(role("alert")).toHaveText("The email or password is incorrect."),
+    );
+  });
+
   test("the day view shows the date and accessible navigation buttons", () => {
     scene(
       { update, view },

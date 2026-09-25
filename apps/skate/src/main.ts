@@ -1,18 +1,38 @@
 import { Popover } from "@foldkit/ui";
 import { cn } from "cn";
-import { Effect, Match, Option, Schema, Stream } from "effect";
+import { Console, Effect, Equal, Match, Option, Schema, Stream } from "effect";
 import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { UrlRequest } from "foldkit/navigation";
 import { evo } from "foldkit/struct";
 import { toString as urlToString } from "foldkit/url";
-import { Command, LoadExternal, NavigateInternal } from "./command";
+import {
+  Command,
+  LoadExternal,
+  NavigateInternal,
+  RedirectForAuthentication,
+  SignOut,
+} from "./command";
 import { ActiveDate, MainMenu, Theme } from "./domain";
+import { Auth } from "./domain/auth";
+import { Session } from "./domain/session";
 import { Message } from "./message";
-import type { Model } from "./model";
-import { urlToAppRoute } from "./route";
+import { LoggedInModel, LoggedOutModel, type Model } from "./model";
+import {
+  AppRoute,
+  type LoggedInRoute,
+  type LoggedOutRoute,
+  type RedirectDestination,
+  guardLoggedInRoute,
+  guardLoggedOutRoute,
+  urlToAppRoute,
+} from "./route";
 import { MainMenuView, WeekMonthSelector } from "./view";
+import * as Login from "./page/login/model";
+import * as LoginMessage from "./page/login/message";
+import { type Input as LoginInput, update as updateLogin } from "./page/login/update";
+import { view as loginView } from "./page/login/view";
 
 // FLAGS
 
@@ -20,15 +40,23 @@ export const Flags = Schema.Struct({
   today: Calendar.CalendarDate,
   theme: Theme.Theme_,
   tabletOrAbove: Schema.Boolean,
+  maybeSession: Schema.Option(Session),
 });
 
 export type Flags = typeof Flags.Type;
 
-export const flags: Effect.Effect<Flags> = Effect.gen(function* () {
+export const flags = Effect.gen(function* () {
   const today = yield* Calendar.today.local;
   const tabletOrAbove = window.matchMedia("(min-width: 1024px)").matches;
-  const theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  return { today, tabletOrAbove, theme };
+  const theme: Theme.Theme_ = window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+  const auth = yield* Auth.Service;
+  const maybeSession = yield* auth.getSession.pipe(
+    Effect.tapError((error) => Console.warn("Could not restore Supabase session:", error.message)),
+    Effect.catch(() => Effect.succeed(Option.none())),
+  );
+  return { today, tabletOrAbove, theme, maybeSession };
 });
 
 // UPDATE
@@ -78,12 +106,44 @@ const foldPopoverClose = Update.foldChildStep({
   foldOutMessage: foldPopoverOutMessage,
 });
 
+const foldLogin = Update.foldChild({
+  update: (model, input: LoginInput) => updateLogin(model, input.message, input.context),
+  read: (model: Model) =>
+    model._tag === "LoggedOut" ? Option.some(model.loginModel) : Option.none(),
+  write: (model, nextLoginModel) =>
+    model._tag === "LoggedOut" ? evo(model, { loginModel: () => nextLoginModel }) : model,
+  toParentMessage: (message) => Message.GotLoginMessage({ message }),
+  foldOutMessage: LoginMessage.OutMessage.match<Update.Step<Model, Message>>({
+    SucceededLogin:
+      ({ session }) =>
+      (model) => ({
+        model: makeLoggedIn(model, session),
+        commands: [RedirectForAuthentication({ destination: "Home" })],
+      }),
+  }),
+});
+
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
-    Match.withReturnType<Update.Return<Model, Message>>(),
-    Match.tag("CompletedNavigateInternal", "CompletedLoadExternal", () => ({ model })),
+    Match.withReturnType<Update.Return<Model, Message, Auth.Service>>(),
+    Match.tag("CompletedNavigateInternal", "CompletedLoadExternal", "CompletedRedirect", () => ({
+      model,
+    })),
+    Match.tag("SucceededSignOut", () => ({
+      model: makeLoggedOut(model, AppRoute.Home()),
+      commands: [RedirectForAuthentication({ destination: "Home" })],
+    })),
+    Match.tag("FailedSignOut", ({ kind }) =>
+      model._tag === "LoggedIn"
+        ? {
+            model: evo(model, {
+              maybeSignOutError: () => Option.some(Auth.messageForOperation(kind, "signOut")),
+            }),
+          }
+        : { model },
+    ),
     Match.tag("ClickedLink", ({ request }) =>
-      UrlRequest.match<Update.Return<Model, Message>>(request, {
+      UrlRequest.match<Update.Return<Model, Message, Auth.Service>>(request, {
         Internal: ({ url }) => ({
           model,
           commands: [NavigateInternal({ url: urlToString(url) })],
@@ -91,9 +151,30 @@ export const update = (model: Model, message: Message) =>
         External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
     ),
-    Match.tag("ChangedUrl", ({ url }) => ({
-      model: evo(model, { route: () => urlToAppRoute(url) }),
-    })),
+    Match.tag("ChangedUrl", ({ url }) => {
+      const route = urlToAppRoute(url);
+      return model._tag === "LoggedOut"
+        ? updateLoggedOutRoute(model, route)
+        : updateLoggedInRoute(model, route);
+    }),
+    Match.tag("GotLoginMessage", ({ message }) =>
+      foldLogin(model, { message, context: { route: model.route } }),
+    ),
+    Match.tag("ClickedLogout", () =>
+      model._tag === "LoggedIn"
+        ? { model: evo(model, { maybeSignOutError: () => Option.none() }), commands: [SignOut()] }
+        : { model },
+    ),
+    Match.tag("AuthStateChanged", ({ maybeSession }) =>
+      Option.match(maybeSession, {
+        onNone: () =>
+          model._tag === "LoggedOut" ? { model } : updateLoggedOutRoute(model, model.route),
+        onSome: (session) =>
+          model._tag === "LoggedIn" && Equal.equals(model.session, session)
+            ? { model }
+            : updateLoggedInSession(model, session),
+      }),
+    ),
     Match.tag(
       "SelectedNextDateRange",
       "SelectedPreviousDateRange",
@@ -137,7 +218,7 @@ export const update = (model: Model, message: Message) =>
 
 // SUBSCRIPTION
 
-export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
+export const subscriptions = Subscription.make<Model, Message, Auth.Service>()((entry) => ({
   mediaWidth: entry(
     {},
     {
@@ -156,6 +237,21 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         ),
     },
   ),
+  authState: entry(
+    {},
+    {
+      modelToDependencies: () => ({}),
+      dependenciesToStream: () =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const auth = yield* Auth.Service;
+            return Stream.map(auth.authStateChanges, ({ maybeSession }) =>
+              Message.AuthStateChanged({ maybeSession }),
+            );
+          }),
+        ),
+    },
+  ),
 }));
 
 // VIEW
@@ -165,6 +261,56 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
     return {
       title: "skate.to",
       body: h.main([h.Class("p-8")], [h.h1([], [`Page not found: ${model.route.path}`])]),
+    };
+  }
+
+  if (model.route._tag === "Login") {
+    return {
+      title: "Sign in · skate.to",
+      body:
+        model._tag === "LoggedOut"
+          ? h.submodel({
+              slotId: "login",
+              model: model.loginModel,
+              view: loginView,
+              toParentMessage: (message) => Message.GotLoginMessage({ message }),
+            })
+          : h.empty,
+    };
+  }
+
+  if (model.route._tag === "Admin") {
+    return {
+      title: "Admin · skate.to",
+      body: h.main(
+        [h.Class("p-8")],
+        [
+          h.h1([h.Class("text-3xl")], ["Admin"]),
+          h.p(
+            [],
+            [
+              model._tag === "LoggedIn"
+                ? Option.match(model.session.email, {
+                    onNone: () => "Signed in",
+                    onSome: (email) => `Signed in as ${email}`,
+                  })
+                : "",
+            ],
+          ),
+          model._tag === "LoggedIn"
+            ? h.p(
+                [h.Role("alert"), h.AriaLive("assertive")],
+                [
+                  Option.match(model.maybeSignOutError, {
+                    onNone: () => "",
+                    onSome: (error) => error,
+                  }),
+                ],
+              )
+            : h.empty,
+          h.button([h.OnClick(Message.ClickedLogout())], ["Sign out"]),
+        ],
+      ),
     };
   }
 
@@ -337,21 +483,98 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
 
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags: Flags, url) => {
   const themeBoot = Theme.boot({ systemTheme: flags.theme });
-
-  return {
-    model: {
-      route: urlToAppRoute(url),
-      today: flags.today,
-      activeDateRange: ActiveDate.machine.initial,
-      menu: Popover.init({ id: "main-menu", contentFocus: true }),
-      theme: themeBoot.model,
-      tabletOrAbove: flags.tabletOrAbove,
+  const route = urlToAppRoute(url);
+  const common = {
+    today: flags.today,
+    activeDateRange: ActiveDate.machine.initial,
+    menu: Popover.init({ id: "main-menu", contentFocus: true }),
+    theme: themeBoot.model,
+    tabletOrAbove: flags.tabletOrAbove,
+  };
+  const initial = Option.match(flags.maybeSession, {
+    onNone: () => {
+      const access = guardLoggedOutRoute(route);
+      return {
+        model: makeLoggedOut(common, access.route),
+        commands: routeRedirectCommands(access.maybeRedirect),
+      };
     },
+    onSome: (session) => {
+      const access = guardLoggedInRoute(route);
+      return {
+        model: makeLoggedIn(common, session, access.route),
+        commands: routeRedirectCommands(access.maybeRedirect),
+      };
+    },
+  });
+  return {
+    model: initial.model,
     commands: [
+      ...initial.commands,
       ...FoldkitCommand.mapMessages(themeBoot.commands, (message) =>
         Message.GotThemeMessage({ message }),
       ),
       Command.SyncInitialDate({ today: flags.today }),
     ],
   };
+};
+
+type HomeState = Pick<Model, "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove"> & {
+  readonly loginModel?: typeof Login.Model.Type;
+};
+
+const homeState = (model: HomeState) => ({
+  today: model.today,
+  activeDateRange: model.activeDateRange,
+  menu: model.menu,
+  theme: model.theme,
+  tabletOrAbove: model.tabletOrAbove,
+});
+
+const makeLoggedOut = (model: HomeState, route: LoggedOutRoute) =>
+  LoggedOutModel({
+    ...homeState(model),
+    route,
+    loginModel: model.loginModel ?? Login.init(),
+  });
+
+const makeLoggedIn = (model: HomeState, session: Session, route: LoggedInRoute = AppRoute.Home()) =>
+  LoggedInModel({
+    route,
+    session,
+    maybeSignOutError: Option.none(),
+    ...homeState(model),
+  });
+
+const routeRedirectCommands = (maybeDestination: Option.Option<RedirectDestination>) =>
+  Option.match(maybeDestination, {
+    onNone: () => [],
+    onSome: (destination) => [RedirectForAuthentication({ destination })],
+  });
+
+const withRouteRedirect = <ResultModel>(
+  model: ResultModel,
+  maybeDestination: Option.Option<RedirectDestination>,
+) =>
+  Option.match(maybeDestination, {
+    onNone: () => ({ model }),
+    onSome: (destination) => ({ model, commands: [RedirectForAuthentication({ destination })] }),
+  });
+
+const updateLoggedOutRoute = (model: Model, route: AppRoute) => {
+  const access = guardLoggedOutRoute(route);
+  return withRouteRedirect(makeLoggedOut(model, access.route), access.maybeRedirect);
+};
+
+const updateLoggedInRoute = (
+  model: Extract<Model, { readonly _tag: "LoggedIn" }>,
+  route: AppRoute,
+) => {
+  const access = guardLoggedInRoute(route);
+  return withRouteRedirect(evo(model, { route: () => access.route }), access.maybeRedirect);
+};
+
+const updateLoggedInSession = (model: Model, session: Session) => {
+  const access = guardLoggedInRoute(model.route);
+  return withRouteRedirect(makeLoggedIn(model, session, access.route), access.maybeRedirect);
 };
