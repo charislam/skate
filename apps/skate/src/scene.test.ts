@@ -84,7 +84,7 @@ describe("view", () => {
     scene(
       { update, view },
       given(modelWith(ActiveDate.Model.Day({ date: today }), AppRoute.Login())),
-      expect(role("heading", { name: "Sign in" })).toExist(),
+      expect(text("Email")).toExist(),
       expect(role("alert")).toExist(),
       type('input[type="email"]', "person@example.com"),
       type('input[type="password"]', "secret123"),
@@ -109,6 +109,23 @@ describe("view", () => {
       expect(role("button", { name: "Previous day" })).toExist(),
       expect(role("button", { name: "Next day" })).toExist(),
       expect(role("button", { name: "Main menu" })).toExist(),
+    );
+  });
+
+  test("selecting a navigation link closes the menu and navigates", () => {
+    scene(
+      { update, view },
+      given(modelWith(ActiveDate.Model.Day({ date: today }))),
+      click(role("button", { name: "Main menu" })),
+      acknowledgeAnchor,
+      acknowledgeBackdrop,
+      expect(role("link", { name: "Sign in" })).toExist(),
+      expect(role("link", { name: "Home" })).not.toExist(),
+      click(role("link", { name: "Sign in" })),
+      expect(role("button", { name: "Main menu" })).toHaveAttr("aria-expanded", "false"),
+      Mount.expectEnded(Popover.AnchorPopover, Popover.PortalPopoverBackdrop),
+      Command.expectHas(Popover.FocusButton({ id: "main-menu" })),
+      Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
     );
   });
 

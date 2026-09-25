@@ -30,6 +30,7 @@ export const Message = defineMessageUnion({
   SelectedMainMenuAction: {
     action: Schema.Literals(["Day", "Week", "Month"]),
   },
+  SelectedNavigationLink: {},
   GotThemeMessage: {
     message: Theme.Message,
   },

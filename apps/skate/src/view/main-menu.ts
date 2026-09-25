@@ -4,10 +4,14 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 import { MainMenu } from "~/domain";
 import { Message } from "~/message";
 import type { Model } from "~/model";
+import { navigationHref } from "~/route";
 
 export const view = (
   model: Pick<Model, "menu" | "theme">,
-  inputs: { readonly sections: ReadonlyArray<Html> },
+  inputs: {
+    readonly sections: ReadonlyArray<Html>;
+    readonly navigationLinks: ReadonlyArray<MainMenu.NavigationLink>;
+  },
   h: HtmlBuilder<Message>,
 ) =>
   h.submodel({
@@ -49,6 +53,39 @@ export const view = (
                           ),
                         ],
                         [
+                          h.nav(
+                            [h.AriaLabel("Main navigation")],
+                            [
+                              h.h3(
+                                [
+                                  h.Class(
+                                    "mb-2 text-xs font-medium text-slate-600 dark:text-slate-300",
+                                  ),
+                                ],
+                                ["Go to"],
+                              ),
+                              h.ul(
+                                [h.Class("flex divide-x divide-slate-200 dark:divide-slate-700")],
+                                inputs.navigationLinks.map(({ label, route }) =>
+                                  h.li(
+                                    [],
+                                    [
+                                      h.a(
+                                        [
+                                          h.Href(navigationHref[route]),
+                                          h.OnClick(Message.SelectedNavigationLink()),
+                                          h.Class(
+                                            "block px-2 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800",
+                                          ),
+                                        ],
+                                        [label],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                           ...inputs.sections,
                           h.div(
                             [],

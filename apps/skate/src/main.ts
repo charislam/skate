@@ -144,13 +144,17 @@ export const update = (model: Model, message: Message) =>
         : { model },
     ),
     Match.tag("ClickedLink", ({ request }) =>
-      UrlRequest.match<Update.Return<Model, Message, Auth.Service>>(request, {
-        Internal: ({ url }) => ({
-          model,
-          commands: [NavigateInternal({ url: urlToString(url) })],
-        }),
-        External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
-      }),
+      Update.combine(model, [
+        foldPopoverClose,
+        (currentModel) =>
+          UrlRequest.match<Update.Return<Model, Message, Auth.Service>>(request, {
+            Internal: ({ url }) => ({
+              model: currentModel,
+              commands: [NavigateInternal({ url: urlToString(url) })],
+            }),
+            External: ({ href }) => ({ model: currentModel, commands: [LoadExternal({ href })] }),
+          }),
+      ]),
     ),
     Match.tag("ChangedUrl", ({ url }) => {
       const route = urlToAppRoute(url);
@@ -191,6 +195,7 @@ export const update = (model: Model, message: Message) =>
       ...(tabletOrAbove ? {} : { commands: [Command.SelectDayView()] }),
     })),
     Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
+    Match.tag("SelectedNavigationLink", () => foldPopoverClose(model)),
     Match.tag("GotThemeMessage", ({ message }) => foldTheme(model, message)),
     Match.tag("SelectedTheme", ({ theme }) =>
       Update.combine(model, [
@@ -269,6 +274,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
         menu: MainMenuView.view(
           { menu: model.menu, theme: model.theme },
           {
+            navigationLinks: (model._tag === "LoggedIn"
+              ? MainMenu.navigationLinks.loggedIn
+              : MainMenu.navigationLinks.loggedOut
+            ).filter(({ route }) => route !== model.route._tag),
             sections:
               model.route._tag === "Home" && model.tabletOrAbove
                 ? [CalendarView.calendarViewSection(model.activeDateRange, h)]

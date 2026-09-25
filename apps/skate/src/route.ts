@@ -18,6 +18,7 @@ export type LoggedOutRoute = typeof LoggedOutRoute.Type;
 export type LoggedInRoute = typeof LoggedInRoute.Type;
 
 export type AppRoute = typeof AppRoute.Type;
+export type AppRouteTag = AppRoute["_tag"];
 
 export const RedirectDestination = Schema.Literals(["Home", "Login"]);
 export type RedirectDestination = typeof RedirectDestination.Type;
@@ -40,6 +41,12 @@ export const guardLoggedInRoute = (route: AppRoute): RouteAccess<LoggedInRoute> 
 export const homeRouter = pipe(Route.root, Route.mapTo(AppRoute.Home));
 export const loginRouter = pipe(literal("login"), Route.mapTo(AppRoute.Login));
 export const adminRouter = pipe(literal("admin"), Route.mapTo(AppRoute.Admin));
+
+export const navigationHref: Record<Exclude<AppRouteTag, "NotFound">, string> = {
+  Home: homeRouter(),
+  Login: loginRouter(),
+  Admin: adminRouter(),
+};
 
 export const urlToAppRoute = Route.parseUrlWithFallback(
   Route.oneOf(loginRouter, adminRouter, homeRouter),
