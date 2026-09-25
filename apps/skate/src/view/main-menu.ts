@@ -87,9 +87,6 @@ export const view = (
                               ),
                             ],
                           ),
-                          ...(inputs.loggedIn
-                            ? [h.button([h.OnClick(Message.ClickedLogout())], ["Sign out"])]
-                            : []),
                           ...inputs.sections,
                           h.div(
                             [],
@@ -155,6 +152,24 @@ export const view = (
                               ),
                             ],
                           ),
+                          ...(inputs.loggedIn
+                            ? [
+                                h.div(
+                                  [],
+                                  [
+                                    h.button(
+                                      [
+                                        h.OnClick(Message.ClickedLogout()),
+                                        h.Class(
+                                          "cursor-pointer w-fit border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
+                                        ),
+                                      ],
+                                      ["Sign out"],
+                                    ),
+                                  ],
+                                ),
+                              ]
+                            : []),
                         ],
                       ),
                     ],
