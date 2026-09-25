@@ -162,7 +162,6 @@ export const update = (model: Model, message: Message) =>
         ? foldToastShow(model, {
             variant: "Error",
             payload: Auth.messageForOperation(kind, "signOut"),
-            sticky: true,
           })
         : { model },
     ),
