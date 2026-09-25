@@ -25,3 +25,12 @@ approval_mode = "approve"
 
 [mcp_servers.foldkit-devtools.tools.foldkit_count_messages_by_tag]
 approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_get_message]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_replay_to_keyframe]
+approval_mode = "approve"
+
+[mcp_servers.foldkit-devtools.tools.foldkit_list_keyframes]
+approval_mode = "approve"

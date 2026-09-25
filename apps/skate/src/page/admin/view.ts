@@ -13,10 +13,18 @@ export const view = Submodel.defineView<Model, Message, { readonly session: Sess
         onNone: () => h.p([h.Role("status")], ["Checking admin access…"]),
         onSome: (error) =>
           h.section(
-            [],
+            [h.Class("flex flex-col gap-4")],
             [
               h.p([h.Role("alert")], [error.message]),
-              h.button([h.OnClick(Message.ClickedRetryAccess())], ["Try again"]),
+              h.button(
+                [
+                  h.OnClick(Message.ClickedRetryAccess()),
+                  h.Class(
+                    "cursor-pointer w-fit border rounded px-4 py-1 text-sm hover:bg-slate-100 dark:hover:bg-slate-800",
+                  ),
+                ],
+                ["Try again"],
+              ),
             ],
           ),
       });
