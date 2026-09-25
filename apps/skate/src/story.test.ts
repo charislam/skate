@@ -1,4 +1,4 @@
-import { Popover } from "@foldkit/ui";
+import { Popover, Toast as UiToast } from "@foldkit/ui";
 import { Option } from "effect";
 import { Calendar } from "foldkit";
 import { fromString } from "foldkit/url";
@@ -10,6 +10,7 @@ import { ActiveDate } from "./domain";
 import { UserId } from "./domain/session";
 import { Message } from "./message";
 import type { Model } from "./model";
+import { Toast } from "./toast";
 import { AppRoute } from "./route";
 import * as Login from "./page/login/model";
 import { update } from "./main";
@@ -26,6 +27,7 @@ const initialModel: Model = {
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
+  toast: Toast.init({ id: "app-toast" }),
   loginModel: Login.init(),
 };
 
@@ -51,7 +53,6 @@ describe("update", () => {
         _tag: "LoggedIn" as const,
         route: AppRoute.Home(),
         session: { userId: UserId.make("user-1"), email: Option.none() },
-        maybeSignOutError: Option.none(),
       };
       story(
         update,
@@ -67,12 +68,11 @@ describe("update", () => {
     });
   });
 
-  test("shows an app-owned error after sign out fails", () => {
+  test("shows a toast after sign out fails", () => {
     const loggedIn = {
       ...initialModel,
       _tag: "LoggedIn" as const,
       session: { userId: UserId.make("user-1"), email: Option.none() },
-      maybeSignOutError: Option.none(),
     };
     story(
       update,
@@ -83,10 +83,9 @@ describe("update", () => {
       model((next) => {
         expect(next._tag).toBe("LoggedIn");
         if (next._tag === "LoggedIn")
-          expect(next.maybeSignOutError).toEqual(
-            Option.some("We couldn't sign you out. Try again."),
-          );
+          expect(next.toast.entries[0]?.payload).toBe("We couldn't sign you out. Try again.");
       }),
+      UiToast.test.drainEntry({ entryId: "app-toast-entry-0" }),
     );
   });
 

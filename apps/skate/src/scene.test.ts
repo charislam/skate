@@ -7,6 +7,7 @@ import { describe, test } from "vitest";
 import { ActiveDate, Theme } from "./domain";
 import { UserId } from "./domain/session";
 import { type Model } from "./model";
+import { Toast } from "./toast";
 import { AppRoute, LoggedOutRoute } from "./route";
 import * as Login from "./page/login/model";
 import { Message as LoginMessage } from "./page/login/message";
@@ -26,6 +27,7 @@ const modelWith = (
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
+  toast: Toast.init({ id: "app-toast" }),
   loginModel: Login.init(),
 });
 
@@ -45,7 +47,6 @@ describe("view", () => {
     _tag: "LoggedIn",
     route: AppRoute.Admin(),
     session: { userId: UserId.make("user-1"), email: Option.none() },
-    maybeSignOutError: Option.none(),
   };
 
   test.each([

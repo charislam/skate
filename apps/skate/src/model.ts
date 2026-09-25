@@ -6,6 +6,7 @@ import { ActiveDate, Theme } from "./domain";
 import { Session } from "./domain/session";
 import { LoggedInRoute, LoggedOutRoute } from "./route";
 import * as Login from "./page/login/model";
+import { Toast } from "./toast";
 
 const HomeFields = {
   today: Calendar.CalendarDate,
@@ -13,6 +14,7 @@ const HomeFields = {
   menu: Popover.Model,
   theme: Theme.Model,
   tabletOrAbove: Schema.Boolean,
+  toast: Toast.Model,
 };
 
 export const LoggedOutModel = taggedStruct("LoggedOut", {
@@ -24,7 +26,6 @@ export const LoggedOutModel = taggedStruct("LoggedOut", {
 export const LoggedInModel = taggedStruct("LoggedIn", {
   route: LoggedInRoute,
   session: Session,
-  maybeSignOutError: Schema.Option(Schema.String),
   ...HomeFields,
 });
 

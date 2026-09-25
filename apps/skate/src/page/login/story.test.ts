@@ -89,7 +89,7 @@ describe("login update", () => {
     );
   });
 
-  test("submits valid credentials and maps a typed auth failure to a login message", () => {
+  test("submits valid credentials and emits typed auth failures", () => {
     story(
       updateWithContext,
       given(init()),

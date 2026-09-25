@@ -7,6 +7,7 @@ import { Theme } from "./domain";
 import { ActiveDateMessage } from "./domain/active-date-message";
 import { Session } from "./domain/session";
 import { Auth } from "./domain/auth";
+import { Toast } from "./toast";
 import * as Login from "./page/login/message";
 
 export const Message = defineMessageUnion({
@@ -37,6 +38,7 @@ export const Message = defineMessageUnion({
   GotPopoverMessage: {
     message: Popover.Message,
   },
+  GotToastMessage: { message: Toast.Message },
 });
 
 export type Message = typeof Message.Type;

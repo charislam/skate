@@ -18,6 +18,8 @@ import { Auth } from "./domain/auth";
 import { Session } from "./domain/session";
 import { Message } from "./message";
 import { LoggedInModel, LoggedOutModel, type Model } from "./model";
+import { Toast } from "./toast";
+import type { ShowInput } from "./toast";
 import {
   AppRoute,
   type LoggedInRoute,
@@ -34,6 +36,7 @@ import * as Login from "./page/login/model";
 import * as LoginMessage from "./page/login/message";
 import { type Input as LoginInput, update as updateLogin } from "./page/login/update";
 import { view as loginView } from "./page/login/view";
+import { cn } from "cn";
 
 // FLAGS
 
@@ -107,6 +110,26 @@ const foldPopoverClose = Update.foldChildStep({
   foldOutMessage: foldPopoverOutMessage,
 });
 
+const foldToast = Update.foldChild({
+  update: Toast.update,
+  read: (model: Model) => Option.some(model.toast),
+  write: (model, toast) => evo(model, { toast: () => toast }),
+  toParentMessage: (message) => Message.GotToastMessage({ message }),
+  foldOutMessage: Toast.OutMessage.match<Update.Step<Model, Message>>({
+    DismissedToast: () => (model) => ({ model }),
+  }),
+});
+
+const foldToastShow = Update.foldChild({
+  update: (toast, input: ShowInput<string>) => Toast.show(toast, input),
+  read: (model: Model) => Option.some(model.toast),
+  write: (model, toast) => evo(model, { toast: () => toast }),
+  toParentMessage: (message) => Message.GotToastMessage({ message }),
+  foldOutMessage: Toast.OutMessage.match<Update.Step<Model, Message>>({
+    DismissedToast: () => (model) => ({ model }),
+  }),
+});
+
 const foldLogin = Update.foldChild({
   update: (model, input: LoginInput) => updateLogin(model, input.message, input.context),
   read: (model: Model) =>
@@ -136,11 +159,11 @@ export const update = (model: Model, message: Message) =>
     })),
     Match.tag("FailedSignOut", ({ kind }) =>
       model._tag === "LoggedIn"
-        ? {
-            model: evo(model, {
-              maybeSignOutError: () => Option.some(Auth.messageForOperation(kind, "signOut")),
-            }),
-          }
+        ? foldToastShow(model, {
+            variant: "Error",
+            payload: Auth.messageForOperation(kind, "signOut"),
+            sticky: true,
+          })
         : { model },
     ),
     Match.tag("ClickedLink", ({ request }) =>
@@ -165,10 +188,9 @@ export const update = (model: Model, message: Message) =>
     Match.tag("GotLoginMessage", ({ message }) =>
       foldLogin(model, { message, context: { route: model.route } }),
     ),
+    Match.tag("GotToastMessage", ({ message }) => foldToast(model, message)),
     Match.tag("ClickedLogout", () =>
-      model._tag === "LoggedIn"
-        ? { model: evo(model, { maybeSignOutError: () => Option.none() }), commands: [SignOut()] }
-        : { model },
+      model._tag === "LoggedIn" ? { model, commands: [SignOut()] } : { model },
     ),
     Match.tag("AuthStateChanged", ({ maybeSession }) =>
       Option.match(maybeSession, {
@@ -268,28 +290,69 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const page = pageView(model, h);
   return {
     title: page.title,
-    body: Layout.view(
-      {
-        ...page,
-        menu: MainMenuView.view(
-          { menu: model.menu, theme: model.theme },
+    body: h.div(
+      [],
+      [
+        Layout.view(
           {
-            navigationLinks: (model._tag === "LoggedIn"
-              ? MainMenu.navigationLinks.loggedIn
-              : MainMenu.navigationLinks.loggedOut
-            ).filter(({ route }) => route !== model.route._tag),
-            sections:
-              model.route._tag === "Home" && model.tabletOrAbove
-                ? [CalendarView.calendarViewSection(model.activeDateRange, h)]
-                : [],
+            ...page,
+            menu: MainMenuView.view(
+              { menu: model.menu, theme: model.theme },
+              {
+                navigationLinks: (model._tag === "LoggedIn"
+                  ? MainMenu.navigationLinks.loggedIn
+                  : MainMenu.navigationLinks.loggedOut
+                ).filter(({ route }) => route !== model.route._tag),
+                sections:
+                  model.route._tag === "Home" && model.tabletOrAbove
+                    ? [CalendarView.calendarViewSection(model.activeDateRange, h)]
+                    : [],
+              },
+              h,
+            ),
           },
           h,
         ),
-      },
-      h,
+        toastView(model, h),
+      ],
     ),
   };
 };
+
+const toastView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.submodel({
+    slotId: "app-toast",
+    model: model.toast,
+    view: Toast.view,
+    viewInputs: {
+      position: "BottomRight",
+      entryClassName: cn(
+        "w-80 max-w-9/10",
+        "relative",
+        "rounded-md border border-slate-400 bg-white shadow",
+        "text-slate-800",
+        "data-[variant=Error]:border-red-200 data-[variant=Error]:bg-red-50 data-[variant=Error]:text-red-800",
+        "dark:border-slate-900 dark:bg-slate-800 dark:text-slate-200",
+        "dark:data-[variant=Error]:border-red-200 dark:data-[variant=Error]:bg-slate-800 dark:data-[variant=Error]:text-red-200",
+      ),
+      entryToView: (entry, handlers) =>
+        h.div(
+          [h.Class(cn("py-2 px-3 pr-5"))],
+          [
+            h.span([h.Class("font-light")], [entry.payload]),
+            h.button(
+              [
+                ...handlers.dismiss,
+                h.AriaLabel("Dismiss"),
+                h.Class("absolute top-0 right-2 cursor-pointer text-lg hover:text-slate-950"),
+              ],
+              ["x"],
+            ),
+          ],
+        ),
+    },
+    toParentMessage: (message) => Message.GotToastMessage({ message }),
+  });
 
 const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
   if (model.route._tag === "NotFound") {
@@ -335,17 +398,6 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
                 : "",
             ],
           ),
-          model._tag === "LoggedIn"
-            ? h.p(
-                [h.Role("alert"), h.AriaLive("assertive")],
-                [
-                  Option.match(model.maybeSignOutError, {
-                    onNone: () => "",
-                    onSome: (error) => error,
-                  }),
-                ],
-              )
-            : h.empty,
           h.button([h.OnClick(Message.ClickedLogout())], ["Sign out"]),
         ],
       ),
@@ -366,6 +418,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     menu: Popover.init({ id: "main-menu", contentFocus: true }),
     theme: themeBoot.model,
     tabletOrAbove: flags.tabletOrAbove,
+    toast: Toast.init({ id: "app-toast" }),
   };
   const initial = Option.match(flags.maybeSession, {
     onNone: () => {
@@ -395,7 +448,10 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   };
 };
 
-type HomeState = Pick<Model, "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove"> & {
+type HomeState = Pick<
+  Model,
+  "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove" | "toast"
+> & {
   readonly loginModel?: typeof Login.Model.Type;
 };
 
@@ -405,6 +461,7 @@ const homeState = (model: HomeState) => ({
   menu: model.menu,
   theme: model.theme,
   tabletOrAbove: model.tabletOrAbove,
+  toast: model.toast,
 });
 
 const makeLoggedOut = (model: HomeState, route: LoggedOutRoute) =>
@@ -418,7 +475,6 @@ const makeLoggedIn = (model: HomeState, session: Session, route: LoggedInRoute =
   LoggedInModel({
     route,
     session,
-    maybeSignOutError: Option.none(),
     ...homeState(model),
   });
 
