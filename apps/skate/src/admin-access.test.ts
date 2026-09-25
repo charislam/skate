@@ -14,7 +14,8 @@ const boot = (path = "/admin") =>
   init(
     {
       today: Calendar.make(2026, 9, 25),
-      theme: "light",
+      systemTheme: "light",
+      maybeUserTheme: Option.none(),
       tabletOrAbove: true,
       maybeSession: Option.some(session),
     },

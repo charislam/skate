@@ -1,4 +1,5 @@
 import { Popover } from "@foldkit/ui";
+import { BrowserKeyValueStore } from "@effect/platform-browser";
 import { Console, Effect, Match, Option, Schema, Stream } from "effect";
 import {
   AsyncData,
@@ -50,7 +51,8 @@ import { cn } from "cn";
 
 export const Flags = Schema.Struct({
   today: Calendar.CalendarDate,
-  theme: Theme.Theme_,
+  systemTheme: Theme.Theme_,
+  maybeUserTheme: Schema.Option(Theme.Theme_),
   tabletOrAbove: Schema.Boolean,
   maybeSession: Schema.Option(Session),
 });
@@ -60,15 +62,19 @@ export type Flags = typeof Flags.Type;
 export const flags = Effect.gen(function* () {
   const today = yield* Calendar.today.local;
   const tabletOrAbove = window.matchMedia("(min-width: 1024px)").matches;
-  const theme: Theme.Theme_ = window.matchMedia("(prefers-color-scheme: dark)").matches
+  const systemTheme: Theme.Theme_ = window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
+  const maybeUserTheme = yield* Theme.loadUserTheme().pipe(
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+    Effect.catch(() => Effect.succeed(Option.none())),
+  );
   const auth = yield* Auth.Service;
   const maybeSession = yield* auth.getSession.pipe(
     Effect.tapError((error) => Console.warn("Could not restore Supabase session:", error.message)),
     Effect.catch(() => Effect.succeed(Option.none())),
   );
-  return { today, tabletOrAbove, theme, maybeSession };
+  return { today, tabletOrAbove, systemTheme, maybeUserTheme, maybeSession };
 });
 
 // UPDATE
@@ -273,7 +279,7 @@ export const update = (model: Model, message: Message) =>
 
 // SUBSCRIPTION
 
-export const subscriptions = Subscription.make<Model, Message, Auth.Service>()((entry) => ({
+const rootSubscriptions = Subscription.make<Model, Message, Auth.Service>()((entry) => ({
   mediaWidth: entry(
     {},
     {
@@ -308,6 +314,16 @@ export const subscriptions = Subscription.make<Model, Message, Auth.Service>()((
     },
   ),
 }));
+
+const themeSubscriptions = Subscription.lift(Theme.subscriptions)<Model, Message>({
+  toChildModel: (model) => model.theme,
+  toParentMessage: (message) => Message.GotThemeMessage({ message }),
+});
+
+export const subscriptions = Subscription.aggregate<Model, Message, Auth.Service>()(
+  rootSubscriptions,
+  themeSubscriptions,
+);
 
 // VIEW
 
@@ -465,7 +481,10 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Se
   flags: Flags,
   url,
 ) => {
-  const themeBoot = Theme.boot({ systemTheme: flags.theme });
+  const themeBoot = Theme.boot({
+    systemTheme: flags.systemTheme,
+    maybeUserTheme: flags.maybeUserTheme,
+  });
   const route = urlToAppRoute(url);
   const common = {
     adminAccessRequestId: 0,

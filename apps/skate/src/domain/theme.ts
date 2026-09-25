@@ -1,4 +1,6 @@
 import { Effect, Option, Schema, Stream } from "effect";
+import { BrowserKeyValueStore } from "@effect/platform-browser";
+import { KeyValueStore } from "effect/unstable/persistence";
 import { Command, Html, Submodel, Subscription, Update } from "foldkit";
 import type { HtmlBuilder } from "foldkit/html";
 import { defineMessageUnion } from "foldkit/message";
@@ -6,6 +8,27 @@ import { evo } from "foldkit/struct";
 
 export const Theme_ = Schema.Literals(["light", "dark"]);
 export type Theme_ = typeof Theme_.Type;
+
+const userThemeKey = "skate.userTheme";
+
+export const loadUserTheme = Effect.fn("Theme.loadUserTheme")(function* () {
+  const store = yield* KeyValueStore.KeyValueStore;
+  const value = yield* store.get(userThemeKey);
+  if (value === undefined) {
+    return Option.none<Theme_>();
+  }
+  return Option.some(yield* Schema.decodeUnknownEffect(Theme_)(value));
+});
+
+export const saveUserTheme = Effect.fn("Theme.saveUserTheme")(function* (
+  theme: Option.Option<Theme_>,
+) {
+  const store = yield* KeyValueStore.KeyValueStore;
+  yield* Option.match(theme, {
+    onNone: () => store.remove(userThemeKey),
+    onSome: (value) => store.set(userThemeKey, value),
+  });
+});
 
 // MODEL
 
@@ -24,6 +47,8 @@ export const Message = defineMessageUnion({
   SelectedTheme: { theme: Schema.Option(Theme_) },
   SystemThemeChanged: { theme: Theme_ },
   CompletedResolveTheme: {},
+  CompletedSaveUserTheme: {},
+  FailedSaveUserTheme: {},
 });
 
 export type Message = typeof Message.Type;
@@ -36,22 +61,35 @@ export const ResolveTheme = Command.define("ResolveTheme", {
     systemTheme: Theme_,
   },
   messages: [Message.CompletedResolveTheme],
-  execute: ({ userTheme, systemTheme }) => {
-    const resolvedTheme = Option.getOrElse(userTheme, () => systemTheme);
+  execute: ({ userTheme, systemTheme }) =>
+    Effect.sync(() => {
+      const resolvedTheme = Option.getOrElse(userTheme, () => systemTheme);
 
-    const htmlElement = document.documentElement;
-    if (resolvedTheme === "dark") {
-      htmlElement.classList.add("dark");
-    } else {
-      htmlElement.classList.remove("dark");
-    }
-
-    return Effect.succeed(Message.CompletedResolveTheme());
-  },
+      const htmlElement = document.documentElement;
+      if (resolvedTheme === "dark") {
+        htmlElement.classList.add("dark");
+      } else {
+        htmlElement.classList.remove("dark");
+      }
+    }).pipe(Effect.as(Message.CompletedResolveTheme())),
 });
 
-export const boot = (flags: { systemTheme: Theme_ }): Update.Return<Model, Message> => {
-  const userTheme = Option.none<Theme_>();
+export const SaveUserTheme = Command.define("SaveUserTheme", {
+  args: { theme: Schema.Option(Theme_) },
+  messages: [Message.CompletedSaveUserTheme, Message.FailedSaveUserTheme],
+  execute: ({ theme }) =>
+    saveUserTheme(theme).pipe(
+      Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+      Effect.as(Message.CompletedSaveUserTheme()),
+      Effect.catch(() => Effect.succeed(Message.FailedSaveUserTheme())),
+    ),
+});
+
+export const boot = (flags: {
+  systemTheme: Theme_;
+  maybeUserTheme: Option.Option<Theme_>;
+}): Update.Return<Model, Message> => {
+  const userTheme = flags.maybeUserTheme;
   return {
     model: {
       userTheme,
@@ -67,7 +105,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
   Message.match<Update.Return<Model, Message>>(message, {
     SelectedTheme: ({ theme }) => ({
       model: evo(model, { userTheme: () => theme }),
-      commands: [ResolveTheme({ userTheme: theme, systemTheme: model.systemTheme })],
+      commands: [
+        ResolveTheme({ userTheme: theme, systemTheme: model.systemTheme }),
+        SaveUserTheme({ theme }),
+      ],
     }),
     SystemThemeChanged: ({ theme }) => ({
       model: evo(model, { systemTheme: () => theme }),
@@ -76,6 +117,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     CompletedResolveTheme: () => ({
       model,
     }),
+    CompletedSaveUserTheme: () => ({ model }),
+    FailedSaveUserTheme: () => ({ model }),
   });
 
 // SUBSCRIPTION
