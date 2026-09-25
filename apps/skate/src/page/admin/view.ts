@@ -1,7 +1,7 @@
 import { Disclosure } from "@foldkit/ui";
 import { AsyncData, Submodel } from "foldkit";
 import { Option } from "effect";
-import { canAccessAdmin } from "../../domain/admin-access";
+import { AdminAccess, canAccessAdmin } from "../../domain/admin-access";
 import { Message } from "./message";
 import type { Model } from "./model";
 import type { Html, HtmlBuilder } from "foldkit/html";
@@ -18,7 +18,7 @@ const navigation = (section: AdminSection, h: HtmlBuilder<Message>): Html =>
     [h.AriaLabel("Admin navigation")],
     [
       h.ul(
-        [h.Class("flex flex-col gap-1")],
+        [h.Class("flex flex-col gap-2")],
         navigationLinks.map((link) =>
           h.keyed("li")(
             link.section,
@@ -29,7 +29,7 @@ const navigation = (section: AdminSection, h: HtmlBuilder<Message>): Html =>
                   h.Href(link.href),
                   ...(section === link.section ? [h.AriaCurrent("page")] : []),
                   h.Class(
-                    "block rounded px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 aria-[current=page]:bg-slate-100 aria-[current=page]:font-semibold dark:aria-[current=page]:bg-slate-800",
+                    "block px-3 py-2 text-sm tracking-wide border-slate-100 dark:border-slate-800 hover:border-l-8 aria-[current=page]:hover:border-l-0 aria-[current=page]:bg-slate-100 dark:aria-[current=page]:bg-slate-800",
                   ),
                 ],
                 [link.section],
@@ -75,38 +75,60 @@ const compactNavigation = (model: Model, section: AdminSection, h: HtmlBuilder<M
     h,
   );
 
+const statsCard = (
+  data: { title: string; href: string; asyncData: AsyncData.AsyncData<string, Error> },
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.section(
+    [
+      h.Class(
+        "relative w-fit min-w-56 rounded border-b border-r border-slate-200 p-5 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-900",
+      ),
+    ],
+    [
+      h.h3(
+        [h.Class("text-sm text-slate-600 tracking-wide dark:text-slate-300")],
+        [
+          h.a(
+            [
+              h.Href(data.href),
+              h.Class(
+                "before:absolute before:inset-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600",
+              ),
+            ],
+            [data.title],
+          ),
+        ],
+      ),
+      h.p(
+        [h.Class("mt-2 text-3xl font-semibold tabular-nums"), h.Role("status")],
+        [
+          AsyncData.match(data.asyncData, {
+            onIdle: () => "—",
+            onLoading: () => "Loading…",
+            onRefreshing: (data) => data,
+            onFailure: (error) => error.message,
+            onStale: ({ data }) => data,
+            onSuccess: (data) => data,
+          }),
+        ],
+      ),
+    ],
+  );
+
 const sectionContent = (model: Model, section: AdminSection, h: HtmlBuilder<Message>): Html =>
   h.section(
     [h.AriaLabel(`${section} content`)],
     [
       ...(section === "Overview"
         ? [
-            h.section(
-              [
-                h.Class(
-                  "mt-6 w-fit min-w-56 rounded-lg border border-slate-200 p-5 shadow-sm dark:border-slate-700",
-                ),
-                h.AriaLabel("Active sources"),
-              ],
-              [
-                h.h3(
-                  [h.Class("text-sm font-medium text-slate-600 dark:text-slate-300")],
-                  ["Active sources"],
-                ),
-                h.p(
-                  [h.Class("mt-2 text-3xl font-semibold tabular-nums"), h.Role("status")],
-                  [
-                    AsyncData.match(model.activeSourceCount, {
-                      onIdle: () => "—",
-                      onLoading: () => "Loading…",
-                      onRefreshing: (data) => String(data),
-                      onFailure: (error) => error.message,
-                      onStale: ({ data }) => String(data),
-                      onSuccess: (data) => String(data),
-                    }),
-                  ],
-                ),
-              ],
+            statsCard(
+              {
+                title: "Active sources",
+                href: adminSourcesRouter({ section: "Sources" }),
+                asyncData: AsyncData.map(model.activeSourceCount, (count) => count.toString()),
+              },
+              h,
             ),
           ]
         : []),
@@ -116,32 +138,36 @@ const sectionContent = (model: Model, section: AdminSection, h: HtmlBuilder<Mess
 export const headerEnd = <ParentMessage>(h: HtmlBuilder<ParentMessage>): Html =>
   h.h1([h.Class(Heading.capsHeadingStyle)], ["Admin"]);
 
+const gatedAdmonition = (data: { adminAccess: AdminAccess }, h: HtmlBuilder<Message>): Html => {
+  const maybeError = AsyncData.getError(data.adminAccess);
+  return Option.match(maybeError, {
+    onNone: () => h.p([h.Role("status")], ["Checking admin access…"]),
+    onSome: (error) =>
+      h.section(
+        [h.Class("flex flex-col gap-4")],
+        [
+          h.p([h.Role("alert")], [error.message]),
+          h.button(
+            [
+              h.OnClick(Message.ClickedRetryAccess()),
+              h.Class(
+                "cursor-pointer w-fit border rounded px-4 py-1 text-sm hover:bg-slate-100 dark:hover:bg-slate-800",
+              ),
+            ],
+            ["Try again"],
+          ),
+        ],
+      ),
+  });
+};
+
 export const view = Submodel.defineView<
   Model,
   Message,
   { readonly section: AdminSection; readonly tabletOrAbove: boolean }
 >((model, { section, tabletOrAbove }, h) => {
   if (!canAccessAdmin(model.adminAccess)) {
-    const maybeError = AsyncData.getError(model.adminAccess);
-    return Option.match(maybeError, {
-      onNone: () => h.p([h.Role("status")], ["Checking admin access…"]),
-      onSome: (error) =>
-        h.section(
-          [h.Class("flex flex-col gap-4")],
-          [
-            h.p([h.Role("alert")], [error.message]),
-            h.button(
-              [
-                h.OnClick(Message.ClickedRetryAccess()),
-                h.Class(
-                  "cursor-pointer w-fit border rounded px-4 py-1 text-sm hover:bg-slate-100 dark:hover:bg-slate-800",
-                ),
-              ],
-              ["Try again"],
-            ),
-          ],
-        ),
-    });
+    return gatedAdmonition({ adminAccess: model.adminAccess }, h);
   }
   return h.div(
     [h.Class("flex flex-col gap-6 lg:flex-row lg:gap-10")],
