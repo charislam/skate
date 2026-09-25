@@ -1,5 +1,4 @@
 import { Popover } from "@foldkit/ui";
-import { cn } from "cn";
 import { Console, Effect, Equal, Match, Option, Schema, Stream } from "effect";
 import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
 import { Machine } from "foldkit/experimental";
@@ -28,7 +27,9 @@ import {
   guardLoggedOutRoute,
   urlToAppRoute,
 } from "./route";
-import { MainMenuView, WeekMonthSelector } from "./view";
+import { MainMenuView } from "./view";
+import * as Layout from "./view/layout";
+import * as CalendarView from "./view/calendar";
 import * as Login from "./page/login/model";
 import * as LoginMessage from "./page/login/message";
 import { type Input as LoginInput, update as updateLogin } from "./page/login/update";
@@ -256,18 +257,45 @@ export const subscriptions = Subscription.make<Model, Message, Auth.Service>()((
 
 // VIEW
 
+type Page = Layout.PageSlots & { readonly title: string };
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
+  const page = pageView(model, h);
+  return {
+    title: page.title,
+    body: Layout.view(
+      {
+        ...page,
+        menu: MainMenuView.view(
+          { menu: model.menu, theme: model.theme },
+          {
+            sections:
+              model.route._tag === "Home" && model.tabletOrAbove
+                ? [CalendarView.calendarViewSection(model.activeDateRange, h)]
+                : [],
+          },
+          h,
+        ),
+      },
+      h,
+    ),
+  };
+};
+
+const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
   if (model.route._tag === "NotFound") {
     return {
       title: "skate.to",
-      body: h.main([h.Class("p-8")], [h.h1([], [`Page not found: ${model.route.path}`])]),
+      width: "compact",
+      content: h.section([], [h.h1([], [`Page not found: ${model.route.path}`])]),
     };
   }
 
   if (model.route._tag === "Login") {
     return {
       title: "Sign in · skate.to",
-      body:
+      width: "compact",
+      content:
         model._tag === "LoggedOut"
           ? h.submodel({
               slotId: "login",
@@ -282,8 +310,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   if (model.route._tag === "Admin") {
     return {
       title: "Admin · skate.to",
-      body: h.main(
-        [h.Class("p-8")],
+      width: "compact",
+      content: h.section(
+        [],
         [
           h.h1([h.Class("text-3xl")], ["Admin"]),
           h.p(
@@ -314,169 +343,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
     };
   }
 
-  const isDayView = model.activeDateRange._tag === "Day";
-
-  return {
-    title: "skate.to",
-    body: h.div(
-      [
-        h.Class(
-          cn(
-            "h-screen mx-auto px-4 xl:px-12 py-6 flex flex-col gap-8 lg:gap-12 bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
-            isDayView && "max-w-xl",
-          ),
-        ),
-      ],
-      [
-        h.div(
-          [h.Class("flex gap-2 justify-between items-baseline")],
-          [
-            h.hgroup(
-              [h.Class("flex items-baseline")],
-              [
-                h.h1([h.Class("text-4xl")], ["skate"]),
-                h.p(
-                  [h.Class("text-sm text-slate-800 dark:text-slate-300 translate-y-1/4")],
-                  ["TO"],
-                ),
-              ],
-            ),
-            Match.value(model.activeDateRange).pipe(
-              Match.tags({
-                Week: ({ startDate }) =>
-                  WeekMonthSelector.selector({ granularity: "Week", startDate }, h),
-                Month: ({ startDate }) =>
-                  WeekMonthSelector.selector({ granularity: "Month", startDate }, h),
-              }),
-              Match.orElse(() => null),
-            ),
-          ],
-        ),
-        h.main(
-          [h.Class("flex-1")],
-          Match.value(model.activeDateRange).pipe(
-            Match.tagsExhaustive({
-              Initial: () => [],
-              Day: ({ date }) => [
-                h.div(
-                  [h.Class("flex gap-2 justify-between")],
-                  [
-                    h.h2(
-                      [h.Class("flex gap-2")],
-                      [
-                        h.span([h.Class("text-6xl")], [date.day.toString()]),
-                        h.span(
-                          [h.Class("py-2 flex flex-col justify-between")],
-                          [
-                            h.span(
-                              [h.Class("uppercase text-sm text-slate-600 dark:text-slate-400")],
-                              [
-                                Option.match(ActiveDate.formatMonth({ format: "short" }, date), {
-                                  onSome: (month) => month,
-                                  onNone: () => "",
-                                }),
-                              ],
-                            ),
-                            h.span(
-                              [
-                                h.Class(
-                                  "text-slate-600 dark:text-slate-400 font-light tracking-wide",
-                                ),
-                              ],
-                              [Calendar.dayOfWeek(date)],
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    h.div(
-                      [h.Class("flex gap-4")],
-                      [
-                        h.button(
-                          [
-                            h.Class(
-                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                            ),
-                            h.OnClick(Message.SelectedPreviousDateRange()),
-                          ],
-                          [
-                            h.span([h.Class("sr-only")], ["Previous day"]),
-                            h.span([h.AriaHidden(true), h.InnerHTML("&#8826;")]),
-                          ],
-                        ),
-                        h.button(
-                          [
-                            h.Class(
-                              "flex items-center text-4xl text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                            ),
-                            h.OnClick(Message.SelectedNextDateRange()),
-                          ],
-                          [
-                            h.span([h.Class("sr-only")], ["Next day"]),
-                            h.span([h.AriaHidden(true), h.InnerHTML("&#8827;")]),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-              Week: ({ startDate }) => [
-                h.div(
-                  [h.Class("flex flex-col gap-2")],
-                  [
-                    h.div(
-                      [h.Class("grid grid-cols-7 gap-2")],
-                      [
-                        ...ActiveDate.DAYS_OF_WEEK.map((dayOfWeek, index) =>
-                          h.keyed("div")(
-                            dayOfWeek,
-                            [h.Class("text-md tracking-wide")],
-                            [`${dayOfWeek.slice(0, 3)} ${Calendar.addDays(startDate, index).day}`],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-              Month: () => [],
-            }),
-          ),
-        ),
-        h.footer(
-          [h.Class("flex gap-2 justify-between items-baseline")],
-          [
-            h.div(
-              [h.Class("flex divide-x-2 divide-slate-300 dark:divide-slate-700")],
-              [
-                h.button(
-                  [
-                    h.Class(
-                      "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                    ),
-                  ],
-                  ["Showing all"],
-                ),
-                ActiveDate.isDateRangeCurrent(model.activeDateRange, model.today)
-                  ? null
-                  : h.button(
-                      [
-                        h.Class(
-                          "px-2 text-sm text-slate-600 hover:bg-slate-100 cursor-pointer dark:text-slate-300 dark:hover:bg-slate-800",
-                        ),
-                        h.OnClick(Message.SelectedCurrentDateRange()),
-                      ],
-                      ["Go to today →"],
-                    ),
-              ],
-            ),
-            MainMenuView.view(model, h),
-          ],
-        ),
-      ],
-    ),
-  };
+  return { title: "skate.to", ...CalendarView.slots(model, h) };
 };
 
 // INIT

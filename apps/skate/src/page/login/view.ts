@@ -5,8 +5,8 @@ import { Message } from "./message";
 import { type Model } from "./model";
 
 export const view = Submodel.defineView<Model, Message>((model, h) =>
-  h.main(
-    [h.Class("max-w-md mx-auto p-8")],
+  h.section(
+    [],
     [
       h.h1([h.Class("text-3xl mb-6")], ["Sign in"]),
       h.form(

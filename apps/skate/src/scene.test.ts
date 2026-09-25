@@ -5,6 +5,7 @@ import { Command, Mount, click, expect, given, role, scene, text, type } from "f
 import { describe, test } from "vitest";
 
 import { ActiveDate, Theme } from "./domain";
+import { UserId } from "./domain/session";
 import { type Model } from "./model";
 import { AppRoute, LoggedOutRoute } from "./route";
 import * as Login from "./page/login/model";
@@ -38,6 +39,47 @@ const acknowledgeBackdrop = Mount.resolve(
 );
 
 describe("view", () => {
+  const calendar = ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) });
+  const admin: Model = {
+    ...modelWith(calendar),
+    _tag: "LoggedIn",
+    route: AppRoute.Admin(),
+    session: { userId: UserId.make("user-1"), email: Option.none() },
+    maybeSignOutError: Option.none(),
+  };
+
+  test.each([
+    ["login", modelWith(calendar, AppRoute.Login())],
+    ["admin", admin],
+    ["not found", modelWith(calendar, AppRoute.NotFound({ path: "/missing" }))],
+  ])("the %s page shares the brand and theme menu without calendar controls", (_, model) => {
+    scene(
+      { update, view },
+      given(model),
+      expect(role("heading", { name: "skate" })).toExist(),
+      expect(role("main")).toExist(),
+      expect(role("button", { name: "Next week" })).not.toExist(),
+      expect(role("button", { name: "Showing all" })).not.toExist(),
+      click(role("button", { name: "Main menu" })),
+      acknowledgeAnchor,
+      acknowledgeBackdrop,
+      expect(role("group", { name: "Theme" })).toExist(),
+      expect(role("group", { name: "View" })).not.toExist(),
+      click(role("button", { name: "Dark" })),
+      expect(role("button", { name: "Main menu" })).toHaveAttr("aria-expanded", "false"),
+      Mount.expectEnded(Popover.AnchorPopover, Popover.PortalPopoverBackdrop),
+      Command.expectHas(
+        Theme.ResolveTheme({ userTheme: Option.some("dark"), systemTheme: "light" }),
+      ),
+      Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
+      Command.resolve(Theme.ResolveTheme, Theme.Message.CompletedResolveTheme()),
+      click(role("button", { name: "Main menu" })),
+      acknowledgeAnchor,
+      acknowledgeBackdrop,
+      expect(role("button", { name: "Dark" })).toBeDisabled(),
+    );
+  });
+
   test("the login page keeps its live alert mounted before and after an error", () => {
     scene(
       { update, view },
