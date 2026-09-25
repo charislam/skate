@@ -75,10 +75,42 @@ const compactNavigation = (model: Model, section: AdminSection, h: HtmlBuilder<M
     h,
   );
 
-const sectionContent = (section: AdminSection, h: HtmlBuilder<Message>): Html =>
+const sectionContent = (model: Model, section: AdminSection, h: HtmlBuilder<Message>): Html =>
   h.section(
     [h.AriaLabel(`${section} content`)],
-    [h.h2([h.Class("text-xl font-medium")], [section])],
+    [
+      ...(section === "Overview"
+        ? [
+            h.section(
+              [
+                h.Class(
+                  "mt-6 w-fit min-w-56 rounded-lg border border-slate-200 p-5 shadow-sm dark:border-slate-700",
+                ),
+                h.AriaLabel("Active sources"),
+              ],
+              [
+                h.h3(
+                  [h.Class("text-sm font-medium text-slate-600 dark:text-slate-300")],
+                  ["Active sources"],
+                ),
+                h.p(
+                  [h.Class("mt-2 text-3xl font-semibold tabular-nums"), h.Role("status")],
+                  [
+                    AsyncData.match(model.activeSourceCount, {
+                      onIdle: () => "—",
+                      onLoading: () => "Loading…",
+                      onRefreshing: (data) => String(data),
+                      onFailure: (error) => error.message,
+                      onStale: ({ data }) => String(data),
+                      onSuccess: (data) => String(data),
+                    }),
+                  ],
+                ),
+              ],
+            ),
+          ]
+        : []),
+    ],
   );
 
 export const headerEnd = <ParentMessage>(h: HtmlBuilder<ParentMessage>): Html =>
@@ -115,12 +147,9 @@ export const view = Submodel.defineView<
     [h.Class("flex flex-col gap-6 lg:flex-row lg:gap-10")],
     [
       tabletOrAbove
-        ? h.aside(
-            [h.Class("w-48 shrink-0")],
-            [h.h2([h.Class("mb-3 text-sm font-semibold")], ["Admin"]), navigation(section, h)],
-          )
+        ? h.aside([h.Class("w-48 shrink-0")], [navigation(section, h)])
         : compactNavigation(model, section, h),
-      h.div([h.Class("min-w-0 flex-1")], [sectionContent(section, h)]),
+      h.div([h.Class("min-w-0 flex-1")], [sectionContent(model, section, h)]),
     ],
   );
 });

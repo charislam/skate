@@ -16,17 +16,23 @@ import {
 } from "./command";
 import { ActiveDate, MainMenu, Theme } from "./domain";
 import { Auth } from "./domain/auth";
+import type { Resource } from "./resource";
 import { Session } from "./domain/session";
 import { canAccessAdmin } from "./domain/admin-access";
 import * as Admin from "./page/admin/model";
 import * as AdminMessage from "./page/admin/message";
-import { invalidate as invalidateAdmin, update as updateAdmin } from "./page/admin/update";
+import {
+  enterSection as enterAdminSectionModel,
+  revalidateAccess as revalidateAdminAccess,
+  update as updateAdmin,
+} from "./page/admin/update";
 import { headerEnd as adminHeaderEnd, view as adminView } from "./page/admin/view";
 import { Message } from "./message";
 import { LoggedInModel, LoggedOutModel, type Model } from "./model";
 import { Toast } from "./toast";
 import type { ShowInput } from "./toast";
 import {
+  type AdminSection,
   AppRoute,
   type LoggedInRoute,
   type LoggedOutRoute,
@@ -148,7 +154,7 @@ const foldLogin = Update.foldChild({
   write: (model, nextLoginModel) =>
     model._tag === "LoggedOut" ? evo(model, { loginModel: () => nextLoginModel }) : model,
   toParentMessage: (message) => Message.GotLoginMessage({ message }),
-  foldOutMessage: LoginMessage.OutMessage.match<Update.Step<Model, Message, Auth.Service>>({
+  foldOutMessage: LoginMessage.OutMessage.match<Update.Step<Model, Message, Resource>>({
     SucceededLogin:
       ({ session }) =>
       (model) =>
@@ -156,9 +162,7 @@ const foldLogin = Update.foldChild({
   }),
 });
 
-const foldAdminOutMessage = AdminMessage.OutMessage.match<
-  Update.Step<Model, Message, Auth.Service>
->({
+const foldAdminOutMessage = AdminMessage.OutMessage.match<Update.Step<Model, Message, Resource>>({
   RequestedLogout: () => (stepModel) => ({ model: stepModel, commands: [SignOut()] }),
   DeniedAccess: () => (stepModel) =>
     stepModel._tag === "LoggedIn" && stepModel.route._tag === "Admin"
@@ -178,9 +182,21 @@ const foldAdmin = (session: Session) =>
     foldOutMessage: foldAdminOutMessage,
   });
 
-const foldAdminInvalidation = (session: Session) =>
+const foldAdminAccessRevalidation = (session: Session) =>
   Update.foldChildStep({
-    update: (adminModel: Admin.Model) => invalidateAdmin(adminModel, { userId: session.userId }),
+    update: (adminModel: Admin.Model) =>
+      revalidateAdminAccess(adminModel, { userId: session.userId }),
+    read: (model: Model) =>
+      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
+    write: (model, nextAdminModel) =>
+      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
+    toParentMessage: (message) => Message.GotAdminMessage({ message }),
+    foldOutMessage: foldAdminOutMessage,
+  });
+
+const foldAdminSectionEntry = (section: AdminSection) =>
+  Update.foldChildStep({
+    update: (adminModel: Admin.Model) => enterAdminSectionModel(adminModel, section),
     read: (model: Model) =>
       model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
     write: (model, nextAdminModel) =>
@@ -191,7 +207,7 @@ const foldAdminInvalidation = (session: Session) =>
 
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
-    Match.withReturnType<Update.Return<Model, Message, Auth.Service>>(),
+    Match.withReturnType<Update.Return<Model, Message, Resource>>(),
     Match.tag("CompletedNavigateInternal", "CompletedLoadExternal", "CompletedRedirect", () => ({
       model,
     })),
@@ -211,7 +227,7 @@ export const update = (model: Model, message: Message) =>
       Update.combine(model, [
         foldPopoverClose,
         (currentModel) =>
-          UrlRequest.match<Update.Return<Model, Message, Auth.Service>>(request, {
+          UrlRequest.match<Update.Return<Model, Message, Resource>>(request, {
             Internal: ({ url }) => ({
               model: currentModel,
               commands: [NavigateInternal({ url: urlToString(url) })],
@@ -287,7 +303,7 @@ export const update = (model: Model, message: Message) =>
 
 // SUBSCRIPTION
 
-const rootSubscriptions = Subscription.make<Model, Message, Auth.Service>()((entry) => ({
+const rootSubscriptions = Subscription.make<Model, Message, Resource>()((entry) => ({
   mediaWidth: entry(
     {},
     {
@@ -328,7 +344,7 @@ const themeSubscriptions = Subscription.lift(Theme.subscriptions)<Model, Message
   toParentMessage: (message) => Message.GotThemeMessage({ message }),
 });
 
-export const subscriptions = Subscription.aggregate<Model, Message, Auth.Service>()(
+export const subscriptions = Subscription.aggregate<Model, Message, Resource>()(
   rootSubscriptions,
   themeSubscriptions,
 );
@@ -465,7 +481,7 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
 
 // INIT
 
-export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Service> = (
+export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Resource> = (
   flags: Flags,
   url,
 ) => {
@@ -492,7 +508,11 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Auth.Se
     },
     onSome: (session) => {
       const access = guardLoggedInRoute(route);
-      const permissionLoad = revalidateAdminOnRoot(makeLoggedIn(common, session, access.route));
+      const loggedInModel = makeLoggedIn(common, session, access.route);
+      const permissionLoad =
+        access.route._tag === "Admin"
+          ? enterAdminSection(loggedInModel, session, access.route.section)
+          : revalidateAdminOnRoot(loggedInModel);
       return {
         model: permissionLoad.model,
         commands: [
@@ -571,29 +591,55 @@ const updateLoggedInRoute = (
 ) => {
   const access = guardLoggedInRoute(route);
   const nextModel = evo(model, { route: () => access.route });
-  return access.route._tag === "Admin" && model.route._tag !== "Admin"
-    ? revalidateAdminOnRoot(nextModel)
-    : withRouteRedirect(nextModel, access.maybeRedirect);
+  if (access.route._tag === "Admin" && model.route._tag !== "Admin") {
+    return enterAdminSection(nextModel, model.session, access.route.section);
+  }
+  if (
+    access.route._tag === "Admin" &&
+    model.route._tag === "Admin" &&
+    access.route.section !== model.route.section
+  ) {
+    return foldAdminSectionEntry(access.route.section)(nextModel);
+  }
+  return withRouteRedirect(nextModel, access.maybeRedirect);
 };
 
 const updateLoggedInSession = (
   model: Model,
   session: Session,
-): Update.Return<Model, Message, Auth.Service> => {
+): Update.Return<Model, Message, Resource> => {
   if (model._tag === "LoggedIn" && model.session.userId === session.userId) {
     return revalidateAdminOnRoot(evo(model, { session: () => session }));
   }
   const access = guardLoggedInRoute(model.route);
-  const permissionLoad = revalidateAdminOnRoot(makeLoggedIn(model, session, access.route));
+  const loggedInModel = makeLoggedIn(model, session, access.route);
+  const permissionLoad =
+    access.route._tag === "Admin"
+      ? enterAdminSection(loggedInModel, session, access.route.section)
+      : revalidateAdminOnRoot(loggedInModel);
   return {
     model: permissionLoad.model,
     commands: [...routeRedirectCommands(access.maybeRedirect), ...(permissionLoad.commands ?? [])],
   };
 };
 
-const revalidateAdminOnRoot = (model: Model): Update.Return<Model, Message, Auth.Service> => {
+const revalidateAdminOnRoot = (model: Model): Update.Return<Model, Message, Resource> => {
   if (model._tag !== "LoggedIn") {
     return { model };
   }
-  return foldAdminInvalidation(model.session)(model);
+  return foldAdminAccessRevalidation(model.session)(model);
+};
+
+const enterAdminSection = (
+  model: Model,
+  session: Session,
+  section: AdminSection,
+): Update.Return<Model, Message, Resource> => {
+  if (model._tag !== "LoggedIn") {
+    return { model };
+  }
+  return Update.combine(model, [
+    foldAdminAccessRevalidation(session),
+    foldAdminSectionEntry(section),
+  ]);
 };

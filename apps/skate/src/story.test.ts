@@ -87,7 +87,7 @@ describe("update", () => {
         Message.GotAdminMessage({
           message: AdminMessage.SettledFetchAccess({
             userId: loggedIn.session.userId,
-            requestId: navigating.model.adminModel.requestId,
+            adminRequestId: navigating.model.adminModel.adminRequestId,
             result: Result.succeed(false),
           }),
         }),
@@ -104,30 +104,45 @@ describe("update", () => {
     });
 
     test.each([
-      ["Overview", "/admin/sources", "Sources"],
-      ["Sources", "/admin", "Overview"],
-    ] as const)("switches from %s to %s without revalidating", (current, path, next) => {
-      const loggedIn: Model = {
-        ...initialModel,
-        _tag: "LoggedIn",
-        route: AppRoute.Admin({ section: current }),
-        adminModel: {
-          ...Admin.init(),
-          adminAccess: AdminAccess.Success({ data: true }),
-        },
-        session: { userId: UserId.make("user-1"), email: Option.none() },
-      };
-      const navigating = update(
-        loggedIn,
-        Message.ChangedUrl({ url: url(`http://localhost${path}`) }),
-      );
-      expect(navigating.model.route).toEqual(AppRoute.Admin({ section: next }));
-      if (navigating.model._tag !== "LoggedIn") {
-        throw new Error("Expected logged-in model");
-      }
-      expect(navigating.model.adminModel).toBe(loggedIn.adminModel);
-      expect("commands" in navigating && navigating.commands?.length).toBeFalsy();
-    });
+      ["Overview", "/admin/sources", "Sources", false],
+      ["Sources", "/admin", "Overview", true],
+    ] as const)(
+      "switches from %s to %s with only the required load",
+      (current, path, next, loadsSources) => {
+        const loggedIn: Model = {
+          ...initialModel,
+          _tag: "LoggedIn",
+          route: AppRoute.Admin({ section: current }),
+          adminModel: {
+            ...Admin.init(),
+            adminAccess: AdminAccess.Success({ data: true }),
+          },
+          session: { userId: UserId.make("user-1"), email: Option.none() },
+        };
+        const navigating = update(
+          loggedIn,
+          Message.ChangedUrl({ url: url(`http://localhost${path}`) }),
+        );
+        expect(navigating.model.route).toEqual(AppRoute.Admin({ section: next }));
+        if (navigating.model._tag !== "LoggedIn") {
+          throw new Error("Expected logged-in model");
+        }
+        if (!loadsSources) {
+          expect(navigating.model.adminModel).toBe(loggedIn.adminModel);
+          expect("commands" in navigating && navigating.commands?.length).toBeFalsy();
+        } else {
+          expect(navigating.model.adminModel.activeSourceCount._tag).toBe("Loading");
+          expect(
+            "commands" in navigating &&
+              navigating.commands?.some((command) => command.name === "FetchActiveSources"),
+          ).toBe(true);
+          expect(
+            "commands" in navigating &&
+              navigating.commands?.some((command) => command.name === "FetchAdminAccess"),
+          ).toBe(false);
+        }
+      },
+    );
 
     test("redirects logged-in users away from the login route", () => {
       const loggedIn = {

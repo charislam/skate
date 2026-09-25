@@ -109,7 +109,7 @@ describe("view", () => {
       expect(role("navigation", { name: "Admin navigation" })).toExist(),
       expect(role("link", { name: "Sources" })).toHaveAttr("aria-current", "page"),
       expect(role("link", { name: "Overview" })).toHaveAttr("href", "/admin"),
-      expect(role("heading", { name: "Sources" })).toExist(),
+      expect(role("region", { name: "Sources content" })).toExist(),
       expect(role("button", { name: "Sources" })).not.toExist(),
     );
   });

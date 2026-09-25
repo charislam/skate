@@ -3,24 +3,24 @@ import { Option, Result } from "effect";
 import { evo } from "foldkit/struct";
 import { Message, OutMessage } from "./message";
 import { Model } from "./model";
-import { FetchAdminAccess } from "./command";
-import { Auth } from "../../domain/auth";
+import { FetchActiveSources, FetchAdminAccess } from "./command";
 import { UserId } from "../../domain/session";
+import type { Resource } from "../../resource";
+import type { AdminSection } from "../../route";
 
 export type Context = Readonly<{ userId: UserId }>;
-
 export const update = (model: Model, message: Message, context: Context) =>
-  Message.match<Update.ReturnWithOutMessage<Model, Message, OutMessage, Auth.Service>>(message, {
-    ClickedRetryAccess: () => revalidate(model, context),
-    InvalidatedAccess: () => revalidate(model, context),
+  Message.match<Update.ReturnWithOutMessage<Model, Message, OutMessage, Resource>>(message, {
+    ClickedRetryAccess: () => revalidateAccess(model, context),
+    InvalidatedAccess: () => revalidateAccess(model, context),
     ClickedLogout: () => ({ model, outMessage: OutMessage.RequestedLogout() }),
     ToggledNavigation: ({ isOpen }) => ({
       model: evo(model, { isNavigationOpen: () => isOpen }),
     }),
-    SettledFetchAccess: ({ userId, requestId, result }) => {
+    SettledFetchAccess: ({ userId, adminRequestId, result }) => {
       if (
         context.userId !== userId ||
-        model.requestId !== requestId ||
+        model.adminRequestId !== adminRequestId ||
         !AsyncData.isPending(model.adminAccess)
       ) {
         return { model };
@@ -32,21 +32,49 @@ export const update = (model: Model, message: Message, context: Context) =>
           : {}),
       };
     },
+    SettledFetchActiveSources: ({ sourceRequestId, result }) => {
+      if (
+        model.sourceRequestId !== sourceRequestId ||
+        !AsyncData.isPending(model.activeSourceCount)
+      ) {
+        return { model };
+      }
+      return { model: evo(model, { activeSourceCount: AsyncData.settle(result) }) };
+    },
   });
 
-export const revalidate = (
+export const revalidateAccess = (
   model: Model,
   context: Context,
-): Update.ReturnWithOutMessage<Model, Message, OutMessage, Auth.Service> =>
+): Update.ReturnWithOutMessage<Model, Message, OutMessage, Resource> =>
   Option.match(AsyncData.revalidateOrLoad(model.adminAccess), {
     onNone: () => ({ model }),
     onSome: (adminAccess) => {
-      const requestId = model.requestId + 1;
+      const adminRequestId = model.adminRequestId + 1;
       return {
-        model: evo(model, { adminAccess: () => adminAccess, requestId: () => requestId }),
-        commands: [FetchAdminAccess({ userId: context.userId, requestId })],
+        model: evo(model, { adminAccess: () => adminAccess, adminRequestId: () => adminRequestId }),
+        commands: [FetchAdminAccess({ userId: context.userId, adminRequestId })],
       };
     },
   });
 
-export const invalidate = (model: Model, context: Context) => revalidate(model, context);
+export const enterSection = (
+  model: Model,
+  section: AdminSection,
+): Update.Return<Model, Message, Resource> =>
+  section === "Overview" ? loadActiveSources(model) : { model };
+
+const loadActiveSources = (model: Model): Update.Return<Model, Message, Resource> =>
+  Option.match(AsyncData.loadIfMissing(model.activeSourceCount), {
+    onNone: () => ({ model }),
+    onSome: (activeSourceCount) => {
+      const sourceRequestId = model.sourceRequestId + 1;
+      return {
+        model: evo(model, {
+          activeSourceCount: () => activeSourceCount,
+          sourceRequestId: () => sourceRequestId,
+        }),
+        commands: [FetchActiveSources({ sourceRequestId })],
+      };
+    },
+  });
