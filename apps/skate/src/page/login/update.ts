@@ -50,7 +50,10 @@ export const update = (model: ModelType, message: Message, context: Context) =>
           ? { model }
           : {
               model: Model.Editing({
-                email: validateEmail(value),
+                email:
+                  model.email._tag === "NotValidated"
+                    ? { ...model.email, value }
+                    : validateEmail(value),
                 password: model.password,
               }),
             },
@@ -60,7 +63,28 @@ export const update = (model: ModelType, message: Message, context: Context) =>
           : {
               model: Model.Editing({
                 email: model.email,
-                password: validatePassword(value),
+                password:
+                  model.password._tag === "NotValidated"
+                    ? { ...model.password, value }
+                    : validatePassword(value),
+              }),
+            },
+      BlurredEmail: () =>
+        model._tag === "Submitting"
+          ? { model }
+          : {
+              model: Model.Editing({
+                email: validateEmail(model.email.value),
+                password: model.password,
+              }),
+            },
+      BlurredPassword: () =>
+        model._tag === "Submitting"
+          ? { model }
+          : {
+              model: Model.Editing({
+                email: model.email,
+                password: validatePassword(model.password.value),
               }),
             },
       SubmittedForm: () => {

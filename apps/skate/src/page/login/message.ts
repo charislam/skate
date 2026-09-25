@@ -6,6 +6,8 @@ import { Session } from "../../domain/session";
 export const Message = defineMessageUnion({
   UpdatedEmail: { value: Schema.String },
   UpdatedPassword: { value: Schema.String },
+  BlurredEmail: {},
+  BlurredPassword: {},
   SubmittedForm: {},
   SucceededSignIn: { session: Session },
   FailedSignIn: { kind: Auth.ErrorKind },

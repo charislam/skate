@@ -4,12 +4,12 @@
 
 Add Supabase Auth to the FoldKit app in `apps/skate` and introduce an authenticated `/admin` page. Authentication is email and password for existing Supabase users; this app will not expose a sign-up flow.
 
-| Route | Signed out | Signed in |
-| --- | --- | --- |
-| `/` (`Home`) | Public | Public |
-| `/login` (`Login`) | Login page | Redirect to `/` (`Home`) |
-| `/admin` (`Admin`) | Redirect to `/login` | Admin page |
-| Unmatched path (`NotFound`) | Public not-found page | Public not-found page |
+| Route                       | Signed out            | Signed in                |
+| --------------------------- | --------------------- | ------------------------ |
+| `/` (`Home`)                | Public                | Public                   |
+| `/login` (`Login`)          | Login page            | Redirect to `/` (`Home`) |
+| `/admin` (`Admin`)          | Redirect to `/login`  | Admin page               |
+| Unmatched path (`NotFound`) | Public not-found page | Public not-found page    |
 
 Use the FoldKit `examples/auth` app as the architecture precedent: root-owned `LoggedOut | LoggedIn` state, route subsets, Commands for auth side effects, and root-level route guards/redirects. Provide the Auth service through FoldKit's application-level `resources` Layer. The auth example simulates authentication; replace its simulated credential command with the `Auth` service described below.
 
@@ -104,13 +104,13 @@ Restore the session in `flags: Effect<Flags>` by yielding `Auth.Service` and cal
 Keep auth effects behind `Auth.Service`, not in view code or update logic. A Command obtains `Auth.Service` from its Effect environment and calls the interface. The login page collects email and password as Model state; submit emits a Message, and update returns the Command. The service adapter uses the current Supabase JS v2 API:
 
 ```ts
-supabase.auth.signInWithPassword({ email, password })
+supabase.auth.signInWithPassword({ email, password });
 // Promise result: { data: { user, session }, error }
 
-supabase.auth.signOut()
+supabase.auth.signOut();
 // Promise result: { error }
 
-supabase.auth.getSession()
+supabase.auth.getSession();
 // Promise result: { data: { session }, error }
 ```
 
@@ -119,9 +119,7 @@ Suggested service and Command contracts (exact Effect and FoldKit type annotatio
 ```ts
 interface Interface {
   readonly getSession: Effect.Effect<Option.Option<Session>, AuthError>;
-  readonly signInWithPassword: (
-    credentials: Credentials,
-  ) => Effect.Effect<Session, AuthError>;
+  readonly signInWithPassword: (credentials: Credentials) => Effect.Effect<Session, AuthError>;
   readonly signOut: Effect.Effect<void, AuthError>;
   readonly authStateChanges: Stream.Stream<AuthStateChange, AuthError>;
 }
@@ -136,9 +134,11 @@ const SignInWithPassword = Command.define("SignInWithPassword", {
       const auth = yield* Auth.Service;
       const session = yield* auth.signInWithPassword({ email, password });
       return Message.SucceededSignIn({ session });
-    }).pipe(Effect.catchTag("AuthError", error =>
-      Effect.succeed(Message.FailedSignIn({ error: error.message })),
-    )),
+    }).pipe(
+      Effect.catchTag("AuthError", (error) =>
+        Effect.succeed(Message.FailedSignIn({ error: error.message })),
+      ),
+    ),
 });
 ```
 
@@ -151,11 +151,11 @@ Use `Effect.tryPromise` (or the installed Effect equivalent) to bridge promise-b
 Implement `authStateChanges` in the Auth service using `supabase.auth.onAuthStateChange` so token refresh, logout in another tab, and other client auth changes can update the root Model. The service converts SDK callbacks into an Effect `Stream` with a scoped finalizer that unsubscribes the listener. Consume it from FoldKit's root `Subscription`, whose Effect environment includes the app's `resources` Layer. Keep the Supabase callback synchronous and only publish the event there; do not call additional async Supabase methods from inside it.
 
 ```ts
-const { data: { subscription } } = supabase.auth.onAuthStateChange(
-  (event, session) => {
-    // Convert the event/session to a Message for FoldKit; do not await here.
-  },
-);
+const {
+  data: { subscription },
+} = supabase.auth.onAuthStateChange((event, session) => {
+  // Convert the event/session to a Message for FoldKit; do not await here.
+});
 subscription.unsubscribe();
 ```
 

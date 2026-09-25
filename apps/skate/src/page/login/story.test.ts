@@ -12,6 +12,51 @@ const updateWithContext = (model: ReturnType<typeof init>, message: Message) =>
   update(model, message, { route: AppRoute.Login() });
 
 describe("login update", () => {
+  test("waits until blur to validate each field", () => {
+    story(
+      updateWithContext,
+      given(init()),
+      message(Message.UpdatedEmail({ value: "invalid" })),
+      message(Message.UpdatedPassword({ value: "short" })),
+      model((next) => {
+        expect(next.email).toMatchObject({ _tag: "NotValidated", value: "invalid" });
+        expect(next.password).toMatchObject({ _tag: "NotValidated", value: "short" });
+      }),
+      message(Message.BlurredEmail()),
+      model((next) => {
+        expect(next.email).toMatchObject({
+          _tag: "Invalid",
+          errors: ["Enter a valid email address."],
+        });
+        expect(next.password).toMatchObject({ _tag: "NotValidated", value: "short" });
+      }),
+      message(Message.BlurredPassword()),
+      model((next) => {
+        expect(next.password).toMatchObject({
+          _tag: "Invalid",
+          errors: ["Password must be at least 8 characters."],
+        });
+      }),
+      Command.expectNone(),
+    );
+  });
+
+  test("revalidates a field on input after its first blur", () => {
+    story(
+      updateWithContext,
+      given(init()),
+      message(Message.BlurredEmail()),
+      message(Message.UpdatedEmail({ value: "person@example.com" })),
+      message(Message.BlurredPassword()),
+      message(Message.UpdatedPassword({ value: "secret123" })),
+      model((next) => {
+        expect(next.email).toMatchObject({ _tag: "Valid", value: "person@example.com" });
+        expect(next.password).toMatchObject({ _tag: "Valid", value: "secret123" });
+      }),
+      Command.expectNone(),
+    );
+  });
+
   test("validates required email and password before issuing a command", () => {
     story(
       updateWithContext,
