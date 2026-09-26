@@ -1,4 +1,5 @@
 import { Dialog } from "@foldkit/ui";
+import { Listbox } from "@foldkit/ui";
 import { Schema } from "effect";
 import { defineMessageUnion } from "foldkit/message";
 import { Sources } from "../../../../domain/sources";
@@ -10,6 +11,7 @@ export const Message = defineMessageUnion({
   UpdatedNotes: { value: Schema.String },
   SubmittedForm: {},
   GotDialogMessage: { message: Dialog.Message },
+  GotTypeListboxMessage: { message: Listbox.Message },
   CompletedCreateSource: {
     requestId: Schema.Number,
     scopeId: Schema.String,

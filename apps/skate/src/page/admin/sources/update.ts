@@ -1,6 +1,7 @@
 import { AsyncData, Dom, FieldValidation, Command as FoldkitCommand, Update } from "foldkit";
 import { Effect, Crypto as EffectCrypto, Equal, Match, Option, Result, Schema } from "effect";
 import { BrowserCrypto } from "@effect/platform-browser";
+import { Listbox } from "@foldkit/ui";
 import { evo } from "foldkit/struct";
 import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
@@ -21,6 +22,71 @@ import { searchTextRules, validateSearchText } from "./validation";
 import * as Form from "./form/model";
 import * as FormUpdate from "./form/update";
 import * as FormMessage from "./form/message";
+import { EnabledFilterListbox, FetchStatusFilterListbox, TypeFilterListbox } from "./listboxes";
+
+const foldEnabledListbox = Update.foldChild({
+  update: EnabledFilterListbox.update,
+  read: (model: SourcesModel) => Option.some(model.enabledListbox),
+  write: (model, nextListbox) => evo(model, { enabledListbox: () => nextListbox }),
+  toParentMessage: (message) => Message.GotEnabledListboxMessage({ message }),
+  foldOutMessage: Listbox.OutMessage.match<
+    Update.Step<SourcesModel, Message>,
+    Listbox.OutMessage<"all" | "true" | "false">
+  >({
+    Selected:
+      ({ value }) =>
+      (model) => ({
+        model: evo(model, {
+          draftFilters: (filters) =>
+            evo(filters, {
+              enabled: () => (value === "all" ? Option.none() : Option.some(value === "true")),
+            }),
+        }),
+      }),
+  }),
+});
+const foldTypeListbox = Update.foldChild({
+  update: TypeFilterListbox.update,
+  read: (model: SourcesModel) => Option.some(model.typeListbox),
+  write: (model, nextListbox) => evo(model, { typeListbox: () => nextListbox }),
+  toParentMessage: (message) => Message.GotTypeListboxMessage({ message }),
+  foldOutMessage: Listbox.OutMessage.match<
+    Update.Step<SourcesModel, Message>,
+    Listbox.OutMessage<"all" | Form.SourceType>
+  >({
+    Selected:
+      ({ value }) =>
+      (model) => ({
+        model: evo(model, {
+          draftFilters: (filters) =>
+            evo(filters, {
+              type: () => (value === "all" ? Option.none() : Option.some(value)),
+            }),
+        }),
+      }),
+  }),
+});
+const foldFetchStatusListbox = Update.foldChild({
+  update: FetchStatusFilterListbox.update,
+  read: (model: SourcesModel) => Option.some(model.fetchStatusListbox),
+  write: (model, nextListbox) => evo(model, { fetchStatusListbox: () => nextListbox }),
+  toParentMessage: (message) => Message.GotFetchStatusListboxMessage({ message }),
+  foldOutMessage: Listbox.OutMessage.match<
+    Update.Step<SourcesModel, Message>,
+    Listbox.OutMessage<"all" | "never" | "fetched">
+  >({
+    Selected:
+      ({ value }) =>
+      (model) => ({
+        model: evo(model, {
+          draftFilters: (filters) =>
+            evo(filters, {
+              fetchStatus: () => (value === "all" ? Option.none() : Option.some(value)),
+            }),
+        }),
+      }),
+  }),
+});
 
 type Context = Readonly<{ userId: UserId; isAllowed: boolean }>;
 
@@ -136,27 +202,17 @@ export const update = (model: SourcesModel, message: Message, context: Context) 
     ClickedCreateSource: () =>
       context.isAllowed && Option.isSome(model.scopeId) ? openForm(model) : { model },
     GotFormMessage: ({ message: formMessage }) => foldForm(model, formMessage, context),
+    GotEnabledListboxMessage: ({ message: listboxMessage }) =>
+      foldEnabledListbox(model, listboxMessage),
+    GotTypeListboxMessage: ({ message: listboxMessage }) => foldTypeListbox(model, listboxMessage),
+    GotFetchStatusListboxMessage: ({ message: listboxMessage }) =>
+      foldFetchStatusListbox(model, listboxMessage),
     UpdatedSearch: ({ value }) => ({
       model: evo(model, {
         draftFilters: () =>
           evo(model.draftFilters, {
             searchText: () => FieldValidation.NotValidated({ value }),
           }),
-      }),
-    }),
-    UpdatedType: ({ maybeValue }) => ({
-      model: evo(model, {
-        draftFilters: () => evo(model.draftFilters, { type: () => maybeValue }),
-      }),
-    }),
-    UpdatedEnabled: ({ maybeValue }) => ({
-      model: evo(model, {
-        draftFilters: () => evo(model.draftFilters, { enabled: () => maybeValue }),
-      }),
-    }),
-    UpdatedFetchStatus: ({ maybeValue }) => ({
-      model: evo(model, {
-        draftFilters: () => evo(model.draftFilters, { fetchStatus: () => maybeValue }),
       }),
     }),
     ClickedApply: () => apply(model, context),

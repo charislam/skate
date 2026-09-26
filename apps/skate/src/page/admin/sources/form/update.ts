@@ -1,4 +1,5 @@
 import { Dialog } from "@foldkit/ui";
+import { Listbox } from "@foldkit/ui";
 import { Effect, Option, Result, Schema } from "effect";
 import { Command, FieldValidation, Update } from "foldkit";
 import { evo } from "foldkit/struct";
@@ -6,6 +7,7 @@ import { Sources } from "../../../../domain/sources";
 import { UserId } from "../../../../domain/session";
 import type { Resource } from "../../../../resource";
 import { Message, OutMessage } from "./message";
+import { TypeListbox } from "./listbox";
 import { type Model, init } from "./model";
 import { nameRules, urlRules, validateName, validateUrl } from "./validation";
 
@@ -40,6 +42,18 @@ const dialogFold = {
 const foldDialog = Update.foldChild({ ...dialogFold, update: Dialog.update });
 const closeDialog = Update.foldChildStep({ ...dialogFold, update: Dialog.close });
 const openDialog = Update.foldChildStep({ ...dialogFold, update: Dialog.open });
+const typeListboxFold = Update.foldChild({
+  update: TypeListbox.update,
+  read: (model: Model) => Option.some(model.typeListbox),
+  write: (model, nextListbox) => evo(model, { typeListbox: () => nextListbox }),
+  toParentMessage: (message) => Message.GotTypeListboxMessage({ message }),
+  foldOutMessage: Listbox.OutMessage.match<
+    Update.Step<Model, Message>,
+    Listbox.OutMessage<Model["type"]>
+  >({
+    Selected: () => (model) => ({ model }),
+  }),
+});
 
 export const open = (model: Model) => {
   if (model.dialog.isOpen) {
@@ -66,6 +80,7 @@ export const update = (model: Model, message: Message, context: Context) =>
       model: evo(model, { notes: () => FieldValidation.NotValidated({ value }) }),
     }),
     GotDialogMessage: ({ message: dialogMessage }) => foldDialog(model, dialogMessage),
+    GotTypeListboxMessage: ({ message: listboxMessage }) => typeListboxFold(model, listboxMessage),
     SubmittedForm: () => {
       if (!context.isAllowed || !model.dialog.isOpen) {
         return { model };

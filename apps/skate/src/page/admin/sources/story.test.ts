@@ -1,4 +1,4 @@
-import { Dialog } from "@foldkit/ui";
+import { Dialog, Listbox } from "@foldkit/ui";
 import { CreateSource } from "./form/update";
 import { Message as FormMessage } from "./form/message";
 import { Option, Result, Schema } from "effect";
@@ -43,6 +43,69 @@ const row = (id: string, name: string): Sources.SourceRow =>
   });
 
 describe("sources table stories", () => {
+  test("filter Listbox selections update drafts without fetching until Apply", () => {
+    story(
+      sourceUpdate,
+      given(initScoped()),
+      message(
+        Message.GotEnabledListboxMessage({
+          message: Listbox.Message.SelectedItem({ item: "true" }),
+        }),
+      ),
+      model((current) => {
+        expect(current.draftFilters.enabled).toEqual(Option.some(true));
+        expect(current.query.filters.enabled).toEqual(Option.none());
+      }),
+      message(
+        Message.GotTypeListboxMessage({
+          message: Listbox.Message.SelectedItem({ item: "web_scrape" }),
+        }),
+      ),
+      message(
+        Message.GotFetchStatusListboxMessage({
+          message: Listbox.Message.SelectedItem({ item: "never" }),
+        }),
+      ),
+      model((current) => {
+        expect(current.query.filters.enabled).toEqual(Option.none());
+        expect(current.draftFilters.enabled).toEqual(Option.some(true));
+        expect(current.draftFilters.type).toEqual(Option.some("web_scrape"));
+        expect(current.draftFilters.fetchStatus).toEqual(Option.some("never"));
+      }),
+      message(Message.ClickedApply()),
+      Command.expectHas(
+        FetchPage({
+          requestId: 1,
+          scopeId,
+          userId: context.userId,
+          kind: "Initial",
+          query: {
+            ...defaultQuery(),
+            filters: {
+              ...defaultQuery().filters,
+              enabled: Option.some(true),
+              type: Option.some("web_scrape"),
+              fetchStatus: Option.some("never"),
+            },
+          },
+          maybeCursor: Option.none(),
+        }),
+      ),
+      Command.resolve(ScrollSourcesTableToTop, Message.CompletedScrollSourcesTable()),
+      Command.resolve(
+        FetchPage,
+        Message.SettledPage({
+          requestId: 1,
+          scopeId,
+          userId: context.userId,
+          kind: "Initial",
+          maybeCursor: Option.none(),
+          result: Result.succeed({ items: [], nextCursor: Option.none() }),
+        }),
+      ),
+    );
+  });
+
   test("entering creates a scope and dispatches the initial page request", () => {
     story(
       sourceUpdate,

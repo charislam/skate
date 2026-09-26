@@ -1,8 +1,10 @@
-import { Dialog } from "@foldkit/ui";
+import { Dialog, Listbox } from "@foldkit/ui";
+import { Option } from "effect";
 import { FieldValidation, Submodel } from "foldkit";
 import type { HtmlBuilder } from "foldkit/html";
 import { Message } from "./message";
 import type { Model } from "./model";
+import { TypeListbox, TypeListboxId } from "./listbox";
 
 const error = (field: FieldValidation.Field<string>, h: HtmlBuilder<Message>) =>
   field._tag === "Invalid"
@@ -53,18 +55,27 @@ export const view = Submodel.defineView<Model, Message>((model, h) => {
                             error(model.name, h),
                           ],
                         ),
-                        h.label(
+                        h.div(
                           [h.Class("flex flex-col gap-1")],
                           [
-                            "Type",
-                            h.select(
-                              [
-                                h.Disabled(true),
-                                h.Value(model.type),
-                                h.Class("rounded border px-3 py-2"),
-                              ],
-                              [h.option([h.Value("web_scrape")], ["Web scrape"])],
-                            ),
+                            h.label([h.For(Listbox.buttonId(TypeListboxId))], ["Type"]),
+                            h.submodel({
+                              slotId: TypeListboxId,
+                              model: model.typeListbox,
+                              view: TypeListbox.view,
+                              viewInputs: {
+                                items: ["web_scrape"],
+                                maybeSelectedValue: Option.some(model.type),
+                                buttonContent: h.span([], ["Web scrape"]),
+                                buttonClassName: "w-full rounded border px-3 py-2 text-left",
+                                itemsClassName: "rounded border bg-white py-1 shadow-lg",
+                                isDisabled: true,
+                                anchor: { placement: "bottom-start", gap: 4, padding: 8 },
+                                itemToConfig: () => ({ content: h.span([], ["Web scrape"]) }),
+                              },
+                              toParentMessage: (message) =>
+                                Message.GotTypeListboxMessage({ message }),
+                            }),
                           ],
                         ),
                         h.label(

@@ -1,10 +1,16 @@
 import { Option, Schema } from "effect";
 import { AsyncData, FieldValidation } from "foldkit";
+import { Listbox } from "@foldkit/ui";
 import { defineTaggedUnion } from "foldkit/schema";
 import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
 
 import * as Form from "./form/model";
+import {
+  EnabledFilterListboxId,
+  FetchStatusFilterListboxId,
+  TypeFilterListboxId,
+} from "./listboxes";
 
 export const ScopeId = Schema.String.pipe(Schema.brand("SourcesScopeId"));
 
@@ -39,6 +45,9 @@ export const Model = Schema.Struct({
   feed: Feed.schema,
   query: Sources.SourceQuery,
   draftFilters: DraftFilters,
+  enabledListbox: Listbox.Model,
+  typeListbox: Listbox.Model,
+  fetchStatusListbox: Listbox.Model,
   nextRequestId: Schema.Number,
   pendingRequest: Schema.Option(PendingRequest),
 
@@ -68,6 +77,9 @@ export const init = (): Model => ({
   optimisticSources: [],
   creationErrors: [],
   draftFilters: emptyFilters(),
+  enabledListbox: Listbox.init({ id: EnabledFilterListboxId }),
+  typeListbox: Listbox.init({ id: TypeFilterListboxId }),
+  fetchStatusListbox: Listbox.init({ id: FetchStatusFilterListboxId }),
   query: defaultQuery(),
   scopeId: Option.none(),
   nextRequestId: 1,

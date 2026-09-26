@@ -7,9 +7,7 @@ import { ObserveLoadMore } from "./mount";
 import { type FeedData, type Model, More } from "./model";
 
 import { view as formView } from "./form/view";
-
-const optionValue = <A>(maybeValue: Option.Option<A>, toValue: (value: A) => string): string =>
-  Option.match(maybeValue, { onNone: () => "all", onSome: toValue });
+import { AdminSourcesFilter } from "./view/filter";
 
 const sortButton = (
   model: Model,
@@ -215,106 +213,6 @@ const table = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   );
 
-const filterControls = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.div(
-    [h.Class("flex flex-wrap items-end gap-3")],
-    [
-      h.label(
-        [h.Class("flex flex-col gap-1 text-sm")],
-        [
-          "Search names",
-          h.input([
-            h.Type("search"),
-            h.Value(model.draftFilters.searchText.value),
-            h.OnInput((value) => Message.UpdatedSearch({ value })),
-            h.OnKeyDownPreventDefault((key) =>
-              key === "Enter" ? Option.some(Message.PressedEnter()) : Option.none(),
-            ),
-            h.AriaInvalid(model.draftFilters.searchText._tag === "Invalid"),
-            h.AriaLabel("Search names"),
-            h.Class("rounded border px-2 py-1"),
-          ]),
-        ],
-      ),
-      h.label(
-        [h.Class("flex flex-col gap-1 text-sm")],
-        [
-          "Enabled",
-          h.select(
-            [
-              h.Value(optionValue(model.draftFilters.enabled, String)),
-              h.OnChange((value) =>
-                Message.UpdatedEnabled({
-                  maybeValue: value === "all" ? Option.none() : Option.some(value === "true"),
-                }),
-              ),
-            ],
-            [
-              h.option([h.Value("all")], ["All"]),
-              h.option([h.Value("true")], ["Enabled"]),
-              h.option([h.Value("false")], ["Disabled"]),
-            ],
-          ),
-        ],
-      ),
-      h.label(
-        [h.Class("flex flex-col gap-1 text-sm")],
-        [
-          "Type",
-          h.select(
-            [
-              h.Value(optionValue(model.draftFilters.type, String)),
-              h.OnChange((value) =>
-                Message.UpdatedType({
-                  maybeValue: value === "all" ? Option.none() : Option.some("web_scrape"),
-                }),
-              ),
-            ],
-            [
-              h.option([h.Value("all")], ["All types"]),
-              h.option([h.Value("web_scrape")], ["Web scrape"]),
-            ],
-          ),
-        ],
-      ),
-      h.label(
-        [h.Class("flex flex-col gap-1 text-sm")],
-        [
-          "Fetch status",
-          h.select(
-            [
-              h.Value(optionValue(model.draftFilters.fetchStatus, String)),
-              h.OnChange((value) =>
-                Message.UpdatedFetchStatus({
-                  maybeValue:
-                    value === "never"
-                      ? Option.some("never")
-                      : value === "fetched"
-                        ? Option.some("fetched")
-                        : Option.none(),
-                }),
-              ),
-            ],
-            [
-              h.option([h.Value("all")], ["All"]),
-              h.option([h.Value("never")], ["Never fetched"]),
-              h.option([h.Value("fetched")], ["Fetched"]),
-            ],
-          ),
-        ],
-      ),
-      h.button([h.OnClick(Message.ClickedApply()), h.Class("rounded border px-3 py-1")], ["Apply"]),
-      h.button(
-        [h.OnClick(Message.ClickedClear()), h.Class("rounded border px-3 py-1")],
-        ["Clear filters"],
-      ),
-      h.button(
-        [h.OnClick(Message.ClickedRefresh()), h.Class("rounded border px-3 py-1")],
-        ["Refresh"],
-      ),
-    ],
-  );
-
 export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
     [h.Id("admin-sources-table"), h.Class("flex flex-col gap-4")],
@@ -338,7 +236,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
         view: formView,
         toParentMessage: (message) => Message.GotFormMessage({ message }),
       }),
-      filterControls(model, h),
+      AdminSourcesFilter.wideControls(model, h),
       FieldValidation.match(model.draftFilters.searchText, {
         onNotValidated: () => h.empty,
         onValidating: () => h.empty,

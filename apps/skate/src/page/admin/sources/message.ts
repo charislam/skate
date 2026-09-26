@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Listbox } from "@foldkit/ui";
 import { defineMessageUnion } from "foldkit/message";
 import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
@@ -9,10 +10,10 @@ import * as Form from "./form/message";
 export const Message = defineMessageUnion({
   ClickedCreateSource: {},
   GotFormMessage: { message: Form.Message },
+  GotEnabledListboxMessage: { message: Listbox.Message },
+  GotTypeListboxMessage: { message: Listbox.Message },
+  GotFetchStatusListboxMessage: { message: Listbox.Message },
   UpdatedSearch: { value: Schema.String },
-  UpdatedType: { maybeValue: Schema.Option(Sources.SourceType) },
-  UpdatedEnabled: { maybeValue: Schema.Option(Schema.Boolean) },
-  UpdatedFetchStatus: { maybeValue: Schema.Option(Schema.Literals(["never", "fetched"])) },
   ClickedApply: {},
   PressedEnter: {},
   ClickedClear: {},
