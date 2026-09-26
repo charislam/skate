@@ -1,14 +1,14 @@
-import { Config, Context, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
 import {
   type SupabaseClient,
   type Session as SupabaseSession,
-  createClient,
   isAuthApiError,
   isAuthRetryableFetchError,
   isAuthWeakPasswordError,
 } from "@supabase/supabase-js";
 import { Session as AppSession, UserId } from "./session";
 import { PermissionError } from "./admin-access";
+import { Supabase } from "./supabase";
 
 export interface Credentials {
   readonly email: string;
@@ -217,9 +217,8 @@ const makeAuthInterface = (client: SupabaseClient): Interface => ({
 export const layerConfig = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const url = yield* Config.String("VITE_SUPABASE_URL");
-    const publishableKey = yield* Config.Redacted("VITE_SUPABASE_PUBLISHABLE_KEY");
-    return Service.of(makeAuthInterface(createClient(url, Redacted.value(publishableKey))));
+    const client = yield* Supabase.Service;
+    return Service.of(makeAuthInterface(client));
   }).pipe(Effect.orDie),
 );
 

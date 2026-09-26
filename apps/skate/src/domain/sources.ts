@@ -1,7 +1,8 @@
-import { Array, Config, Context, Effect, Layer, Match, Option, Redacted, Schema } from "effect";
-import { createClient } from "@supabase/supabase-js";
+import { Array, Context, Effect, Layer, Match, Option, Schema } from "effect";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { AsyncData } from "foldkit";
 import { defineTaggedUnion } from "foldkit/schema";
+import { Supabase } from "./supabase";
 
 export class SourceError extends Schema.TaggedError<SourceError>()("SourceError", {
   message: Schema.String,
@@ -108,8 +109,7 @@ const cursorFor = (query: SourceQuery, row: SourceRow, cursorRow: typeof CursorR
     Match.exhaustive,
   );
 
-const makeInterface = (url: string, publishableKey: string): Interface => {
-  const client = createClient(url, publishableKey);
+const makeInterface = (client: SupabaseClient): Interface => {
   const countActive = Effect.fn("Sources.countActive")(function* () {
     const { count, error } = yield* Effect.tryPromise({
       try: (signal) =>
@@ -224,9 +224,8 @@ const makeInterface = (url: string, publishableKey: string): Interface => {
 export const layerConfig = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const url = yield* Config.String("VITE_SUPABASE_URL");
-    const publishableKey = yield* Config.Redacted("VITE_SUPABASE_PUBLISHABLE_KEY");
-    return Service.of(makeInterface(url, Redacted.value(publishableKey)));
+    const client = yield* Supabase.Service;
+    return Service.of(makeInterface(client));
   }).pipe(Effect.orDie),
 );
 
