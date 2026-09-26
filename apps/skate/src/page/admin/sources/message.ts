@@ -4,7 +4,11 @@ import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
 import { ScopeId } from "./model";
 
+import * as Form from "./form/message";
+
 export const Message = defineMessageUnion({
+  ClickedCreateSource: {},
+  GotFormMessage: { message: Form.Message },
   UpdatedSearch: { value: Schema.String },
   UpdatedType: { maybeValue: Schema.Option(Sources.SourceType) },
   UpdatedEnabled: { maybeValue: Schema.Option(Schema.Boolean) },

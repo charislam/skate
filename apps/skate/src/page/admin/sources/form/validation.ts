@@ -1,14 +1,14 @@
 import { Invalid, Rule, makeRules, validate } from "foldkit/fieldValidation";
 import type { AdminSourcesFormModel } from "./model";
 
-const nameRules = makeRules({
+export const nameRules = makeRules({
   required: "Name is required",
   rules: [Rule.minLength(3, "Name must be at least 3 characters long")],
 });
 
 export const validateName = validate(nameRules);
 
-const urlRules = makeRules({
+export const urlRules = makeRules({
   rules: [
     Rule.url({
       message: "URL must be a valid URL",

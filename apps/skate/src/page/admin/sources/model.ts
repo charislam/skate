@@ -4,6 +4,8 @@ import { defineTaggedUnion } from "foldkit/schema";
 import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
 
+import * as Form from "./form/model";
+
 export const ScopeId = Schema.String.pipe(Schema.brand("SourcesScopeId"));
 
 export const More = defineTaggedUnion({
@@ -33,11 +35,20 @@ export const PendingRequest = defineTaggedUnion({
 });
 export const Model = Schema.Struct({
   scopeId: Schema.Option(ScopeId),
-  draftFilters: DraftFilters,
+
+  feed: Feed.schema,
   query: Sources.SourceQuery,
+  draftFilters: DraftFilters,
   nextRequestId: Schema.Number,
   pendingRequest: Schema.Option(PendingRequest),
-  feed: Feed.schema,
+
+  form: Form.Model,
+  optimisticSources: Schema.Array(
+    Schema.Struct({ requestId: Schema.Number, input: Sources.CreateSource }),
+  ),
+  creationErrors: Schema.Array(
+    Schema.Struct({ requestId: Schema.Number, name: Schema.String, error: Sources.SourceError }),
+  ),
 });
 export type Model = typeof Model.Type;
 
@@ -53,6 +64,9 @@ export const defaultQuery = (): Sources.SourceQuery => ({
   direction: "asc",
 });
 export const init = (): Model => ({
+  form: Form.init(),
+  optimisticSources: [],
+  creationErrors: [],
   draftFilters: emptyFilters(),
   query: defaultQuery(),
   scopeId: Option.none(),

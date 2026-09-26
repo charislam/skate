@@ -69,9 +69,18 @@ export const SourceQuery = Schema.Struct({
 });
 export type SourceQuery = typeof SourceQuery.Type;
 
+export const CreateSource = Schema.Struct({
+  name: Schema.NonEmptyString,
+  type: SourceType,
+  url: Schema.String,
+  notes: Schema.Option(Schema.String),
+});
+export interface CreateSource extends Schema.Schema.Type<typeof CreateSource> {}
+
 export const ActiveSourceCount = AsyncData.Schema(Schema.Number, SourceError);
 export type ActiveSourceCount = typeof ActiveSourceCount.schema.Type;
 export interface Interface {
+  readonly create: (input: CreateSource) => Effect.Effect<SourceRow, SourceError>;
   readonly countActive: () => Effect.Effect<number, SourceError>;
   readonly listPage: (
     query: SourceQuery,
@@ -176,7 +185,40 @@ const makeInterface = (url: string, publishableKey: string): Interface => {
       nextCursor,
     };
   });
-  return { countActive, listPage };
+  const create = Effect.fn("Sources.create")(function* (input: CreateSource) {
+    const { data, error } = yield* Effect.tryPromise({
+      try: (signal) =>
+        client
+          .from("source")
+          .insert({
+            name: input.name,
+            type: input.type,
+            url: input.url,
+            notes: Option.getOrNull(input.notes),
+          })
+          .select("id::text,name,type,url,notes,enabled,last_fetched,created_at,updated_at")
+          .abortSignal(signal)
+          .single(),
+      catch: (cause) => new SourceError({ message: "Could not create source.", cause }),
+    });
+    if (error) {
+      return yield* Effect.fail(
+        new SourceError({
+          message:
+            error.code === "23505"
+              ? "A source with this name already exists."
+              : "Could not create source.",
+          cause: error,
+        }),
+      );
+    }
+    return yield* Schema.decodeUnknownEffect(SourceRow)(data).pipe(
+      Effect.mapError(
+        (cause) => new SourceError({ message: "The created source response was invalid.", cause }),
+      ),
+    );
+  });
+  return { countActive, listPage, create };
 };
 
 export const layerConfig = Layer.effect(

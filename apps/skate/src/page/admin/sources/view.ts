@@ -4,7 +4,9 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 import { Sources } from "../../../domain/sources";
 import { Message } from "./message";
 import { ObserveLoadMore } from "./mount";
-import type { FeedData, Model } from "./model";
+import { type FeedData, type Model, More } from "./model";
+
+import { view as formView } from "./form/view";
 
 const optionValue = <A>(maybeValue: Option.Option<A>, toValue: (value: A) => string): string =>
   Option.match(maybeValue, { onNone: () => "all", onSome: toValue });
@@ -36,7 +38,7 @@ const tableData = (model: Model, data: FeedData, h: HtmlBuilder<Message>): Html 
   return h.div(
     [h.Class("flex flex-col gap-4")],
     [
-      Array.match(items, {
+      Array.match([...model.optimisticSources, ...items], {
         onEmpty: () =>
           h.div(
             [h.Class("flex flex-col gap-2")],
@@ -72,48 +74,69 @@ const tableData = (model: Model, data: FeedData, h: HtmlBuilder<Message>): Html 
                   ),
                   h.tbody(
                     [],
-                    items.map((row) =>
-                      h.keyed("tr")(
-                        row.id,
-                        [h.Class("border-b border-slate-100 dark:border-slate-800")],
-                        [
-                          cell(row.name, h),
-                          h.td(
-                            [h.Class("max-w-80 truncate px-3 py-2")],
-                            [
-                              row.url.protocol === "https:" || row.url.protocol === "http:"
-                                ? h.a(
-                                    [
-                                      h.Href(row.url.href),
-                                      h.Title(row.url.href),
-                                      h.Class("underline"),
-                                    ],
-                                    [row.url.href],
-                                  )
-                                : h.span([h.Title(row.url.href)], [row.url.href]),
-                            ],
-                          ),
-                          cell("Web scrape", h),
-                          cell(row.enabled ? "Enabled" : "Disabled", h),
-                          cell(
-                            Option.match(row.last_fetched, {
-                              onNone: () => "Never fetched",
-                              onSome: DateTime.formatIso,
-                            }),
-                            h,
-                          ),
-                          cell(DateTime.formatIso(row.created_at), h),
-                          cell(DateTime.formatIso(row.updated_at), h),
-                          h.td(
-                            [
-                              h.Class("max-w-80 truncate px-3 py-2"),
-                              h.Title(Option.getOrElse(row.notes, () => "")),
-                            ],
-                            [Option.getOrElse(row.notes, () => "")],
-                          ),
-                        ],
+                    [
+                      ...model.optimisticSources.map(({ requestId, input }) =>
+                        h.keyed("tr")(
+                          `pending-${requestId}`,
+                          [h.Class("border-b border-slate-100 opacity-60"), h.AriaBusy(true)],
+                          [
+                            cell(input.name, h),
+                            cell(input.url, h),
+                            cell("Web scrape", h),
+                            cell("Enabled", h),
+                            cell("Never fetched", h),
+                            cell("Creating…", h),
+                            cell("—", h),
+                            cell(
+                              Option.getOrElse(input.notes, () => ""),
+                              h,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      ...items.map((row) =>
+                        h.keyed("tr")(
+                          row.id,
+                          [h.Class("border-b border-slate-100 dark:border-slate-800")],
+                          [
+                            cell(row.name, h),
+                            h.td(
+                              [h.Class("max-w-80 truncate px-3 py-2")],
+                              [
+                                row.url.protocol === "https:" || row.url.protocol === "http:"
+                                  ? h.a(
+                                      [
+                                        h.Href(row.url.href),
+                                        h.Title(row.url.href),
+                                        h.Class("underline"),
+                                      ],
+                                      [row.url.href],
+                                    )
+                                  : h.span([h.Title(row.url.href)], [row.url.href]),
+                              ],
+                            ),
+                            cell("Web scrape", h),
+                            cell(row.enabled ? "Enabled" : "Disabled", h),
+                            cell(
+                              Option.match(row.last_fetched, {
+                                onNone: () => "Never fetched",
+                                onSome: DateTime.formatIso,
+                              }),
+                              h,
+                            ),
+                            cell(DateTime.formatIso(row.created_at), h),
+                            cell(DateTime.formatIso(row.updated_at), h),
+                            h.td(
+                              [
+                                h.Class("max-w-80 truncate px-3 py-2"),
+                                h.Title(Option.getOrElse(row.notes, () => "")),
+                              ],
+                              [Option.getOrElse(row.notes, () => "")],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -148,7 +171,7 @@ const tableData = (model: Model, data: FeedData, h: HtmlBuilder<Message>): Html 
   );
 };
 
-const table = (model: Model, h: HtmlBuilder<Message>): Html =>
+const feedTable = (model: Model, h: HtmlBuilder<Message>): Html =>
   AsyncData.match(model.feed, {
     onIdle: () => h.p([h.Role("status")], ["No sources loaded."]),
     onLoading: () => h.p([h.Role("status")], ["Loading sources…"]),
@@ -172,6 +195,25 @@ const table = (model: Model, h: HtmlBuilder<Message>): Html =>
       ),
     onSuccess: (data) => tableData(model, data, h),
   });
+
+const table = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("flex flex-col gap-4")],
+    [
+      ...model.creationErrors.map(({ requestId, name, error }) =>
+        h.keyed("p")(
+          `create-error-${requestId}`,
+          [h.Role("alert"), h.Class("text-sm text-red-700")],
+          [`${name}: ${error.message}`],
+        ),
+      ),
+      feedTable(model, h),
+      Option.isNone(AsyncData.getData(model.feed)) &&
+      Array.isReadonlyArrayNonEmpty(model.optimisticSources)
+        ? tableData(model, { items: [], more: More.End() }, h)
+        : h.empty,
+    ],
+  );
 
 const filterControls = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -277,6 +319,25 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
     [h.Id("admin-sources-table"), h.Class("flex flex-col gap-4")],
     [
+      h.div(
+        [h.Class("flex justify-end")],
+        [
+          h.button(
+            [
+              h.OnClick(Message.ClickedCreateSource()),
+              h.Disabled(Option.isNone(model.scopeId)),
+              h.Class("rounded bg-gray-900 px-3 py-2 text-white"),
+            ],
+            ["New source"],
+          ),
+        ],
+      ),
+      h.submodel({
+        slotId: "create-source-form",
+        model: model.form,
+        view: formView,
+        toParentMessage: (message) => Message.GotFormMessage({ message }),
+      }),
       filterControls(model, h),
       FieldValidation.match(model.draftFilters.searchText, {
         onNotValidated: () => h.empty,

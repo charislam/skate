@@ -1,5 +1,5 @@
 import { Option, Result } from "effect";
-import { Command, Mount, given, scene } from "foldkit/scene";
+import { Command, Mount, expect, given, scene, text } from "foldkit/scene";
 import { describe, test } from "vitest";
 import { Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
@@ -52,4 +52,45 @@ describe("Sources view mounts", () => {
       Command.expectNone(),
     );
   });
+});
+
+test("pending sources appear in an otherwise empty table", () => {
+  scene(
+    { update: sourceUpdate, view },
+    given({
+      ...model,
+      feed: Feed.Success({ data: { items: [], more: More.End() } }),
+      optimisticSources: [
+        {
+          requestId: 1,
+          input: {
+            name: "Pending source",
+            type: "web_scrape",
+            url: "https://example.com",
+            notes: Option.none(),
+          },
+        },
+      ],
+    }),
+    expect(text("Pending source")).toExist(),
+    expect(text("Creating…")).toExist(),
+  );
+});
+
+test("creation failures remain visible outside the closed dialog", () => {
+  scene(
+    { update: sourceUpdate, view },
+    given({
+      ...model,
+      feed: Feed.Success({ data: { items: [], more: More.End() } }),
+      creationErrors: [
+        {
+          requestId: 1,
+          name: "Failed source",
+          error: new Sources.SourceError({ message: "Could not create source.", cause: null }),
+        },
+      ],
+    }),
+    expect(text("Failed source: Could not create source.")).toExist(),
+  );
 });

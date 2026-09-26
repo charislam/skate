@@ -1,6 +1,9 @@
+import { Dialog } from "@foldkit/ui";
+import { CreateSource } from "./form/update";
+import { Message as FormMessage } from "./form/message";
 import { Option, Result, Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { Command, type StorySimulation, given, message, model, story } from "foldkit/story";
+import { Command, type StorySimulation, given, message, model, steps, story } from "foldkit/story";
 import { FieldValidation } from "foldkit";
 import { SourceError, Sources } from "../../../domain/sources";
 import { UserId } from "../../../domain/session";
@@ -364,6 +367,225 @@ describe("sources table stories", () => {
           expect(current.feed.data.more).toEqual(More.Failed({ cursor, error: appendError }));
         }
       }),
+    );
+  });
+});
+
+describe("source creation", () => {
+  const input = (name: string): Sources.CreateSource => ({
+    name,
+    type: "web_scrape",
+    url: "https://example.com",
+    notes: Option.none(),
+  });
+  const pendingSources = (...names: ReadonlyArray<string>): SourcesModel => ({
+    ...initScoped(),
+    form: {
+      ...init().form,
+      nextRequestId: names.length + 1,
+      pendingRequestIds: names.map((_, index) => index + 1),
+    },
+    optimisticSources: names.map((name, index) => ({ requestId: index + 1, input: input(name) })),
+  });
+  const formMessage = (childMessage: FormMessage) =>
+    message(Message.GotFormMessage({ message: childMessage }));
+  const openForm = () =>
+    steps(
+      message(Message.ClickedCreateSource()),
+      Command.expectExact(Dialog.ShowDialog),
+      Command.resolve(Dialog.ShowDialog, Dialog.Message.SucceededShowDialog()),
+    );
+  const fillForm = (name: string) =>
+    steps(
+      formMessage(FormMessage.UpdatedName({ value: name })),
+      formMessage(FormMessage.UpdatedUrl({ value: "https://example.com" })),
+    );
+  const completion = (
+    requestId: number,
+    result: Result.Result<Sources.SourceRow, Sources.SourceError>,
+  ) => FormMessage.CompletedCreateSource({ requestId, scopeId, userId: context.userId, result });
+  const pageCompletion = (requestId: number, items: ReadonlyArray<Sources.SourceRow>) =>
+    Message.SettledPage({
+      requestId,
+      scopeId,
+      userId: context.userId,
+      kind: "Refresh",
+      maybeCursor: Option.none(),
+      result: Result.succeed({ items, nextCursor: Option.none() }),
+    });
+  const pageRequest = (requestId: number) =>
+    FetchPage({
+      requestId,
+      scopeId,
+      userId: context.userId,
+      kind: "Refresh",
+      query: defaultQuery(),
+      maybeCursor: Option.none(),
+    });
+  const fail = Result.fail(new SourceError({ message: "Duplicate name", cause: null }));
+
+  test("validates before closing and submits a pending row immediately", () => {
+    const create = CreateSource({
+      requestId: 1,
+      scopeId,
+      userId: context.userId,
+      input: input("New source"),
+    });
+    story(
+      sourceUpdate,
+      given(initScoped()),
+      openForm(),
+      formMessage(FormMessage.SubmittedForm()),
+      Command.expectNone(),
+      model((current) => {
+        expect(current.form.name._tag).toBe("Invalid");
+        expect(current.form.url._tag).toBe("Invalid");
+        expect(current.form.dialog.isOpen).toBe(true);
+        expect(current.optimisticSources).toEqual([]);
+      }),
+      fillForm("New source"),
+      formMessage(FormMessage.SubmittedForm()),
+      Command.expectExact(create, Dialog.CloseDialog),
+      model((current) => {
+        expect(current.form.dialog.isOpen).toBe(false);
+        expect(current.optimisticSources).toEqual([{ requestId: 1, input: input("New source") }]);
+        expect(current.form.pendingRequestIds).toEqual([1]);
+      }),
+      Command.resolve(Dialog.CloseDialog, Dialog.Message.CompletedCloseDialog()),
+      Command.resolve(create, completion(1, fail)),
+      Command.expectNone(),
+    );
+  });
+
+  test("submits a separate source while an earlier request is pending", () => {
+    const second = row("2", "Second");
+    const create = CreateSource({
+      requestId: 2,
+      scopeId,
+      userId: context.userId,
+      input: input("Second"),
+    });
+    story(
+      sourceUpdate,
+      given(pendingSources("First")),
+      openForm(),
+      fillForm("Second"),
+      formMessage(FormMessage.SubmittedForm()),
+      Command.expectExact(create, Dialog.CloseDialog),
+      model((current) => {
+        expect(current.form.dialog.isOpen).toBe(false);
+        expect(current.form.pendingRequestIds).toEqual([1, 2]);
+        expect(current.optimisticSources.map((entry) => entry.input.name)).toEqual([
+          "First",
+          "Second",
+        ]);
+      }),
+      Command.resolve(Dialog.CloseDialog, Dialog.Message.CompletedCloseDialog()),
+      Command.resolve(create, completion(2, Result.succeed(second))),
+      Command.expectExact(pageRequest(1)),
+      Command.resolve(pageRequest(1), pageCompletion(1, [second])),
+      model((current) => {
+        expect(current.form.pendingRequestIds).toEqual([1]);
+        expect(current.optimisticSources).toEqual([{ requestId: 1, input: input("First") }]);
+      }),
+      formMessage(FormMessage.SubmittedForm()),
+      Command.expectNone(),
+      model((current) => expect(current.form.pendingRequestIds).toEqual([1])),
+    );
+  });
+
+  test("rolls back only the failed request without changing a newly opened draft", () => {
+    const second = row("2", "Second");
+    story(
+      sourceUpdate,
+      given(pendingSources("First", "Second")),
+      openForm(),
+      formMessage(FormMessage.UpdatedName({ value: "Third draft" })),
+      formMessage(completion(1, fail)),
+      Command.expectNone(),
+      model((current) => {
+        expect(current.optimisticSources.map((entry) => entry.requestId)).toEqual([2]);
+        expect(current.form.pendingRequestIds).toEqual([2]);
+        expect(current.form.name.value).toBe("Third draft");
+        expect(current.form.dialog.isOpen).toBe(true);
+        expect(current.creationErrors.map((entry) => entry.name)).toEqual(["First"]);
+      }),
+      formMessage(completion(1, fail)),
+      model((current) => expect(current.creationErrors).toHaveLength(1)),
+      formMessage(completion(2, Result.succeed(second))),
+      Command.expectExact(pageRequest(1)),
+      model((current) => {
+        expect(current.optimisticSources).toEqual([]);
+        expect(current.form.pendingRequestIds).toEqual([]);
+        expect(current.form.name.value).toBe("Third draft");
+        expect(current.form.dialog.isOpen).toBe(true);
+      }),
+      Command.resolve(pageRequest(1), pageCompletion(1, [second])),
+      Command.expectNone(),
+    );
+  });
+
+  test("handles out-of-order successes and keeps pending rows through revalidation", () => {
+    const second = row("2", "Second");
+    const first = row("1", "First");
+    story(
+      sourceUpdate,
+      given(pendingSources("First", "Second")),
+      formMessage(completion(2, Result.succeed(second))),
+      Command.expectExact(pageRequest(1)),
+      model((current) =>
+        expect(current.optimisticSources.map((entry) => entry.requestId)).toEqual([1]),
+      ),
+      Command.resolve(pageRequest(1), pageCompletion(1, [second])),
+      model((current) =>
+        expect(current.optimisticSources).toEqual([{ requestId: 1, input: input("First") }]),
+      ),
+      formMessage(completion(1, Result.succeed(first))),
+      Command.expectExact(pageRequest(2)),
+      model((current) => {
+        expect(current.optimisticSources).toEqual([]);
+        expect(current.form.pendingRequestIds).toEqual([]);
+        expect(current.feed).toEqual(
+          Feed.Refreshing({ data: { items: [first, second], more: More.End() } }),
+        );
+        expect(Option.getOrThrow(current.pendingRequest).requestId).toBe(2);
+      }),
+      Command.resolve(pageRequest(2), pageCompletion(2, [first, second])),
+      message(pageCompletion(1, [second])),
+      model((current) =>
+        expect(current.feed).toEqual(
+          Feed.Success({ data: { items: [first, second], more: More.End() } }),
+        ),
+      ),
+      Command.expectNone(),
+    );
+  });
+
+  test("ignores completions from another page scope or user", () => {
+    const pending = pendingSources("First");
+    story(
+      sourceUpdate,
+      given(pending),
+      formMessage(
+        FormMessage.CompletedCreateSource({
+          requestId: 1,
+          scopeId: "old-scope",
+          userId: context.userId,
+          result: fail,
+        }),
+      ),
+      model((current) => expect(current).toEqual(pending)),
+      Command.expectNone(),
+      formMessage(
+        FormMessage.CompletedCreateSource({
+          requestId: 1,
+          scopeId,
+          userId: UserId.make("another-user"),
+          result: fail,
+        }),
+      ),
+      model((current) => expect(current).toEqual(pending)),
+      Command.expectNone(),
     );
   });
 });

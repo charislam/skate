@@ -1,4 +1,4 @@
-import { AsyncData, Dom, FieldValidation, Command as FoldkitCommand, type Update } from "foldkit";
+import { AsyncData, Dom, FieldValidation, Command as FoldkitCommand, Update } from "foldkit";
 import { Effect, Crypto as EffectCrypto, Equal, Match, Option, Result, Schema } from "effect";
 import { BrowserCrypto } from "@effect/platform-browser";
 import { evo } from "foldkit/struct";
@@ -8,6 +8,7 @@ import type { Resource } from "../../../resource";
 import { Message } from "./message";
 import {
   Feed,
+  type FeedData,
   More,
   PendingRequest,
   ScopeId,
@@ -16,6 +17,10 @@ import {
   init as initSourcesModel,
 } from "./model";
 import { searchTextRules, validateSearchText } from "./validation";
+
+import * as Form from "./form/model";
+import * as FormUpdate from "./form/update";
+import * as FormMessage from "./form/message";
 
 type Context = Readonly<{ userId: UserId; isAllowed: boolean }>;
 
@@ -56,8 +61,81 @@ export const ScrollSourcesTableToTop = FoldkitCommand.define("ScrollSourcesTable
   ),
 });
 
+const formFold = {
+  read: (model: SourcesModel) => Option.some(model.form),
+  write: (model: SourcesModel, nextForm: Form.Model) => evo(model, { form: () => nextForm }),
+  toParentMessage: (message: FormMessage.Message) => Message.GotFormMessage({ message }),
+};
+const openForm = Update.foldChildStep({ ...formFold, update: FormUpdate.open });
+
+const foldForm = (model: SourcesModel, message: FormMessage.Message, context: Context) => {
+  if (Option.isNone(model.scopeId)) {
+    return { model };
+  }
+  const formContext = { ...context, scopeId: model.scopeId.value };
+  return Update.foldChild({
+    ...formFold,
+    update: (form: Form.Model, childMessage: FormMessage.Message) =>
+      FormUpdate.update(form, childMessage, formContext),
+    foldOutMessage: (
+      outMessage: FormMessage.OutMessage,
+    ): Update.Step<SourcesModel, Message, Resource> =>
+      FormMessage.OutMessage.match(outMessage, {
+        SubmittedSource:
+          ({ requestId, input }) =>
+          (stepModel) => ({
+            model: evo(stepModel, {
+              optimisticSources: (sources) => [...sources, { requestId, input }],
+            }),
+          }),
+        FailedCreateSource:
+          ({ requestId, error }) =>
+          (stepModel) => {
+            const pending = stepModel.optimisticSources.find(
+              (source) => source.requestId === requestId,
+            );
+            return {
+              model: evo(stepModel, {
+                optimisticSources: (sources) =>
+                  sources.filter((source) => source.requestId !== requestId),
+                creationErrors: (errors) => [
+                  ...errors,
+                  { requestId, name: pending?.input.name ?? "Unnamed Source", error },
+                ],
+              }),
+            };
+          },
+        CreatedSource:
+          ({ requestId, source }) =>
+          (stepModel) => {
+            const data: FeedData = Option.getOrElse(AsyncData.getData(stepModel.feed), () => ({
+              items: [],
+              more: More.End(),
+            }));
+            const feed = Feed.Success({
+              data: evo(data, {
+                items: (items) => [source, ...items.filter((row) => row.id !== source.id)],
+              }),
+            });
+            return refresh(
+              evo(stepModel, {
+                feed: () => feed,
+                pendingRequest: () => Option.none(),
+                optimisticSources: (sources) =>
+                  sources.filter((pending) => pending.requestId !== requestId),
+              }),
+              context,
+            );
+          },
+      }),
+  })(model, message);
+};
+
 export const update = (model: SourcesModel, message: Message, context: Context) =>
   Message.match<Update.Return<SourcesModel, Message, Resource>>(message, {
+    ClickedCreateSource: () =>
+      context.isAllowed && Option.isSome(model.scopeId) ? openForm(model) : { model },
+    GotFormMessage: ({ message: formMessage }) => foldForm(model, formMessage, context),
     UpdatedSearch: ({ value }) => ({
       model: evo(model, {
         draftFilters: () =>
