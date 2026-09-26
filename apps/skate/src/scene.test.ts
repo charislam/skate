@@ -70,11 +70,11 @@ describe("view", () => {
     ["allowed", AdminAccess.Success({ data: true }), true],
     ["denied", AdminAccess.Success({ data: false }), false],
     ["loading", AdminAccess.Loading(), false],
-    ["refreshing", AdminAccess.Refreshing({ data: true }), false],
+    ["refreshing", AdminAccess.Refreshing({ data: true }), true],
     [
       "failed refresh",
       AdminAccess.Stale({ data: true, error: new PermissionError({ message: "Unavailable" }) }),
-      false,
+      true,
     ],
   ] as const)("admin navigation is permission gated when %s", (_, adminAccess, allowed) => {
     scene(
@@ -90,15 +90,15 @@ describe("view", () => {
     );
   });
 
-  test("admin content stays hidden during permission revalidation", () => {
+  test("admin content stays mounted during permission revalidation", () => {
     scene(
       { update, view },
       given({
         ...admin,
         adminModel: { ...admin.adminModel, adminAccess: AdminAccess.Refreshing({ data: true }) },
       }),
-      expect(role("heading", { name: "Admin" })).not.toExist(),
-      expect(role("status")).toHaveText("Checking admin access…"),
+      expect(role("heading", { name: "Admin" })).toExist(),
+      expect(role("region", { name: "Overview content" })).toExist(),
     );
   });
 

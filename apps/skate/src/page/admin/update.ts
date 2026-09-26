@@ -82,10 +82,7 @@ export const update = (model: Model, message: Message, context: Context) =>
         return foldEnterSourcesTable(accessModel, { userId, isAllowed: true });
       }
       if (Result.isFailure(result)) {
-        return foldEnterSourcesTable(accessModel, {
-          userId: context.userId,
-          isAllowed: false,
-        });
+        return { model: accessModel };
       }
       if (!result.success) {
         return foldDenyAccessAndEnterSourcesTable(accessModel, context.userId);

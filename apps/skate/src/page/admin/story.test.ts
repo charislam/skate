@@ -39,8 +39,20 @@ describe("admin submodel", () => {
     expect(canAccessAdmin(settled.model.adminAccess)).toBe(true);
   });
 
-  test("a failed revalidation does not keep access", () => {
-    const initial = { ...init(), adminAccess: AdminAccess.Success({ data: true }) };
+  test("a failed revalidation keeps access and the Sources model", () => {
+    const initialSources = {
+      ...init().sourcesTable,
+      scopeId: Option.some(ScopeId.make("preserved-scope")),
+      form: {
+        ...init().sourcesTable.form,
+        dialog: { ...init().sourcesTable.form.dialog, isOpen: true },
+      },
+    };
+    const initial = {
+      ...init(),
+      adminAccess: AdminAccess.Success({ data: true }),
+      sourcesTable: initialSources,
+    };
     const pending = update(initial, Message.InvalidatedAccess(), context);
     const failed = update(
       pending.model,
@@ -52,7 +64,65 @@ describe("admin submodel", () => {
       context,
     );
     expect(failed.model.adminAccess._tag).toBe("Stale");
+    expect(canAccessAdmin(failed.model.adminAccess)).toBe(true);
+    expect(failed.model.sourcesTable).toEqual(initialSources);
+  });
+
+  test("an initial access failure remains gated", () => {
+    const pending = update(init(), Message.InvalidatedAccess(), context);
+    const failed = update(
+      pending.model,
+      Message.SettledFetchAccess({
+        userId: session.userId,
+        adminRequestId: 1,
+        result: Result.fail(new PermissionError({ message: "Unavailable" })),
+      }),
+      context,
+    );
+    expect(failed.model.adminAccess._tag).toBe("Failure");
     expect(canAccessAdmin(failed.model.adminAccess)).toBe(false);
+  });
+
+  test("a current denial resets Sources and emits DeniedAccess", () => {
+    const pending = update(
+      {
+        ...init(),
+        adminAccess: AdminAccess.Success({ data: true }),
+        sourcesTable: { ...init().sourcesTable, scopeId: Option.some(ScopeId.make("old-scope")) },
+      },
+      Message.InvalidatedAccess(),
+      context,
+    );
+    const denied = update(
+      pending.model,
+      Message.SettledFetchAccess({
+        userId: session.userId,
+        adminRequestId: 1,
+        result: Result.succeed(false),
+      }),
+      context,
+    );
+    expect(denied.outMessage).toEqual(OutMessage.DeniedAccess());
+    expect(denied.model.sourcesTable).toEqual(init().sourcesTable);
+  });
+
+  test("ignores a wrong-user denial", () => {
+    const pending = update(
+      { ...init(), adminAccess: AdminAccess.Success({ data: true }) },
+      Message.InvalidatedAccess(),
+      context,
+    );
+    const ignored = update(
+      pending.model,
+      Message.SettledFetchAccess({
+        userId: UserId.make("other-user"),
+        adminRequestId: 1,
+        result: Result.succeed(false),
+      }),
+      context,
+    );
+    expect(canAccessAdmin(ignored.model.adminAccess)).toBe(true);
+    expect(ignored.outMessage).toBeUndefined();
   });
 
   test("entering Overview loads the active source count once and keeps it cached", () => {
