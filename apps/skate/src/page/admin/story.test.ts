@@ -1,14 +1,18 @@
 import { Option, Result } from "effect";
 import { describe, expect, test } from "vitest";
+import { Command, given, message, model, story } from "foldkit/story";
 import { AdminAccess, PermissionError, canAccessAdmin } from "../../domain/admin-access";
 import { SourceError } from "../../domain/sources";
 import { UserId } from "../../domain/session";
 import { Message, OutMessage } from "./message";
-import { init } from "./model";
+import { type Model as AdminModel, init } from "./model";
 import { enterSection, update } from "./update";
+import { Message as SourcesMessage } from "./sources/message";
+import { ScopeId } from "./sources/model";
+import { FetchPage } from "./sources/update";
 
 const session = { userId: UserId.make("owner"), email: Option.none<string>() };
-const context = { userId: session.userId };
+const context = { userId: session.userId, maybeAdminSection: Option.none() };
 
 describe("admin submodel", () => {
   test("loads and settles admin access", () => {
@@ -100,6 +104,61 @@ describe("admin submodel", () => {
     const enteredSources = enterSection(init(), "Sources");
     expect(enteredSources.model.activeSourceCount._tag).toBe("Idle");
     expect(enteredSources.commands).toBeUndefined();
+  });
+
+  test("successful access revalidation enters Sources through its child fold", () => {
+    const sourcesTable = {
+      ...init().sourcesTable,
+      scopeId: Option.some(ScopeId.make("admin-source-fold-test")),
+    };
+    const initial = {
+      ...init(),
+      adminAccess: AdminAccess.Loading(),
+      adminRequestId: 1,
+      sourcesTable,
+    };
+    const sourcesContext = {
+      ...context,
+      maybeAdminSection: Option.some("Sources" as const),
+    };
+    const pageRequest = FetchPage({
+      requestId: 1,
+      scopeId: ScopeId.make("admin-source-fold-test"),
+      userId: session.userId,
+      kind: "Initial",
+      query: sourcesTable.query,
+      maybeCursor: Option.none(),
+    });
+    const updateForSourcesStory = (current: AdminModel, nextMessage: typeof Message.Type) =>
+      update(current, nextMessage, sourcesContext);
+
+    story(
+      updateForSourcesStory,
+      given(initial),
+      message(
+        Message.SettledFetchAccess({
+          userId: session.userId,
+          adminRequestId: 1,
+          result: Result.succeed(true),
+        }),
+      ),
+      Command.expectExact(pageRequest),
+      Command.resolve(
+        pageRequest,
+        SourcesMessage.SettledPage({
+          requestId: 1,
+          scopeId: ScopeId.make("admin-source-fold-test"),
+          userId: session.userId,
+          kind: "Initial",
+          maybeCursor: Option.none(),
+          result: Result.succeed({ items: [], nextCursor: Option.none() }),
+        }),
+      ),
+      model((current) => {
+        expect(current.adminAccess).toEqual(AdminAccess.Success({ data: true }));
+        expect(current.sourcesTable.feed._tag).toBe("Success");
+      }),
+    );
   });
 
   test("logout is reported to the parent", () => {

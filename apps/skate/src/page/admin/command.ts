@@ -22,7 +22,7 @@ export const FetchActiveSources = FoldkitCommand.define("FetchActiveSources", {
   execute: ({ sourceRequestId }) =>
     Effect.gen(function* () {
       const sources = yield* Sources.Service;
-      const result = yield* Effect.result(sources.countActive);
+      const result = yield* Effect.result(sources.countActive());
       return Message.SettledFetchActiveSources({ sourceRequestId, result });
     }),
 });

@@ -5,15 +5,11 @@ import { Message } from "./message";
 import { type Model } from "./model";
 import { cn } from "cn";
 import type { HtmlBuilder } from "foldkit/html";
-
-const inputFieldClass = "flex flex-col-reverse gap-1";
-const labelClass = "ml-2 text-xs uppercase tracking-wider text-slate-800 dark:text-slate-400";
-const inputClass = "border-b border-slate-200 dark:border-slate-700 px-2 py-1";
-const fieldErrorClass = "text-right -translate-y-7/8 text-sm text-red-900 dark:text-red-100";
+import { Form } from "~/view/form";
 
 const errorField = (message: Option.Option<string>, h: HtmlBuilder<Message>) =>
   h.p(
-    [h.Class(cn(fieldErrorClass, Option.isNone(message) && "invisible"))],
+    [h.Class(cn(Form.fieldErrorClass, Option.isNone(message) && "invisible"))],
     [Option.getOrElse(message, () => "Placeholder")],
   );
 
@@ -28,9 +24,9 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
             [],
             [
               h.label(
-                [h.Class(inputFieldClass)],
+                [h.Class(Form.inputFieldClass)],
                 [
-                  h.span([h.Class(labelClass)], ["Email"]),
+                  h.span([h.Class(Form.labelClass)], ["Email"]),
                   h.input([
                     h.Type("email"),
                     h.Value(model.email.value),
@@ -40,7 +36,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
                     h.AriaInvalid(model.email._tag === "Invalid"),
                     h.OnInput((value) => Message.UpdatedEmail({ value })),
                     h.OnBlur(Message.BlurredEmail()),
-                    h.Class(inputClass),
+                    h.Class(Form.inputClass),
                   ]),
                 ],
               ),
@@ -56,9 +52,9 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
             [],
             [
               h.label(
-                [h.Class(inputFieldClass)],
+                [h.Class(Form.inputFieldClass)],
                 [
-                  h.span([h.Class(labelClass)], ["Password"]),
+                  h.span([h.Class(Form.labelClass)], ["Password"]),
                   h.input([
                     h.Type("password"),
                     h.Value(model.password.value),
@@ -68,7 +64,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
                     h.AriaInvalid(model.password._tag === "Invalid"),
                     h.OnInput((value) => Message.UpdatedPassword({ value })),
                     h.OnBlur(Message.BlurredPassword()),
-                    h.Class(inputClass),
+                    h.Class(Form.inputClass),
                   ]),
                 ],
               ),

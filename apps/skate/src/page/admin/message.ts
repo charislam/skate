@@ -3,6 +3,7 @@ import { defineMessageUnion } from "foldkit/message";
 import { PermissionError } from "../../domain/admin-access";
 import { SourceError } from "../../domain/sources";
 import { UserId } from "../../domain/session";
+import * as SourcesTable from "./sources/message";
 
 export const Message = defineMessageUnion({
   ClickedRetryAccess: {},
@@ -18,6 +19,7 @@ export const Message = defineMessageUnion({
     sourceRequestId: Schema.Number,
     result: Schema.Result(Schema.Number, SourceError),
   },
+  GotSourcesTableMessage: { message: SourcesTable.Message },
 });
 export type Message = typeof Message.Type;
 

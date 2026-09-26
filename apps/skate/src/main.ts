@@ -22,6 +22,7 @@ import { canAccessAdmin } from "./domain/admin-access";
 import * as Admin from "./page/admin/model";
 import * as AdminMessage from "./page/admin/message";
 import {
+  type Context as AdminContext,
   enterSection as enterAdminSectionModel,
   revalidateAccess as revalidateAdminAccess,
   update as updateAdmin,
@@ -170,40 +171,46 @@ const foldAdminOutMessage = AdminMessage.OutMessage.match<Update.Step<Model, Mes
       : { model: stepModel },
 });
 
-const foldAdmin = (session: Session) =>
-  Update.foldChild({
-    update: (adminModel: Admin.Model, message: AdminMessage.Message) =>
-      updateAdmin(adminModel, message, { userId: session.userId }),
-    read: (model: Model) =>
-      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
-    write: (model, nextAdminModel) =>
-      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
-    toParentMessage: (message) => Message.GotAdminMessage({ message }),
-    foldOutMessage: foldAdminOutMessage,
-  });
+const writeAdminModel = (model: Model, nextAdminModel: Admin.Model): Model =>
+  model._tag === "LoggedIn"
+    ? evo(model, {
+        adminModel: () => nextAdminModel,
+      })
+    : model;
 
-const foldAdminAccessRevalidation = (session: Session) =>
-  Update.foldChildStep({
-    update: (adminModel: Admin.Model) =>
-      revalidateAdminAccess(adminModel, { userId: session.userId }),
-    read: (model: Model) =>
-      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
-    write: (model, nextAdminModel) =>
-      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
-    toParentMessage: (message) => Message.GotAdminMessage({ message }),
-    foldOutMessage: foldAdminOutMessage,
-  });
+const readAdminModel = (model: Model): Option.Option<Admin.Model> =>
+  model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none();
 
-const foldAdminSectionEntry = (section: AdminSection) =>
-  Update.foldChildStep({
-    update: (adminModel: Admin.Model) => enterAdminSectionModel(adminModel, section),
-    read: (model: Model) =>
-      model._tag === "LoggedIn" ? Option.some(model.adminModel) : Option.none(),
-    write: (model, nextAdminModel) =>
-      model._tag === "LoggedIn" ? evo(model, { adminModel: () => nextAdminModel }) : model,
-    toParentMessage: (message) => Message.GotAdminMessage({ message }),
-    foldOutMessage: foldAdminOutMessage,
-  });
+const adminSectionForRoute = (route: LoggedInRoute): Option.Option<AdminSection> =>
+  route._tag === "Admin" ? Option.some(route.section) : Option.none();
+
+const foldAdmin = Update.foldChild({
+  update: (
+    adminModel: Admin.Model,
+    input: { message: AdminMessage.Message; context: AdminContext },
+  ) => updateAdmin(adminModel, input.message, input.context),
+  read: readAdminModel,
+  write: writeAdminModel,
+  toParentMessage: (message) => Message.GotAdminMessage({ message }),
+  foldOutMessage: foldAdminOutMessage,
+});
+
+const foldAdminAccessRevalidation = Update.foldChild({
+  update: revalidateAdminAccess,
+  read: readAdminModel,
+  write: writeAdminModel,
+  toParentMessage: (message) => Message.GotAdminMessage({ message }),
+  foldOutMessage: foldAdminOutMessage,
+});
+
+const foldAdminSectionEntry = Update.foldChild({
+  update: (adminModel: Admin.Model, input: { section: AdminSection; userId: Session["userId"] }) =>
+    enterAdminSectionModel(adminModel, input.section, { userId: input.userId }),
+  read: readAdminModel,
+  write: writeAdminModel,
+  toParentMessage: (message) => Message.GotAdminMessage({ message }),
+  foldOutMessage: foldAdminOutMessage,
+});
 
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
@@ -257,7 +264,15 @@ export const update = (model: Model, message: Message) =>
       }),
     ),
     Match.tag("GotAdminMessage", ({ message }) =>
-      model._tag === "LoggedIn" ? foldAdmin(model.session)(model, message) : { model },
+      model._tag === "LoggedIn"
+        ? foldAdmin(model, {
+            message,
+            context: {
+              userId: model.session.userId,
+              maybeAdminSection: adminSectionForRoute(model.route),
+            },
+          })
+        : { model },
     ),
     Match.tag(
       "SelectedNextDateRange",
@@ -599,7 +614,10 @@ const updateLoggedInRoute = (
     model.route._tag === "Admin" &&
     access.route.section !== model.route.section
   ) {
-    return foldAdminSectionEntry(access.route.section)(nextModel);
+    return foldAdminSectionEntry(nextModel, {
+      section: access.route.section,
+      userId: model.session.userId,
+    });
   }
   return withRouteRedirect(nextModel, access.maybeRedirect);
 };
@@ -609,7 +627,12 @@ const updateLoggedInSession = (
   session: Session,
 ): Update.Return<Model, Message, Resource> => {
   if (model._tag === "LoggedIn" && model.session.userId === session.userId) {
-    return revalidateAdminOnRoot(evo(model, { session: () => session }));
+    return Update.combine(evo(model, { session: () => session }), [
+      foldAdminAccessRevalidation({
+        userId: session.userId,
+        maybeAdminSection: adminSectionForRoute(model.route),
+      }),
+    ]);
   }
   const access = guardLoggedInRoute(model.route);
   const loggedInModel = makeLoggedIn(model, session, access.route);
@@ -627,7 +650,10 @@ const revalidateAdminOnRoot = (model: Model): Update.Return<Model, Message, Reso
   if (model._tag !== "LoggedIn") {
     return { model };
   }
-  return foldAdminAccessRevalidation(model.session)(model);
+  return foldAdminAccessRevalidation(model, {
+    userId: model.session.userId,
+    maybeAdminSection: adminSectionForRoute(model.route),
+  });
 };
 
 const enterAdminSection = (
@@ -639,7 +665,10 @@ const enterAdminSection = (
     return { model };
   }
   return Update.combine(model, [
-    foldAdminAccessRevalidation(session),
-    foldAdminSectionEntry(section),
+    foldAdminAccessRevalidation({
+      userId: session.userId,
+      maybeAdminSection: Option.some(section),
+    }),
+    foldAdminSectionEntry({ section, userId: session.userId }),
   ]);
 };

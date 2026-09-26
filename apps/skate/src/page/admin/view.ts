@@ -1,12 +1,14 @@
 import { Disclosure } from "@foldkit/ui";
 import { AsyncData, Submodel } from "foldkit";
-import { Option } from "effect";
+import { Match, Option } from "effect";
 import { AdminAccess, canAccessAdmin } from "../../domain/admin-access";
 import { Message } from "./message";
 import type { Model } from "./model";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { Heading } from "~/view/heading";
 import { type AdminSection, adminRouter, adminSourcesRouter } from "~/route";
+import { view as sourcesTableView } from "./sources/view";
+import * as SourcesTableMessage from "./sources/message";
 
 const navigationLinks = [
   { section: "Overview", href: adminRouter({ section: "Overview" }) },
@@ -116,23 +118,35 @@ const statsCard = (
     ],
   );
 
+const overviewSectionContent = (model: Model, h: HtmlBuilder<Message>): Array<Html> => [
+  statsCard(
+    {
+      title: "Active sources",
+      href: adminSourcesRouter({ section: "Sources" }),
+      asyncData: AsyncData.map(model.activeSourceCount, (count) => count.toString()),
+    },
+    h,
+  ),
+];
+
+const sourcesSectionContent = (model: Model, h: HtmlBuilder<Message>): Array<Html> => [
+  h.submodel({
+    slotId: "admin-sources-table",
+    model: model.sourcesTable,
+    view: sourcesTableView,
+    toParentMessage: (message: SourcesTableMessage.Message) =>
+      Message.GotSourcesTableMessage({ message }),
+  }),
+];
+
 const sectionContent = (model: Model, section: AdminSection, h: HtmlBuilder<Message>): Html =>
   h.section(
     [h.AriaLabel(`${section} content`)],
-    [
-      ...(section === "Overview"
-        ? [
-            statsCard(
-              {
-                title: "Active sources",
-                href: adminSourcesRouter({ section: "Sources" }),
-                asyncData: AsyncData.map(model.activeSourceCount, (count) => count.toString()),
-              },
-              h,
-            ),
-          ]
-        : []),
-    ],
+    Match.value(section).pipe(
+      Match.when("Overview", () => overviewSectionContent(model, h)),
+      Match.when("Sources", () => sourcesSectionContent(model, h)),
+      Match.exhaustive,
+    ),
   );
 
 export const headerEnd = <ParentMessage>(h: HtmlBuilder<ParentMessage>): Html =>

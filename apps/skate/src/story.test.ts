@@ -104,45 +104,67 @@ describe("update", () => {
     });
 
     test.each([
-      ["Overview", "/admin/sources", "Sources", false],
-      ["Sources", "/admin", "Overview", true],
-    ] as const)(
-      "switches from %s to %s with only the required load",
-      (current, path, next, loadsSources) => {
-        const loggedIn: Model = {
-          ...initialModel,
-          _tag: "LoggedIn",
-          route: AppRoute.Admin({ section: current }),
-          adminModel: {
-            ...Admin.init(),
-            adminAccess: AdminAccess.Success({ data: true }),
-          },
-          session: { userId: UserId.make("user-1"), email: Option.none() },
-        };
-        const navigating = update(
-          loggedIn,
-          Message.ChangedUrl({ url: url(`http://localhost${path}`) }),
-        );
-        expect(navigating.model.route).toEqual(AppRoute.Admin({ section: next }));
-        if (navigating.model._tag !== "LoggedIn") {
-          throw new Error("Expected logged-in model");
-        }
-        if (!loadsSources) {
-          expect(navigating.model.adminModel).toBe(loggedIn.adminModel);
-          expect("commands" in navigating && navigating.commands?.length).toBeFalsy();
-        } else {
-          expect(navigating.model.adminModel.activeSourceCount._tag).toBe("Loading");
-          expect(
-            "commands" in navigating &&
-              navigating.commands?.some((command) => command.name === "FetchActiveSources"),
-          ).toBe(true);
-          expect(
-            "commands" in navigating &&
-              navigating.commands?.some((command) => command.name === "FetchAdminAccess"),
-          ).toBe(false);
-        }
-      },
-    );
+      ["Overview", "/admin/sources", "Sources"],
+      ["Sources", "/admin", "Overview"],
+    ] as const)("switches from %s to %s and starts that section's load", (current, path, next) => {
+      const loggedIn: Model = {
+        ...initialModel,
+        _tag: "LoggedIn",
+        route: AppRoute.Admin({ section: current }),
+        adminModel: {
+          ...Admin.init(),
+          adminAccess: AdminAccess.Success({ data: true }),
+        },
+        session: { userId: UserId.make("user-1"), email: Option.none() },
+      };
+      const navigating = update(
+        loggedIn,
+        Message.ChangedUrl({ url: url(`http://localhost${path}`) }),
+      );
+      expect(navigating.model.route).toEqual(AppRoute.Admin({ section: next }));
+      if (navigating.model._tag !== "LoggedIn") {
+        throw new Error("Expected logged-in model");
+      }
+      if (next === "Sources") {
+        expect(navigating.model.adminModel.sourcesTable.feed._tag).toBe("Idle");
+        expect(
+          "commands" in navigating &&
+            navigating.commands?.some((command) => command.name === "CreateSourcesScope"),
+        ).toBe(true);
+      } else {
+        expect(navigating.model.adminModel.activeSourceCount._tag).toBe("Loading");
+        expect(
+          "commands" in navigating &&
+            navigating.commands?.some((command) => command.name === "FetchActiveSources"),
+        ).toBe(true);
+        expect(
+          "commands" in navigating &&
+            navigating.commands?.some((command) => command.name === "FetchAdminAccess"),
+        ).toBe(false);
+      }
+    });
+
+    test("keeps Sources state cached when navigating away from Admin", () => {
+      const adminModel = {
+        ...Admin.init(),
+        adminAccess: AdminAccess.Success({ data: true }),
+      };
+      const loggedIn: Model = {
+        ...initialModel,
+        _tag: "LoggedIn",
+        route: AppRoute.Admin({ section: "Sources" }),
+        adminModel,
+        session: { userId: UserId.make("user-1"), email: Option.none() },
+      };
+
+      const navigating = update(loggedIn, Message.ChangedUrl({ url: url("http://localhost/") }));
+
+      expect(navigating.model.route).toEqual(AppRoute.Home());
+      if (navigating.model._tag !== "LoggedIn") {
+        throw new Error("Expected logged-in model");
+      }
+      expect(navigating.model.adminModel.sourcesTable).toBe(adminModel.sourcesTable);
+    });
 
     test("redirects logged-in users away from the login route", () => {
       const loggedIn = {
