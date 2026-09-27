@@ -21,6 +21,7 @@ export const Message = defineMessageUnion({
   ClickedLoadMore: {},
   ClickedRetryMore: {},
   ClickedSort: { field: Sources.SourceSortField },
+  ClickedDismissErrors: {},
 
   ObservedLoadMore: {},
 

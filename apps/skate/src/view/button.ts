@@ -11,4 +11,13 @@ export const primaryClass = cn(
   "tracking-wide",
 );
 
+export const secondaryClass = cn(
+  base,
+  "w-fit",
+  "px-2 py-1",
+  "bg-slate-200 hover:bg-slate-300",
+  "text-sm text-slate-800",
+  "dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200",
+);
+
 export * as Button from "./button";

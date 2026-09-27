@@ -1,10 +1,9 @@
+import { Listbox } from "@foldkit/ui";
 import { Option, Schema } from "effect";
 import { AsyncData, FieldValidation } from "foldkit";
-import { Listbox } from "@foldkit/ui";
 import { defineTaggedUnion } from "foldkit/schema";
-import { Sources } from "../../../domain/sources";
-import { UserId } from "../../../domain/session";
-
+import { Sources } from "~/domain/sources";
+import { UserId } from "~/domain/session";
 import * as Form from "./form/model";
 import {
   EnabledFilterListboxId,
@@ -20,6 +19,7 @@ export const More = defineTaggedUnion({
   Failed: { cursor: Sources.SourceCursor, error: Sources.SourceError },
   End: {},
 });
+export type More = typeof More.Type;
 export const FeedData = Schema.Struct({ items: Schema.Array(Sources.SourceRow), more: More });
 export type FeedData = typeof FeedData.Type;
 export const Feed = AsyncData.Schema(FeedData, Sources.SourceError);
@@ -92,3 +92,17 @@ export const init = (): Model => ({
   optimisticSources: [],
   creationErrors: [],
 });
+
+type PerKeyCheck<T> = {
+  [K in keyof T]: (filters: T) => boolean;
+};
+
+const filterToActiveCheck: PerKeyCheck<Model["query"]["filters"]> = {
+  searchText: (filters) => filters.searchText.trim() !== "",
+  type: (filters) => Option.isSome(filters.type),
+  enabled: (filters) => Option.isSome(filters.enabled),
+  fetchStatus: (filters) => Option.isSome(filters.fetchStatus),
+};
+
+export const hasActiveFilters = (filters: Model["query"]["filters"]): boolean =>
+  Object.values(filterToActiveCheck).some((check) => check(filters));

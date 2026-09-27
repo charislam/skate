@@ -239,6 +239,7 @@ export const update = (model: SourcesModel, message: Message, context: Context) 
         model.query.sortField === field && model.query.direction === "asc" ? "desc" : "asc";
       return applyQuery(model, { ...model.query, sortField: field, direction }, context);
     },
+    ClickedDismissErrors: () => ({ model: evo(model, { creationErrors: () => [] }) }),
 
     ObservedLoadMore: () => loadMore(model, false, context),
 

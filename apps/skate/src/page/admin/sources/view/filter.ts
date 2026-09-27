@@ -14,16 +14,13 @@ import {
 } from "../listboxes";
 import { FieldValidation } from "foldkit";
 import { cn } from "cn";
+import { Button } from "~/view/button";
 
 const buttonClass = (isPrimary: boolean) =>
   cn(
-    "cursor-pointer",
-    "px-2 py-1",
-    "bg-slate-100 hover:bg-slate-200",
-    isPrimary && "bg-slate-200 hover:bg-slate-300",
-    "text-sm text-slate-800",
-    "dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200",
-    isPrimary && "dark:bg-slate-600 dark:hover:bg-slate-500",
+    Button.secondaryClass,
+    !isPrimary && "bg-slate-100 hover:bg-slate-200",
+    !isPrimary && "dark:bg-slate-700 dark:hover:bg-slate-600",
   );
 const fieldLabelClass = "flex flex-col gap-1 text-sm";
 const controlClass = `${Form.inputClass} min-w-36 text-left cursor-pointer`;
