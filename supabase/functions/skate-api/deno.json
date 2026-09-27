@@ -1,0 +1,16 @@
+{
+  "imports": {
+    "effect": "npm:effect@4.0.0-rc.115",
+    "effect/unstable/http": "npm:effect@4.0.0-rc.115/unstable/http",
+    "effect/unstable/httpapi": "npm:effect@4.0.0-rc.115/unstable/httpapi",
+    "@supabase/server/core": "npm:@supabase/server@1.8.0/core",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.116.0",
+    "linkedom": "npm:linkedom@0.18.12"
+  },
+  "tasks": {
+    "check": "deno check index.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "test": "deno test --allow-env"
+  }
+}
