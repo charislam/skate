@@ -8,12 +8,11 @@ import { ScopeId } from "./model";
 import * as Form from "./form/message";
 
 export const Message = defineMessageUnion({
+  CreatedScope: { scopeId: ScopeId, userId: UserId },
+
+  ToggledMobileFilters: { isOpen: Schema.Boolean },
+
   ClickedCreateSource: {},
-  GotFormMessage: { message: Form.Message },
-  GotEnabledListboxMessage: { message: Listbox.Message },
-  GotTypeListboxMessage: { message: Listbox.Message },
-  GotFetchStatusListboxMessage: { message: Listbox.Message },
-  UpdatedSearch: { value: Schema.String },
   ClickedApply: {},
   PressedEnter: {},
   ClickedClear: {},
@@ -21,9 +20,12 @@ export const Message = defineMessageUnion({
   ClickedRetry: {},
   ClickedLoadMore: {},
   ClickedRetryMore: {},
-  ObservedLoadMore: {},
   ClickedSort: { field: Sources.SourceSortField },
-  CreatedScope: { scopeId: ScopeId, userId: UserId },
+
+  ObservedLoadMore: {},
+
+  UpdatedSearch: { value: Schema.String },
+
   SettledPage: {
     requestId: Schema.Number,
     scopeId: ScopeId,
@@ -32,6 +34,13 @@ export const Message = defineMessageUnion({
     maybeCursor: Schema.Option(Sources.SourceCursor),
     result: Schema.Result(Sources.SourcePage, Sources.SourceError),
   },
+
   CompletedScrollSourcesTable: {},
+
+  GotFormMessage: { message: Form.Message },
+  GotEnabledListboxMessage: { message: Listbox.Message },
+  GotTypeListboxMessage: { message: Listbox.Message },
+  GotFetchStatusListboxMessage: { message: Listbox.Message },
 });
+
 export type Message = typeof Message.Type;

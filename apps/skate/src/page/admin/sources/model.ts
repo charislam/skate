@@ -44,12 +44,14 @@ export const Model = Schema.Struct({
 
   feed: Feed.schema,
   query: Sources.SourceQuery,
+  nextRequestId: Schema.Number,
+  pendingRequest: Schema.Option(PendingRequest),
+
   draftFilters: DraftFilters,
+  isMobileFiltersOpen: Schema.Boolean,
   enabledListbox: Listbox.Model,
   typeListbox: Listbox.Model,
   fetchStatusListbox: Listbox.Model,
-  nextRequestId: Schema.Number,
-  pendingRequest: Schema.Option(PendingRequest),
 
   form: Form.Model,
   optimisticSources: Schema.Array(
@@ -73,16 +75,20 @@ export const defaultQuery = (): Sources.SourceQuery => ({
   direction: "asc",
 });
 export const init = (): Model => ({
-  form: Form.init(),
-  optimisticSources: [],
-  creationErrors: [],
+  scopeId: Option.none(),
+
+  feed: Feed.Idle(),
+  query: defaultQuery(),
+  nextRequestId: 1,
+  pendingRequest: Option.none(),
+
   draftFilters: emptyFilters(),
+  isMobileFiltersOpen: false,
   enabledListbox: Listbox.init({ id: EnabledFilterListboxId }),
   typeListbox: Listbox.init({ id: TypeFilterListboxId }),
   fetchStatusListbox: Listbox.init({ id: FetchStatusFilterListboxId }),
-  query: defaultQuery(),
-  scopeId: Option.none(),
-  nextRequestId: 1,
-  pendingRequest: Option.none(),
-  feed: Feed.Idle(),
+
+  form: Form.init(),
+  optimisticSources: [],
+  creationErrors: [],
 });

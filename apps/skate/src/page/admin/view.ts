@@ -129,22 +129,32 @@ const overviewSectionContent = (model: Model, h: HtmlBuilder<Message>): Array<Ht
   ),
 ];
 
-const sourcesSectionContent = (model: Model, h: HtmlBuilder<Message>): Array<Html> => [
+const sourcesSectionContent = (
+  model: Model,
+  tabletOrAbove: boolean,
+  h: HtmlBuilder<Message>,
+): Array<Html> => [
   h.submodel({
     slotId: "admin-sources-table",
     model: model.sourcesTable,
     view: sourcesTableView,
+    viewInputs: { tabletOrAbove },
     toParentMessage: (message: SourcesTableMessage.Message) =>
       Message.GotSourcesTableMessage({ message }),
   }),
 ];
 
-const sectionContent = (model: Model, section: AdminSection, h: HtmlBuilder<Message>): Html =>
+const sectionContent = (
+  model: Model,
+  section: AdminSection,
+  tabletOrAbove: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.section(
     [h.AriaLabel(`${section} content`)],
     Match.value(section).pipe(
       Match.when("Overview", () => overviewSectionContent(model, h)),
-      Match.when("Sources", () => sourcesSectionContent(model, h)),
+      Match.when("Sources", () => sourcesSectionContent(model, tabletOrAbove, h)),
       Match.exhaustive,
     ),
   );
@@ -189,7 +199,7 @@ export const view = Submodel.defineView<
       tabletOrAbove
         ? h.aside([h.Class("w-48 shrink-0")], [navigation(section, h)])
         : compactNavigation(model, section, h),
-      h.div([h.Class("min-w-0 flex-1")], [sectionContent(model, section, h)]),
+      h.div([h.Class("min-w-0 flex-1")], [sectionContent(model, section, tabletOrAbove, h)]),
     ],
   );
 });

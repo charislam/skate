@@ -199,14 +199,26 @@ const foldForm = (model: SourcesModel, message: FormMessage.Message, context: Co
 
 export const update = (model: SourcesModel, message: Message, context: Context) =>
   Message.match<Update.Return<SourcesModel, Message, Resource>>(message, {
+    CreatedScope: ({ scopeId, userId }) => {
+      if (!context.isAllowed || context.userId !== userId) return { model };
+      const scopedModel = evo(model, { scopeId: () => Option.some(scopeId) });
+      const feed = AsyncData.loadIfMissing(scopedModel.feed);
+      return Option.match(feed, {
+        onNone: () => ({ model: scopedModel }),
+        onSome: (nextFeed) =>
+          request(
+            evo(scopedModel, { feed: () => nextFeed, pendingRequest: () => Option.none() }),
+            context,
+          ),
+      });
+    },
+
+    ToggledMobileFilters: ({ isOpen }) => ({
+      model: evo(model, { isMobileFiltersOpen: () => isOpen }),
+    }),
+
     ClickedCreateSource: () =>
       context.isAllowed && Option.isSome(model.scopeId) ? openForm(model) : { model },
-    GotFormMessage: ({ message: formMessage }) => foldForm(model, formMessage, context),
-    GotEnabledListboxMessage: ({ message: listboxMessage }) =>
-      foldEnabledListbox(model, listboxMessage),
-    GotTypeListboxMessage: ({ message: listboxMessage }) => foldTypeListbox(model, listboxMessage),
-    GotFetchStatusListboxMessage: ({ message: listboxMessage }) =>
-      foldFetchStatusListbox(model, listboxMessage),
     UpdatedSearch: ({ value }) => ({
       model: evo(model, {
         draftFilters: () =>
@@ -222,26 +234,23 @@ export const update = (model: SourcesModel, message: Message, context: Context) 
     ClickedRetry: () => startInitial(model, context),
     ClickedLoadMore: () => loadMore(model, false, context),
     ClickedRetryMore: () => loadMore(model, true, context),
-    ObservedLoadMore: () => loadMore(model, false, context),
     ClickedSort: ({ field }) => {
       const direction =
         model.query.sortField === field && model.query.direction === "asc" ? "desc" : "asc";
       return applyQuery(model, { ...model.query, sortField: field, direction }, context);
     },
-    CreatedScope: ({ scopeId, userId }) => {
-      if (!context.isAllowed || context.userId !== userId) return { model };
-      const scopedModel = evo(model, { scopeId: () => Option.some(scopeId) });
-      const feed = AsyncData.loadIfMissing(scopedModel.feed);
-      return Option.match(feed, {
-        onNone: () => ({ model: scopedModel }),
-        onSome: (nextFeed) =>
-          request(
-            evo(scopedModel, { feed: () => nextFeed, pendingRequest: () => Option.none() }),
-            context,
-          ),
-      });
-    },
+
+    ObservedLoadMore: () => loadMore(model, false, context),
+
     SettledPage: (completion) => settle(model, completion, context),
+
+    GotFormMessage: ({ message: formMessage }) => foldForm(model, formMessage, context),
+    GotEnabledListboxMessage: ({ message: listboxMessage }) =>
+      foldEnabledListbox(model, listboxMessage),
+    GotTypeListboxMessage: ({ message: listboxMessage }) => foldTypeListbox(model, listboxMessage),
+    GotFetchStatusListboxMessage: ({ message: listboxMessage }) =>
+      foldFetchStatusListbox(model, listboxMessage),
+
     CompletedScrollSourcesTable: () => ({ model }),
   });
 

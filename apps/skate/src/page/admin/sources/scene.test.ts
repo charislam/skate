@@ -19,6 +19,8 @@ const model: SourcesModel = {
   feed: Feed.Success({ data: { items: [], more: More.Ready({ cursor }) } }),
 };
 const sourceUpdate = (current: SourcesModel, message: Message) => update(current, message, context);
+const sourceView = (current: SourcesModel, h: Parameters<typeof view>[2]) =>
+  view(current, { tabletOrAbove: true }, h);
 
 describe("Sources view mounts", () => {
   test("the load-more sentinel owns the observer and folds its message", () => {
@@ -32,7 +34,7 @@ describe("Sources view mounts", () => {
     });
 
     scene(
-      { update: sourceUpdate, view },
+      { update: sourceUpdate, view: sourceView },
       given(model),
       Mount.expectHas(ObserveLoadMore),
       Mount.resolve(ObserveLoadMore, Message.ObservedLoadMore()),
@@ -56,7 +58,7 @@ describe("Sources view mounts", () => {
 
 test("pending sources appear in an otherwise empty table", () => {
   scene(
-    { update: sourceUpdate, view },
+    { update: sourceUpdate, view: sourceView },
     given({
       ...model,
       feed: Feed.Success({ data: { items: [], more: More.End() } }),
@@ -79,7 +81,7 @@ test("pending sources appear in an otherwise empty table", () => {
 
 test("creation failures remain visible outside the closed dialog", () => {
   scene(
-    { update: sourceUpdate, view },
+    { update: sourceUpdate, view: sourceView },
     given({
       ...model,
       feed: Feed.Success({ data: { items: [], more: More.End() } }),

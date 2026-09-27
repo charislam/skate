@@ -1,4 +1,4 @@
-import { AsyncData, FieldValidation, Submodel } from "foldkit";
+import { AsyncData, Submodel } from "foldkit";
 import { Array, DateTime, Match, Option } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { Sources } from "../../../domain/sources";
@@ -8,6 +8,7 @@ import { type FeedData, type Model, More } from "./model";
 
 import { view as formView } from "./form/view";
 import { AdminSourcesFilter } from "./view/filter";
+import { Button } from "~/view/button";
 
 const sortButton = (
   model: Model,
@@ -196,7 +197,7 @@ const feedTable = (model: Model, h: HtmlBuilder<Message>): Html =>
 
 const table = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.div(
-    [h.Class("flex flex-col gap-4")],
+    [h.Id("admin-sources-table"), h.Class("flex flex-col gap-4 overflow-y-auto")],
     [
       ...model.creationErrors.map(({ requestId, name, error }) =>
         h.keyed("p")(
@@ -213,38 +214,35 @@ const table = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   );
 
-export const view = Submodel.defineView<Model, Message>((model, h) =>
-  h.div(
-    [h.Id("admin-sources-table"), h.Class("flex flex-col gap-4")],
+const createSourceButton = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const disabled = Option.isNone(model.scopeId);
+
+  return h.button(
     [
-      h.div(
-        [h.Class("flex justify-end")],
-        [
-          h.button(
-            [
-              h.OnClick(Message.ClickedCreateSource()),
-              h.Disabled(Option.isNone(model.scopeId)),
-              h.Class("rounded bg-gray-900 px-3 py-2 text-white"),
-            ],
-            ["New source"],
-          ),
-        ],
-      ),
-      h.submodel({
-        slotId: "create-source-form",
-        model: model.form,
-        view: formView,
-        toParentMessage: (message) => Message.GotFormMessage({ message }),
-      }),
-      AdminSourcesFilter.wideControls(model, h),
-      FieldValidation.match(model.draftFilters.searchText, {
-        onNotValidated: () => h.empty,
-        onValidating: () => h.empty,
-        onValid: () => h.empty,
-        onInvalid: ({ errors }) =>
-          h.p([h.Role("alert"), h.Class("text-sm text-red-700")], [Array.headNonEmpty(errors)]),
-      }),
-      table(model, h),
+      ...(disabled ? [] : [h.OnClick(Message.ClickedCreateSource())]),
+      h.AriaDisabled(disabled),
+      h.Class(Button.primaryClass),
     ],
-  ),
+    ["New source"],
+  );
+};
+
+export const view = Submodel.defineView<Model, Message, { readonly tabletOrAbove: boolean }>(
+  (model, { tabletOrAbove }, h) =>
+    h.div(
+      [h.Class("flex flex-col gap-4")],
+      [
+        h.submodel({
+          slotId: "create-source-form",
+          model: model.form,
+          view: formView,
+          toParentMessage: (message) => Message.GotFormMessage({ message }),
+        }),
+        tabletOrAbove
+          ? AdminSourcesFilter.wideControls(model, h)
+          : AdminSourcesFilter.narrowControls(model, h),
+        table(model, h),
+        h.div([h.Class("flex justify-center")], [createSourceButton(model, h)]),
+      ],
+    ),
 );
