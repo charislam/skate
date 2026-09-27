@@ -20,4 +20,7 @@ export const secondaryClass = cn(
   "dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200",
 );
 
+export const dialogCancelClass = cn(secondaryClass, "dark:bg-slate-900");
+export const dialogConfirmClass = cn(primaryClass, "dark:bg-slate-800 text-sm tracking-normal");
+
 export * as Button from "./button";
