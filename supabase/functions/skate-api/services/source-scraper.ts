@@ -310,17 +310,24 @@ export const scrape = Effect.fn("SourceScraper.scrape")(
     const jobs = daily.flatMap((day, dayIndex) =>
       day.modelCount === null ? [] : Array.from(
         { length: day.modelCount },
-        (_, index) => ({ date: day.date, sessionIndex: index + 1, dayIndex }),
+        (_, index) => ({
+          date: day.date,
+          sessionIndex: index + 1,
+          totalSessions: day.modelCount,
+          dayIndex,
+        }),
       )
     );
     const detailQuestions = Object.fromEntries(
       jobs.flatMap((job) =>
-        Object.entries(makeDetailQuestions(job.date, job.sessionIndex)).map(
-          ([field, question]) => [
-            sessionQuestionId(job.date, job.sessionIndex, field),
-            question,
-          ],
-        )
+        Object.entries(makeDetailQuestions({
+          date: job.date,
+          sessionIndex: job.sessionIndex,
+          totalSessions: job.totalSessions,
+        })).map(([field, question]) => [
+          sessionQuestionId(job.date, job.sessionIndex, field),
+          question,
+        ])
       ),
     );
     const detailAnswers = Object.keys(detailQuestions).length === 0
