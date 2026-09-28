@@ -9,7 +9,6 @@ import { HtmlSource, normalizeHtml } from "../services/html-source.ts";
 import { Clock, Effect, Layer } from "effect";
 
 const maxHtmlBytes = 2 * 1024 * 1024;
-const maxStateBytes = 24 * 1024;
 
 const allowedUrl = (
   value: string,
@@ -157,17 +156,8 @@ export const htmlSourceLayer = Layer.effect(
         offset += chunk.byteLength;
       });
       const html = new TextDecoder().decode(bytes);
-      const blocks = normalizeHtml(html);
-      const context = JSON.stringify(blocks);
-      if (new TextEncoder().encode(context).byteLength > maxStateBytes) {
-        return yield* Effect.fail(
-          new SourceContentTooLarge({
-            cause:
-              `Normalized source context exceeded the ${maxStateBytes}-byte limit`,
-          }),
-        );
-      }
-      return { fetchedAt, blocks, context };
+      const cleanedHtml = normalizeHtml(html);
+      return { fetchedAt, html: cleanedHtml };
     });
     return HtmlSource.Service.of({ fetch });
   }),

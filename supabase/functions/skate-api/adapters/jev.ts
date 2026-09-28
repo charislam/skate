@@ -55,6 +55,67 @@ const ResponseSchema = Schema.Struct({
   }),
 });
 
+const maxQuestionsPerRequest = 30;
+const maxRequestBytes = 48 * 1024;
+
+const toJevQuestions = (
+  questions: Readonly<Record<string, Classifier.Question>>,
+) =>
+  Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => [
+      id,
+      question.type === "choice"
+        ? {
+          type: "choice",
+          instructions: question.instructions,
+          criteria: question.options,
+        }
+        : { type: "noul", instructions: question.instructions },
+    ]),
+  );
+
+const requestBody = (
+  state: Classifier.ClassifierState,
+  model: string,
+  questions: Readonly<Record<string, Classifier.Question>>,
+) => ({ state, model, questions: toJevQuestions(questions) });
+
+const partitionQuestions = (
+  state: Classifier.ClassifierState,
+  model: string,
+  questions: Readonly<Record<string, Classifier.Question>>,
+) => {
+  const batches: Array<Record<string, Classifier.Question>> = [];
+  let current: Record<string, Classifier.Question> = {};
+  for (const [id, question] of Object.entries(questions)) {
+    const candidate = { ...current, [id]: question };
+    const candidateBytes = new TextEncoder().encode(
+      JSON.stringify(requestBody(state, model, candidate)),
+    ).byteLength;
+    if (
+      Object.keys(candidate).length <= maxQuestionsPerRequest &&
+      candidateBytes <= maxRequestBytes
+    ) {
+      current = candidate;
+      continue;
+    }
+    if (Object.keys(current).length > 0) {
+      batches.push(current);
+      current = {};
+    }
+    const singleton = { [id]: question };
+    const singletonBytes = new TextEncoder().encode(
+      JSON.stringify(requestBody(state, model, singleton)),
+    ).byteLength;
+    if (singletonBytes > maxRequestBytes) {
+      return { batches, oversized: { questionId: id, bytes: singletonBytes } };
+    }
+    current = singleton;
+  }
+  if (Object.keys(current).length > 0) batches.push(current);
+  return { batches, oversized: undefined };
+};
+
 export const jevLayer = Layer.effect(
   Classifier.Service,
   Effect.gen(function* () {
@@ -62,32 +123,31 @@ export const jevLayer = Layer.effect(
     const client = yield* HttpClient.HttpClient;
     const classifyAttempt = Effect.fn("ClassifierService.classify")(
       function* (
-        state: string,
+        state: Classifier.ClassifierState,
         questions: Readonly<Record<string, Classifier.Question>>,
       ) {
-        const requestQuestions = Object.fromEntries(
-          Object.entries(questions).map((
-            [id, question],
-          ) => [
-            id,
-            question.type === "choice"
-              ? {
-                type: "choice",
-                instructions: question.instructions,
-                criteria: question.options,
-              }
-              : { type: "noul", instructions: question.instructions },
-          ]),
-        );
+        const body = requestBody(state, config.model, questions);
+        const requestBytes =
+          new TextEncoder().encode(JSON.stringify(body)).byteLength;
+        if (
+          requestBytes > maxRequestBytes ||
+          Object.keys(questions).length > maxQuestionsPerRequest
+        ) {
+          return yield* Effect.fail(
+            classifierFailure(
+              422,
+              "classifier_budget",
+              `Translated Jev request exceeds limits (questions=${
+                Object.keys(questions).length
+              }, bytes=${requestBytes})`,
+            ),
+          );
+        }
         const request = yield* HttpClientRequest.post(
           "https://api.typesafe.ai/v1/systemone",
         ).pipe(
           HttpClientRequest.bearerToken(Redacted.value(config.typesafeApiKey)),
-          HttpClientRequest.bodyJson({
-            state,
-            model: config.model,
-            questions: requestQuestions,
-          }),
+          HttpClientRequest.bodyJson(body),
         );
         const response = yield* client.execute(request).pipe(
           Effect.timeout("30 seconds"),
@@ -183,19 +243,8 @@ export const jevLayer = Layer.effect(
                 )
               ),
             );
-            const probabilities = Object.values(answer.probabilities);
-            const sum = probabilities.reduce((total, part) => total + part, 0);
             if (
-              !(answer.choice in question.options) ||
-              Object.keys(answer.probabilities).length !==
-                Object.keys(question.options).length ||
-              Object.keys(question.options).some((key) =>
-                !(key in answer.probabilities)
-              ) || probabilities.some((part) =>
-                !Number.isFinite(part) || part < 0 || part > 1
-              ) || Math.abs(sum - 1) > 0.01 ||
-              !Number.isFinite(answer.confidence) || answer.confidence < 0 ||
-              answer.confidence > 1
+              !(answer.choice in question.options)
             ) {
               return yield* Effect.fail(classifierFailure(
                 502,
@@ -274,8 +323,8 @@ export const jevLayer = Layer.effect(
         )
       ),
     );
-    const classify = (
-      state: string,
+    const classifyBatch = (
+      state: Classifier.ClassifierState,
       questions: Readonly<Record<string, Classifier.Question>>,
     ) =>
       classifyAttempt(state, questions).pipe(
@@ -292,6 +341,40 @@ export const jevLayer = Layer.effect(
           )
         ),
       );
+    const classify = (
+      state: Classifier.ClassifierState,
+      questions: Readonly<Record<string, Classifier.Question>>,
+    ) =>
+      Effect.gen(function* () {
+        const partition = partitionQuestions(state, config.model, questions);
+        if (partition.oversized !== undefined) {
+          return yield* Effect.fail(
+            classifierFailure(
+              422,
+              "classifier_budget",
+              `Translated Jev request for question '${partition.oversized.questionId}' exceeds the 48-KiB limit (${partition.oversized.bytes} bytes)`,
+            ),
+          );
+        }
+        const classifications = yield* Effect.all(
+          partition.batches.map((batch) => classifyBatch(state, batch)),
+          { concurrency: 8 },
+        );
+        const usage = classifications.reduce(
+          (total, result) => ({
+            inputTokens: total.inputTokens + result.usage.inputTokens,
+            outputTokens: total.outputTokens + result.usage.outputTokens,
+          }),
+          { inputTokens: 0, outputTokens: 0 },
+        );
+        return {
+          answers: Object.fromEntries(
+            classifications.flatMap((result) => Object.entries(result.answers)),
+          ),
+          providerModel: classifications[0]?.providerModel ?? config.model,
+          usage,
+        };
+      });
     return Classifier.Service.of({ classify, model: config.model });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));

@@ -2,11 +2,36 @@
 
 The `skate-api` Edge Function exposes `POST /skate-api/source/scrape`. It
 validates the configured secret API key before source access, reads the source
-through a service client, fetches its stored page, classifies four weeks, and
+through a service client, fetches and cleans the source page, counts public
+skating independently for 28 Toronto dates, extracts each counted session,
 conditionally updates `last_fetched` after result validation. The value
 describes successful server processing; it does not prove that the caller
 received the response. There is no session persistence or scheduled invocation
 in this version.
+
+The `source-scrape-v2` response contains 28 ordered `days` with each selected
+daily count and confidence, plus ordered `sessions` with local dates and times,
+category, cancellation, certainty, and field confidence. Sessions are indexed by
+their order within a date and are identified by a deterministic reference based
+on source ID, local date, and session number. This identifies an extraction slot
+and does not persist identity across source changes. Unknown counts remain null;
+counts above the offered maximum are incomplete. Valid uncertain results can
+succeed and update `last_fetched`.
+
+The fetch limit is 2 MiB. The complete JSON classifier state, including the
+cleaned HTML, date, shared instructions, and source notes, is limited to 24 KiB.
+The translated provider request is limited to 48 KiB and 30 questions. Oversize
+content fails without truncation. Each provider call has a 30-second timeout;
+rate-limited requests retain bounded retries. The page is serialized as reduced
+HTML: scripts, styles, embedded frames, SVG, comments, event handlers, and
+presentation attributes are removed, while headings, paragraphs, lists, line
+breaks, tables, time values, semantic emphasis, and cancellation markup are
+preserved. No linked resources or scripts are loaded.
+
+Deterministic backend tests cover workflow mechanics and HTML cleanup. They do
+not establish extraction accuracy. Accuracy comparisons require a manually
+labelled fixture set and a separately configured live Jev evaluation; no live
+evaluation result is claimed here.
 
 ## Configuration
 

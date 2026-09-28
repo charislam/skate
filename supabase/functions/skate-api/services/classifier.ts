@@ -29,6 +29,11 @@ export const Classification = Schema.Struct({
 });
 export interface Classification
   extends Schema.Schema.Type<typeof Classification> {}
+export interface ClassifierState {
+  readonly rink_info: string;
+  readonly instructions: string;
+  readonly additional_notes: string;
+}
 export class ClassifierFailure
   extends Schema.TaggedError<ClassifierFailure>()("ClassifierFailure", {
     status: Schema.Number,
@@ -44,7 +49,7 @@ export class ClassifierOverloaded
 
 export interface Interface {
   readonly classify: (
-    state: string,
+    state: ClassifierState,
     questions: Readonly<Record<string, Question>>,
   ) => Effect.Effect<
     Classification,

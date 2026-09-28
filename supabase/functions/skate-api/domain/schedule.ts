@@ -7,35 +7,39 @@ export const Category = Schema.Literals([
   "children",
   "senior",
 ]);
+export const LocalTime = Schema.String.check(
+  Schema.isPattern(/^([01]\d|2[0-3]):[0-5]\d$/),
+);
+export const Cancellation = Schema.Literals(["scheduled", "cancelled"]);
+export const EndDay = Schema.Literals(["same_day", "next_day"]);
 export const UncertaintyReason = Schema.Literals([
-  "schedule_not_available",
   "count_unknown",
   "count_overflow",
   "low_confidence",
-  "missing_date",
   "missing_start_time",
   "missing_end_time",
-  "tentative",
-  "conflicting_evidence",
+  "missing_category",
+  "unknown_cancellation",
+  "invalid_time",
+  "invalid_end_date",
+  "end_before_start",
   "count_mismatch",
-  "duplicate_ambiguous",
 ]);
 export const OccurrenceRef = Schema.String.pipe(Schema.brand("OccurrenceRef"));
 export type OccurrenceRef = typeof OccurrenceRef.Type;
 
 export const Session = Schema.Struct({
   occurrenceRef: OccurrenceRef,
-  weekIndex: Schema.Number,
-  startDate: Schema.NullOr(Schema.String),
-  startTime: Schema.NullOr(Schema.String),
+  sessionIndex: Schema.Number,
+  startDate: Schema.String,
+  startTime: Schema.NullOr(LocalTime),
   endDate: Schema.NullOr(Schema.String),
-  endTime: Schema.NullOr(Schema.String),
+  endTime: Schema.NullOr(LocalTime),
   timezone: Schema.String,
   category: Schema.NullOr(Category),
   cancellation: Schema.Literals(["scheduled", "cancelled", "unknown"]),
   certainty: Schema.Literals(["supported", "uncertain"]),
   confidence: Schema.Record(Schema.String, Schema.Number),
-  evidenceBlockIds: Schema.Array(Schema.String),
   uncertaintyReasons: Schema.Array(UncertaintyReason),
 });
 export interface Session extends Schema.Schema.Type<typeof Session> {}
@@ -46,7 +50,7 @@ export const Result = Schema.Struct({
   fetchedAt: Schema.String,
   completedAt: Schema.String,
   lastFetched: Schema.String,
-  questionSetVersion: Schema.Literal("source-scrape-v1"),
+  questionSetVersion: Schema.Literal("source-scrape-v2"),
   classifier: Schema.Struct({
     model: Schema.String,
     providerModel: Schema.NullOr(Schema.String),
@@ -58,24 +62,14 @@ export const Result = Schema.Struct({
     startDate: Schema.String,
     endDateExclusive: Schema.String,
   }),
-  weeks: Schema.Array(Schema.Struct({
-    index: Schema.Number,
-    startDate: Schema.String,
-    endDate: Schema.String,
-    coverage: Schema.Literals([
-      "complete",
-      "partial",
-      "not_available",
-      "unclear",
-    ]),
-    modelCount: Schema.NullOr(
-      Schema.Union([Schema.Number, Schema.Literal("over_200")]),
-    ),
-    countConfidence: Schema.NullOr(Schema.Number),
-    extractedCount: Schema.Number,
-    cancellationCount: Schema.Number,
-    uncertaintyReasons: Schema.Array(UncertaintyReason),
-  })),
+  days: Schema.Array(
+    Schema.Struct({
+      date: Schema.String,
+      weekday: Schema.String,
+      modelCount: Schema.NullOr(Schema.Number),
+      countConfidence: Schema.Number,
+    }),
+  ),
   sessions: Schema.Array(Session),
   summary: Schema.Struct({
     extractedCount: Schema.Number,
@@ -83,7 +77,6 @@ export const Result = Schema.Struct({
     uncertainCount: Schema.Number,
     completeness: Schema.Literals(["complete", "partial", "unknown"]),
   }),
-  evidence: Schema.Record(Schema.String, Schema.String),
   warnings: Schema.Array(Schema.String),
 });
 export interface Result extends Schema.Schema.Type<typeof Result> {}

@@ -25,12 +25,9 @@ export const weekdayName = (date: string): string =>
   );
 
 export const makeWindow = (startDate: string) => {
-  const weeks = Array.from({ length: 4 }, (_, index) => {
-    const weekStart = addCalendarDays(startDate, index * 7);
-    return Array.from(
-      { length: 7 },
-      (_, day) => addCalendarDays(weekStart, day),
-    );
-  });
-  return { startDate, endDateExclusive: addCalendarDays(startDate, 28), weeks };
+  const dates = Array.from(
+    { length: 28 },
+    (_, day) => addCalendarDays(startDate, day),
+  );
+  return { startDate, endDateExclusive: addCalendarDays(startDate, 28), dates };
 };
