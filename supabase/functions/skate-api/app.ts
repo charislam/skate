@@ -169,7 +169,7 @@ const groupLayer = HttpApiBuilder.group(
             requestId,
           );
         }
-        const scrapeResponse = scrape(payload.sourceId).pipe(
+        const scrapeResponse = scrape(payload.sourceId, requestId).pipe(
           Effect.timeout("120 seconds"),
           Effect.catchTag("SourceNotFound", (error) =>
             logAndSendError(
@@ -275,10 +275,10 @@ const groupLayer = HttpApiBuilder.group(
             );
           }),
           Effect.catch((error) => Effect.die(unexpectedError(error))),
-          Effect.flatMap((value) =>
-            HttpServerResponse.isHttpServerResponse(value)
-              ? Effect.succeed(value)
-              : HttpServerResponse.json(value).pipe(Effect.orDie)
+          Effect.flatMap((summary) =>
+            Effect.logInfo("Scrape persistence committed", summary).pipe(
+              Effect.as(HttpServerResponse.empty({ status: 204 })),
+            )
           ),
         );
         const result = yield* scrapeResponse;

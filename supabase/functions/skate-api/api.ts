@@ -4,8 +4,8 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiMiddleware,
+  HttpApiSchema,
 } from "effect/unstable/httpapi";
-import { Result } from "./domain/schedule.ts";
 import { SourceId } from "./domain/source.ts";
 
 export const ScrapeInput = Schema.Struct({ sourceId: SourceId });
@@ -31,7 +31,7 @@ export const Api = HttpApi.make("SkateApi")
     HttpApiGroup.make("source").add(
       HttpApiEndpoint.post("scrape", "/source/scrape", {
         payload: ScrapeInput,
-        success: Result,
+        success: HttpApiSchema.NoContent,
         error: PublicError,
       }).middleware(AuthMiddleware),
     ),

@@ -17,8 +17,17 @@ const DatabaseRow = Schema.Struct({
   type: Schema.String,
   url: Schema.String,
   notes: Schema.NullOr(Schema.String),
+  rink_id_text: Schema.String,
   enabled: Schema.Boolean,
   updated_at: Schema.String,
+});
+
+const summarySchema = Schema.Struct({
+  inserted: Schema.Number,
+  updated: Schema.Number,
+  unchanged: Schema.Number,
+  missingMarkedUncertain: Schema.Number,
+  lastFetched: Schema.String,
 });
 
 export const sourceRepositoryLayer = Layer.effect(
@@ -40,7 +49,7 @@ export const sourceRepositoryLayer = Layer.effect(
       const result = yield* Effect.tryPromise({
         try: (signal) =>
           client.from("source").select(
-            "id_text:id::text,name,type,url,notes,enabled,updated_at",
+            "id_text:id::text,name,type,url,notes,enabled,updated_at,rink_id_text:rink_id::text",
           ).eq("id", id).abortSignal(signal).maybeSingle(),
         catch: (cause) =>
           new SourceFailure({ operation: "find", cause: describeCause(cause) }),
@@ -86,55 +95,82 @@ export const sourceRepositoryLayer = Layer.effect(
         notes: row.notes,
         enabled: row.enabled,
         updatedAt: row.updated_at,
+        rinkId: row.rink_id_text,
       });
     });
-    const complete = Effect.fn("SourceRepository.complete")(
-      function* (source: Source, completedAt: string) {
+    const persist = Effect.fn("SourceRepository.persist")(
+      function* (
+        source: Source,
+        completedAt: string,
+        sessions: ReadonlyArray<SourceRepository.SessionWrite>,
+        resolvedDays: ReadonlyArray<string>,
+      ) {
         const result = yield* Effect.tryPromise({
           try: (signal) =>
-            client.from("source").update({ last_fetched: completedAt }).eq(
-              "id",
-              source.id,
-            ).eq("updated_at", source.updatedAt).eq("enabled", true)
-              .abortSignal(signal).select("last_fetched").maybeSingle(),
+            client.rpc("persist_scraped_sessions", {
+              p_source_id: source.id,
+              p_expected_updated_at: source.updatedAt,
+              p_expected_rink_id: source.rinkId,
+              p_completed_at: completedAt,
+              p_sessions: sessions.map((session) => ({
+                start: session.start,
+                end: session.end,
+                audience: session.audience,
+                is_cancelled: session.isCancelled,
+                certainty: session.certainty,
+              })),
+              p_resolved_days: resolvedDays,
+            }).abortSignal(signal),
           catch: (cause) =>
             new SourceFailure({
-              operation: "complete",
+              operation: "persist",
               cause: describeCause(cause),
             }),
         }).pipe(
           Effect.timeout("10 seconds"),
           Effect.mapError((error) =>
             new SourceFailure({
-              operation: Cause.isTimeoutError(error)
-                ? "db_timeout"
-                : "complete",
+              operation: Cause.isTimeoutError(error) ? "db_timeout" : "persist",
               cause: describeCause(error),
             })
           ),
         );
-        if (result.error !== null) {
-          return yield* Effect.fail(
-            new SourceFailure({
-              operation: "complete",
-              cause: describeCause(result.error),
-            }),
-          );
-        }
         if (
-          result.data === null || typeof result.data.last_fetched !== "string"
+          result.error !== null &&
+          result.error.message.includes("SourceChanged")
         ) {
           return yield* Effect.fail(
             new SourceChanged({
               sourceId: source.id,
-              cause:
-                "The conditional last_fetched update matched no enabled unchanged source row",
+              cause: "The persistence transaction found a changed source",
             }),
           );
         }
-        return result.data.last_fetched;
+        if (result.error !== null) {
+          return yield* Effect.fail(
+            new SourceFailure({
+              operation: "persist",
+              cause: describeCause(result.error),
+            }),
+          );
+        }
+        if (result.data === null) {
+          return yield* Effect.fail(
+            new SourceFailure({
+              operation: "persist_decode",
+              cause: "Persistence returned no summary",
+            }),
+          );
+        }
+        return yield* Schema.decodeUnknownEffect(summarySchema)(result.data)
+          .pipe(Effect.mapError((cause) =>
+            new SourceFailure({
+              operation: "persist_decode",
+              cause: describeCause(cause),
+            })
+          ));
       },
     );
-    return SourceRepository.Service.of({ find, complete });
+    return SourceRepository.Service.of({ find, persist });
   }),
 );

@@ -1,5 +1,8 @@
 begin;
 
+delete from public.source;
+delete from public.rink;
+
 select plan(17);
 
 insert into auth.users (id, email)
@@ -8,12 +11,15 @@ update public."user"
 set role_id = (select id from public.role where name = 'owner')
 where id = '00000000-0000-0000-0000-000000000031';
 
-insert into public.source (id, name, type, url, enabled, last_fetched, created_at, updated_at)
+insert into public.rink (id, name, foreign_id) overriding system value
+values (990000000, 'Listing Rink', 'tor_pgtap_listing');
+
+insert into public.source (id, name, type, url, enabled, last_fetched, created_at, updated_at, rink_id)
 values
-  (990000001, 'Alpha', 'web_scrape', 'https://example.test/alpha', true, null, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123456Z'),
-  (990000002, 'Beta', 'web_scrape', 'https://example.test/beta', false, null, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123457Z'),
-  (990000003, 'Gamma', 'web_scrape', 'https://example.test/gamma', true, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123455Z', '2026-09-25T10:00:00.123458Z'),
-  (990000004, 'Delta', 'web_scrape', 'https://example.test/delta', false, null, '2026-09-25T10:00:00.123457Z', '2026-09-25T10:00:00.123459Z');
+  (990000001, 'Alpha', 'web_scrape', 'https://example.test/alpha', true, null, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123456Z', 990000000),
+  (990000002, 'Beta', 'web_scrape', 'https://example.test/beta', false, null, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123457Z', 990000000),
+  (990000003, 'Gamma', 'web_scrape', 'https://example.test/gamma', true, '2026-09-25T10:00:00.123456Z', '2026-09-25T10:00:00.123455Z', '2026-09-25T10:00:00.123458Z', 990000000),
+  (990000004, 'Delta', 'web_scrape', 'https://example.test/delta', false, null, '2026-09-25T10:00:00.123457Z', '2026-09-25T10:00:00.123459Z', 990000000);
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '00000000-0000-0000-0000-000000000031';
@@ -89,8 +95,8 @@ select is(
   'enabled and fetch-status filters combine before pagination'
 );
 
-insert into public.source (name, type, url)
-select 'Bulk source ' || number::text, 'web_scrape', 'https://example.test/bulk/' || number::text
+insert into public.source (name, type, url, rink_id)
+select 'Bulk source ' || number::text, 'web_scrape', 'https://example.test/bulk/' || number::text, 990000000
 from generate_series(1, 60) as generated(number);
 select is(
   (select count(*)::integer from public.list_source_page(null, null, true, 'never', 'name', 'asc', null)),

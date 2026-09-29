@@ -3,20 +3,18 @@
 The `skate-api` Edge Function exposes `POST /skate-api/source/scrape`. It
 validates the configured secret API key before source access, reads the source
 through a service client, fetches and cleans the source page, counts public
-skating independently for 28 Toronto dates, extracts each counted session,
-conditionally updates `last_fetched` after result validation. The value
-describes successful server processing; it does not prove that the caller
-received the response. There is no session persistence or scheduled invocation
-in this version.
+skating independently for 28 Toronto dates, extracts each counted session, and
+persists accepted sessions and `last_fetched` in one transaction. Successful
+requests return `204 No Content`.
+processing; it does not prove that the caller received the response. There is no
+scheduled invocation.
 
-The `source-scrape-v2` response contains 28 ordered `days` with each selected
-daily count and confidence, plus ordered `sessions` with local dates and times,
-category, cancellation, certainty, and field confidence. Sessions are indexed by
-their order within a date and are identified by a deterministic reference based
-on source ID, local date, and session number. This identifies an extraction slot
-and does not persist identity across source changes. Unknown counts remain null;
-counts above the offered maximum are incomplete. Valid uncertain results can
-succeed and update `last_fetched`.
+The internal `source-scrape-v2` extraction result contains 28 ordered `days`
+with each selected daily count and confidence, plus ordered `sessions` with
+local dates and times, category, cancellation, certainty, and field confidence.
+Unknown counts remain unresolved; counts above the offered maximum are
+incomplete. Valid uncertain sessions persist as uncertain. Confidently resolved
+days reconcile missing sessions by marking them uncertain without deleting them.
 
 The fetch limit is 2 MiB. The complete JSON classifier state, including the
 cleaned HTML, date, shared instructions, and source notes, is limited to 24 KiB.

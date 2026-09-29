@@ -11,6 +11,7 @@ export const Source = Schema.Struct({
   type: Schema.String,
   url: Schema.String,
   notes: Schema.NullOr(Schema.String),
+  rinkId: Schema.String,
   enabled: Schema.Boolean,
   updatedAt: Schema.String,
 });
