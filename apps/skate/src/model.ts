@@ -1,21 +1,22 @@
 import { Popover } from "@foldkit/ui";
 import { Schema } from "effect";
-import { Calendar } from "foldkit";
 import { taggedStruct } from "foldkit/schema";
-import { ActiveDate, Theme } from "./domain";
+import { Theme } from "./domain";
 import { Session } from "./domain/session";
-import { LoggedInRoute, LoggedOutRoute } from "./route";
-import * as Login from "./page/login/model";
-import { Toast } from "./toast";
 import * as Admin from "./page/admin/model";
+import * as CalendarPage from "./page/calendar/model";
+import * as Login from "./page/login/model";
+import { LoggedInRoute, LoggedOutRoute } from "./route";
+import { Toast } from "./toast";
 
 const HomeFields = {
-  today: Calendar.CalendarDate,
-  activeDateRange: ActiveDate.Model,
+  calendar: CalendarPage.Model,
+
   menu: Popover.Model,
+  toast: Toast.Model,
+
   theme: Theme.Model,
   tabletOrAbove: Schema.Boolean,
-  toast: Toast.Model,
 };
 
 export const LoggedOutModel = taggedStruct("LoggedOut", {

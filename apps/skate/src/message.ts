@@ -3,37 +3,43 @@ import { Schema } from "effect";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
-import { Theme } from "./domain";
-import { ActiveDateMessage } from "./domain/active-date-message";
-import { Session } from "./domain/session";
+import { MainMenu, Theme } from "./domain";
 import { Auth } from "./domain/auth";
-import { Toast } from "./toast";
-import * as Login from "./page/login/message";
+import { Session } from "./domain/session";
+import * as CalendarPageMessage from "./page/calendar/message";
 import * as Admin from "./page/admin/message";
+import * as Login from "./page/login/message";
+import { Toast } from "./toast";
 
 export const Message = defineMessageUnion({
-  ...ActiveDateMessage.MessageSchema,
+  ClickedLink: { request: UrlRequest },
+  ChangedUrl: { url: Url },
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
   CompletedRedirect: {},
+
+  AuthStateChanged: { maybeSession: Schema.Option(Session) },
   ClickedLogout: {},
   SucceededSignOut: {},
   FailedSignOut: { kind: Auth.ErrorKind },
-  AuthStateChanged: { maybeSession: Schema.Option(Session) },
-  GotLoginMessage: { message: Login.Message },
-  GotAdminMessage: { message: Admin.Message },
-  ClickedLink: { request: UrlRequest },
-  ChangedUrl: { url: Url },
+
   MediaWidthChanged: {
     tabletOrAbove: Schema.Boolean,
   },
+
   SelectedTheme: {
     theme: Schema.Option(Theme.Theme_),
   },
+
   SelectedMainMenuAction: {
-    action: Schema.Literals(["Day", "Week", "Month"]),
+    ...MainMenu.ActionFields,
   },
+
   SelectedNavigationLink: {},
+
+  GotCalendarMessage: { message: CalendarPageMessage.Message },
+  GotLoginMessage: { message: Login.Message },
+  GotAdminMessage: { message: Admin.Message },
   GotThemeMessage: {
     message: Theme.Message,
   },

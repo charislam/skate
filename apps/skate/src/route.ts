@@ -1,16 +1,20 @@
 import { Option, Schema, pipe } from "effect";
 import { Route } from "foldkit";
 import { defineRouteUnion, literal } from "foldkit/route";
+import { Calendar } from "./domain/calendar";
 
 export const AppRoute = defineRouteUnion({
   Home: {},
   Login: {},
   Admin: { section: Schema.Literals(["Overview", "Sources"]) },
+  Session: {
+    id: Calendar.SessionId,
+  },
   NotFound: { path: Schema.String },
 });
 
-const loggedOutRouteTags = ["Home", "Login", "NotFound"] as const;
-const loggedInRouteTags = ["Home", "Admin", "NotFound"] as const;
+const loggedOutRouteTags = ["Home", "Login", "Session", "NotFound"] as const;
+const loggedInRouteTags = ["Home", "Admin", "Session", "NotFound"] as const;
 
 export const LoggedOutRoute = AppRoute.subset(loggedOutRouteTags);
 export const LoggedInRoute = AppRoute.subset(loggedInRouteTags);
@@ -50,14 +54,19 @@ export const adminSourcesRouter = pipe(
   Route.slash(literal("sources")),
   Route.mapTo({ make: () => AppRoute.Admin({ section: "Sources" }) }),
 );
+export const sessionRouter = pipe(
+  literal("sessions"),
+  Route.slash(Route.schemaSegment("id", Calendar.SessionId)),
+  Route.mapTo(AppRoute.Session),
+);
 
-export const navigationHref: Record<Exclude<AppRouteTag, "NotFound">, string> = {
+export const navigationHref: Record<Exclude<AppRouteTag, "NotFound" | "Session">, string> = {
   Home: homeRouter(),
   Login: loginRouter(),
   Admin: adminRouter({ section: "Overview" }),
 };
 
 export const urlToAppRoute = Route.parseUrlWithFallback(
-  Route.oneOf(loginRouter, adminSourcesRouter, adminRouter, homeRouter),
+  Route.oneOf(sessionRouter, loginRouter, adminSourcesRouter, adminRouter, homeRouter),
   AppRoute.NotFound,
 );

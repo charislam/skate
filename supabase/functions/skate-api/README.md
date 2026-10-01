@@ -5,9 +5,8 @@ validates the configured secret API key before source access, reads the source
 through a service client, fetches and cleans the source page, counts public
 skating independently for 28 Toronto dates, extracts each counted session, and
 persists accepted sessions and `last_fetched` in one transaction. Successful
-requests return `204 No Content`.
-processing; it does not prove that the caller received the response. There is no
-scheduled invocation.
+requests return `204 No Content`. processing; it does not prove that the caller
+received the response. There is no scheduled invocation.
 
 The internal `source-scrape-v2` extraction result contains 28 ordered `days`
 with each selected daily count and confidence, plus ordered `sessions` with

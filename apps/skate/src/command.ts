@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { Calendar, Command as FoldkitCommand } from "foldkit";
+import { Command as FoldkitCommand } from "foldkit";
 import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { Auth } from "./domain/auth";
 import { Message } from "~/message";
@@ -36,29 +36,6 @@ export const LoadExternal = FoldkitCommand.define("LoadExternal", {
       Effect.as(Message.CompletedLoadExternal()),
       Effect.catch(() => Effect.succeed(Message.CompletedLoadExternal())),
     ),
-});
-
-export const SyncInitialDate = FoldkitCommand.define("SyncInitialDate", {
-  args: {
-    today: Calendar.CalendarDate,
-  },
-  messages: [Message.SyncedInitialDate],
-  execute: ({ today }) => Effect.succeed(Message.SyncedInitialDate({ date: today })),
-});
-
-export const SelectDayView = FoldkitCommand.define("SelectDayView", {
-  messages: [Message.SelectedDayView],
-  execute: Effect.succeed(Message.SelectedDayView()),
-});
-
-export const SelectWeekView = FoldkitCommand.define("SelectWeekView", {
-  messages: [Message.SelectedWeekView],
-  execute: Effect.succeed(Message.SelectedWeekView()),
-});
-
-export const SelectMonthView = FoldkitCommand.define("SelectMonthView", {
-  messages: [Message.SelectedMonthView],
-  execute: Effect.succeed(Message.SelectedMonthView()),
 });
 
 export const RedirectForAuthentication = FoldkitCommand.define("RedirectForAuthentication", {

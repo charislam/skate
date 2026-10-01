@@ -1,8 +1,10 @@
 import { Runtime } from "foldkit";
 import { Layer } from "effect";
+import { Clipboard } from "@effect/platform-browser";
 import { Auth } from "./domain/auth";
 import * as AuthConfig from "./domain/auth-config";
 import { Sources } from "./domain/sources";
+import { Calendar as CalendarDomain } from "./domain/calendar";
 import { Supabase } from "./domain/supabase";
 import { Flags, flags, init, subscriptions, update, view } from "./main";
 import { Message } from "./message";
@@ -14,9 +16,10 @@ const application = Runtime.makeApplication({
   init,
   update,
   subscriptions,
-  resources: Layer.merge(Auth.layerConfig, Sources.layerConfig).pipe(
-    Layer.provide(Layer.merge(Supabase.layerConfig, AuthConfig.layer)),
-  ),
+  resources: Layer.merge(
+    Layer.merge(Auth.layerConfig, Sources.layerConfig),
+    Layer.merge(CalendarDomain.layerConfig, Clipboard.layer),
+  ).pipe(Layer.provide(Layer.merge(Supabase.layerConfig, AuthConfig.layer))),
   view,
   container: document.getElementById("root"),
   routing: {

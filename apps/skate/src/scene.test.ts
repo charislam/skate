@@ -1,5 +1,5 @@
-import { Popover } from "@foldkit/ui";
-import { Option } from "effect";
+import { Dialog, Popover } from "@foldkit/ui";
+import { DateTime, HashMap, Option, Result } from "effect";
 import { Calendar } from "foldkit";
 import {
   Command,
@@ -16,6 +16,10 @@ import {
 import { describe, test } from "vitest";
 
 import { ActiveDate, Theme } from "./domain";
+import * as CalendarCache from "./domain/calendar-cache";
+import * as CalendarPageMessage from "./page/calendar/message";
+import * as CalendarPageCommand from "./page/calendar/command";
+import { Calendar as CalendarDomain } from "./domain/calendar";
 import { AdminAccess, PermissionError } from "./domain/admin-access";
 import { UserId } from "./domain/session";
 import { type Model } from "./model";
@@ -35,8 +39,17 @@ const modelWith = (
 ): Model => ({
   _tag: "LoggedOut",
   route,
-  today,
-  activeDateRange,
+  calendar: {
+    today,
+    pageVisible: true,
+    activeDateRange,
+    sessionMenus: HashMap.empty(),
+    calendarCache: CalendarCache.init(),
+    sessionDialog: Dialog.init({ id: "session-details" }),
+    dayDialog: Dialog.init({ id: "calendar-day" }),
+    maybeDayDialogDate: Option.none(),
+    refreshingDates: [],
+  },
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
@@ -51,6 +64,15 @@ const acknowledgeAnchor = Mount.resolve(
 const acknowledgeBackdrop = Mount.resolve(
   Popover.PortalPopoverBackdrop,
   Popover.Message.CompletedPortalPopoverBackdrop(),
+);
+const resolveCalendarPreparation = Command.resolve(
+  CalendarPageCommand.PrepareCalendarDates,
+  CalendarPageMessage.Message.PreparedCalendarDates({
+    dates: [],
+    now: 0,
+    force: false,
+    origin: "automatic",
+  }),
 );
 
 describe("view", () => {
@@ -218,9 +240,11 @@ describe("view", () => {
       { update, view },
       given(modelWith(ActiveDate.Model.Day({ date: today }))),
       click(role("button", { name: "Next day" })),
+      resolveCalendarPreparation,
       expect(text("18")).toExist(),
       expect(text("Saturday")).toExist(),
       click(role("button", { name: "Previous day" })),
+      resolveCalendarPreparation,
       expect(text("17")).toExist(),
     );
   });
@@ -231,6 +255,7 @@ describe("view", () => {
       given(modelWith(ActiveDate.Model.Day({ date: Calendar.make(2024, 5, 16) }))),
       expect(role("button", { name: /Go to today/ })).toExist(),
       click(role("button", { name: /Go to today/ })),
+      resolveCalendarPreparation,
       expect(text("17")).toExist(),
       expect(role("button", { name: /Go to today/ })).not.toExist(),
     );
@@ -248,8 +273,17 @@ describe("view", () => {
       expect(text("Sat 18")).toExist(),
       expect(text("Sun 19")).toExist(),
       click(role("button", { name: "Next week" })),
+      resolveCalendarPreparation,
       expect(text("Mon 20")).toExist(),
       expect(text("May 20-26")).toExist(),
+    );
+  });
+
+  test("week headings stay explicit across a year boundary", () => {
+    scene(
+      { update, view },
+      given(modelWith(ActiveDate.Model.Week({ startDate: Calendar.make(2024, 12, 30) }))),
+      expect(text("December 30 – January 5, 2024 – 2025")).toExist(),
     );
   });
 
@@ -260,9 +294,81 @@ describe("view", () => {
       expect(text("May 2024")).toExist(),
       expect(role("button", { name: "Previous month" })).toExist(),
       click(role("button", { name: "Next month" })),
+      resolveCalendarPreparation,
       expect(text("June 2024")).toExist(),
       click(role("button", { name: "Previous month" })),
+      resolveCalendarPreparation,
       expect(text("May 2024")).toExist(),
+    );
+  });
+
+  test("session actions open an accessible menu with details and a protected rink link", () => {
+    const calendarDate = Calendar.make(2024, 5, 17);
+    const requested = CalendarCache.cacheVisible(CalendarCache.init(), {
+      dates: [calendarDate],
+      now: 1,
+    });
+    const request = requested.requests[0];
+    if (!request) throw new Error("Expected the visible day to be requested");
+
+    const calendarCache = CalendarCache.settleDay(requested.model, {
+      ...request,
+      now: 2,
+      result: Result.succeed([
+        {
+          id: CalendarDomain.SessionId.make("9223372036854775000"),
+          start: DateTime.makeZonedUnsafe(
+            { year: 2024, month: 5, day: 17, hour: 10 },
+            { timeZone: "America/Toronto", adjustForTimeZone: true },
+          ),
+          end: DateTime.makeZonedUnsafe(
+            { year: 2024, month: 5, day: 17, hour: 11 },
+            { timeZone: "America/Toronto", adjustForTimeZone: true },
+          ),
+          raw_start: "2024-05-17 10:00:00",
+          raw_end: "2024-05-17 11:00:00",
+          audience: "general",
+          is_cancelled: false,
+          certainty: "certain",
+          rink_id: "7",
+          rink_name: "Central rink",
+          rink_address: null,
+          rink_url: Option.some("https://example.com/rink"),
+        },
+      ]),
+    });
+
+    scene(
+      { update, view },
+      given({
+        ...modelWith(ActiveDate.Model.Day({ date: Calendar.make(2024, 5, 17) })),
+        calendar: {
+          ...modelWith(ActiveDate.Model.Day({ date: Calendar.make(2024, 5, 17) })).calendar,
+          calendarCache,
+        },
+      }),
+      click(role("button", { name: "Actions for Central rink 10:00 AM" })),
+      Mount.resolve(Popover.AnchorPopover, Popover.Message.CompletedAnchorPopover()),
+      Mount.resolve(
+        Popover.PortalPopoverBackdrop,
+        Popover.Message.CompletedPortalPopoverBackdrop(),
+      ),
+      expect(role("button", { name: "View details" })).toExist(),
+      expect(role("link", { name: "Open rink website" })).toHaveAttr("rel", "noopener noreferrer"),
+    );
+  });
+
+  test("opens the first day dialog from the month view", () => {
+    const date = Calendar.make(2024, 5, 17);
+
+    scene(
+      { update, view },
+      given(modelWith(ActiveDate.Model.Month({ startDate: Calendar.make(2024, 5, 1) }))),
+      expect(selector("#calendar-day")).toExist(),
+      click(text(date.day.toString())),
+      Command.resolve(Dialog.ShowDialog, Dialog.Message.SucceededShowDialog()),
+      resolveCalendarPreparation,
+      expect(role("button", { name: "Refresh day" })).toExist(),
     );
   });
 
@@ -310,6 +416,20 @@ describe("view", () => {
       Command.expectNone(),
       expect(role("button", { name: "System" })).toBeDisabled(),
       expect(role("button", { name: "Dark" })).not.toBeDisabled(),
+    );
+  });
+
+  test("mobile calendar controls offer only the Day view and retain Refresh", () => {
+    scene(
+      { update, view },
+      given({ ...modelWith(ActiveDate.Model.Day({ date: today })), tabletOrAbove: false }),
+      click(role("button", { name: "Main menu" })),
+      acknowledgeAnchor,
+      acknowledgeBackdrop,
+      expect(role("button", { name: "Day" })).toExist(),
+      expect(role("button", { name: "Week" })).not.toExist(),
+      expect(role("button", { name: "Month" })).not.toExist(),
+      expect(role("button", { name: "Refresh" })).toExist(),
     );
   });
 

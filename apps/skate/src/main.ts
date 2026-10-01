@@ -1,24 +1,20 @@
 import { Popover } from "@foldkit/ui";
 import { BrowserKeyValueStore } from "@effect/platform-browser";
+import { cn } from "cn";
 import { Console, Effect, Match, Option, Schema, Stream } from "effect";
 import { Calendar, Command as FoldkitCommand, type Runtime, Subscription, Update } from "foldkit";
-import { Machine } from "foldkit/experimental";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { UrlRequest } from "foldkit/navigation";
 import { evo } from "foldkit/struct";
 import { toString as urlToString } from "foldkit/url";
-import {
-  Command,
-  LoadExternal,
-  NavigateInternal,
-  RedirectForAuthentication,
-  SignOut,
-} from "./command";
-import { ActiveDate, MainMenu, Theme } from "./domain";
+import { LoadExternal, NavigateInternal, RedirectForAuthentication, SignOut } from "./command";
+import { MainMenu, Theme } from "./domain";
 import { Auth } from "./domain/auth";
 import type { Resource } from "./resource";
 import { Session } from "./domain/session";
 import { canAccessAdmin } from "./domain/admin-access";
+import { Message } from "./message";
+import { LoggedInModel, LoggedOutModel, type Model } from "./model";
 import * as Admin from "./page/admin/model";
 import * as AdminMessage from "./page/admin/message";
 import {
@@ -28,10 +24,16 @@ import {
   update as updateAdmin,
 } from "./page/admin/update";
 import { headerEnd as adminHeaderEnd, view as adminView } from "./page/admin/view";
-import { Message } from "./message";
-import { LoggedInModel, LoggedOutModel, type Model } from "./model";
-import { Toast } from "./toast";
-import type { ShowInput } from "./toast";
+import * as CalendarPageMessage from "./page/calendar/message";
+import * as CalendarPage from "./page/calendar/model";
+import * as CalendarPageSubscription from "./page/calendar/subscription";
+import * as CalendarPageUpdate from "./page/calendar/update";
+import * as CalendarView from "./page/calendar/view";
+import * as LoginMessage from "./page/login/message";
+import * as Login from "./page/login/model";
+import { type Input as LoginInput, update as updateLogin } from "./page/login/update";
+import { view as loginView } from "./page/login/view";
+import { type ShowInput, Toast } from "./toast";
 import {
   type AdminSection,
   AppRoute,
@@ -40,32 +42,35 @@ import {
   type RedirectDestination,
   guardLoggedInRoute,
   guardLoggedOutRoute,
+  sessionRouter,
   urlToAppRoute,
 } from "./route";
 import { MainMenuView } from "./view";
 import * as Layout from "./view/layout";
-import * as CalendarView from "./view/calendar";
-import * as Login from "./page/login/model";
-import * as LoginMessage from "./page/login/message";
-import { type Input as LoginInput, update as updateLogin } from "./page/login/update";
-import { view as loginView } from "./page/login/view";
-import { cn } from "cn";
 
 // FLAGS
 
 export const Flags = Schema.Struct({
   today: Calendar.CalendarDate,
+
   systemTheme: Theme.Theme_,
   maybeUserTheme: Schema.Option(Theme.Theme_),
+
   tabletOrAbove: Schema.Boolean,
+
   maybeSession: Schema.Option(Session),
+
+  pageVisible: Schema.Boolean,
 });
 
 export type Flags = typeof Flags.Type;
 
 export const flags = Effect.gen(function* () {
-  const today = yield* Calendar.today.local;
+  const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
+  const today = CalendarPageSubscription.torontoCalendarDate(now);
+
   const tabletOrAbove = window.matchMedia("(min-width: 1024px)").matches;
+
   const systemTheme: Theme.Theme_ = window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
@@ -73,24 +78,61 @@ export const flags = Effect.gen(function* () {
     Effect.provide(BrowserKeyValueStore.layerLocalStorage),
     Effect.catch(() => Effect.succeed(Option.none())),
   );
+
   const auth = yield* Auth.Service;
   const maybeSession = yield* auth.getSession.pipe(
     Effect.tapError((error) => Console.warn("Could not restore Supabase session:", error.message)),
     Effect.catch(() => Effect.succeed(Option.none())),
   );
-  return { today, tabletOrAbove, systemTheme, maybeUserTheme, maybeSession };
+
+  return {
+    today,
+
+    tabletOrAbove,
+
+    systemTheme,
+    maybeUserTheme,
+
+    maybeSession,
+
+    pageVisible: document.visibilityState === "visible",
+  };
 });
 
 // UPDATE
 
-const foldActiveDate = Machine.fold({
-  machine: ActiveDate.machine,
-  context: (model: Model) => ({ today: model.today }),
-  read: (model: Model) => Option.some(model.activeDateRange),
-  write: (model: Model, nextActiveDateRange: ActiveDate.Model) =>
-    evo(model, {
-      activeDateRange: () => nextActiveDateRange,
+const foldCalendarPage = Update.foldChild({
+  update: (calendar: CalendarPage.Model, input: CalendarPageUpdate.Input) =>
+    CalendarPageUpdate.update(calendar, input),
+  read: (model: Model) => Option.some(model.calendar),
+  write: (model, calendar) => evo(model, { calendar: () => calendar }),
+  toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+  foldOutMessage: CalendarPageMessage.OutMessage.match<Update.Step<Model, Message, Resource>>({
+    NavigateToSessionDetails:
+      ({ id }) =>
+      (model) => ({
+        model,
+        commands: [NavigateInternal({ url: sessionRouter({ id }) })],
+      }),
+    RedirectToHome: () => (model) => ({
+      model,
+      commands: [RedirectForAuthentication({ destination: "Home" })],
     }),
+    CopiedSessionLink:
+      ({ success }) =>
+      (model) =>
+        foldToastShow(model, {
+          variant: success ? "Info" : "Error",
+          payload: success ? "Session link copied." : "Could not copy the session link.",
+        }),
+  }),
+});
+
+const foldCalendarSessionEntry = Update.foldChild({
+  update: CalendarPageUpdate.openSessionEntry,
+  read: (model: Model) => Option.some(model.calendar),
+  write: (model, calendar) => evo(model, { calendar: () => calendar }),
+  toParentMessage: (message) => Message.GotCalendarMessage({ message }),
 });
 
 const foldTheme = Update.foldChild({
@@ -215,105 +257,129 @@ const foldAdminSectionEntry = Update.foldChild({
 export const update = (model: Model, message: Message) =>
   Match.value(message).pipe(
     Match.withReturnType<Update.Return<Model, Message, Resource>>(),
-    Match.tag("CompletedNavigateInternal", "CompletedLoadExternal", "CompletedRedirect", () => ({
-      model,
-    })),
-    Match.tag("SucceededSignOut", () => ({
-      model: makeLoggedOut(model, AppRoute.Home()),
-      commands: [RedirectForAuthentication({ destination: "Home" })],
-    })),
-    Match.tag("FailedSignOut", ({ kind }) =>
-      model._tag === "LoggedIn"
-        ? foldToastShow(model, {
-            variant: "Error",
-            payload: Auth.messageForOperation(kind, "signOut"),
-          })
-        : { model },
+    Match.tag("ChangedUrl", (message) => {
+      const route = urlToAppRoute(message.url);
+      const routeUpdate =
+        model._tag === "LoggedOut"
+          ? updateLoggedOutRoute(model, route)
+          : updateLoggedInRoute(model, route);
+      const nextRoute = routeUpdate.model.route;
+      if (
+        nextRoute._tag !== "Session" ||
+        (model.route._tag === "Session" && model.route.id === nextRoute.id)
+      ) {
+        return routeUpdate;
+      }
+      return Update.combine(model, [
+        () => routeUpdate,
+        (routedModel) => foldCalendarSessionEntry(routedModel, nextRoute.id),
+      ]);
+    }),
+    Match.tag("GotCalendarMessage", ({ message }) =>
+      foldCalendarPage(model, {
+        message,
+        context: { route: model.route, tabletOrAbove: model.tabletOrAbove },
+      }),
     ),
-    Match.tag("ClickedLink", ({ request }) =>
+    Match.tag("MediaWidthChanged", (message) => {
+      const { tabletOrAbove } = message;
+      const modelWithWidth = evo(model, { tabletOrAbove: () => tabletOrAbove });
+      return foldCalendarPage(modelWithWidth, {
+        message,
+        context: { route: model.route, tabletOrAbove },
+      });
+    }),
+    Match.tag("SelectedMainMenuAction", (message) =>
       Update.combine(model, [
         foldPopoverClose,
         (currentModel) =>
-          UrlRequest.match<Update.Return<Model, Message, Resource>>(request, {
-            Internal: ({ url }) => ({
-              model: currentModel,
-              commands: [NavigateInternal({ url: urlToString(url) })],
-            }),
-            External: ({ href }) => ({ model: currentModel, commands: [LoadExternal({ href })] }),
+          foldCalendarPage(currentModel, {
+            message,
+            context: {
+              route: currentModel.route,
+              tabletOrAbove: currentModel.tabletOrAbove,
+            },
           }),
       ]),
     ),
-    Match.tag("ChangedUrl", ({ url }) => {
-      const route = urlToAppRoute(url);
-      return model._tag === "LoggedOut"
-        ? updateLoggedOutRoute(model, route)
-        : updateLoggedInRoute(model, route);
-    }),
-    Match.tag("GotLoginMessage", ({ message }) =>
-      foldLogin(model, { message, context: { route: model.route } }),
+    Match.orElse((message) =>
+      Match.value(message).pipe(
+        Match.withReturnType<Update.Return<Model, Message, Resource>>(),
+        Match.tag(
+          "CompletedNavigateInternal",
+          "CompletedLoadExternal",
+          "CompletedRedirect",
+          () => ({
+            model,
+          }),
+        ),
+        Match.tag("SucceededSignOut", () => ({
+          model: makeLoggedOut(model, AppRoute.Home()),
+          commands: [RedirectForAuthentication({ destination: "Home" })],
+        })),
+        Match.tag("FailedSignOut", ({ kind }) =>
+          model._tag === "LoggedIn"
+            ? foldToastShow(model, {
+                variant: "Error",
+                payload: Auth.messageForOperation(kind, "signOut"),
+              })
+            : { model },
+        ),
+        Match.tag("ClickedLink", ({ request }) =>
+          Update.combine(model, [
+            foldPopoverClose,
+            (currentModel) =>
+              UrlRequest.match<Update.Return<Model, Message, Resource>>(request, {
+                Internal: ({ url }) => {
+                  return {
+                    model: currentModel,
+                    commands: [NavigateInternal({ url: urlToString(url) })],
+                  };
+                },
+                External: ({ href }) => ({
+                  model: currentModel,
+                  commands: [LoadExternal({ href })],
+                }),
+              }),
+          ]),
+        ),
+        Match.tag("GotLoginMessage", ({ message }) =>
+          foldLogin(model, { message, context: { route: model.route } }),
+        ),
+        Match.tag("GotToastMessage", ({ message }) => foldToast(model, message)),
+        Match.tag("ClickedLogout", () =>
+          model._tag === "LoggedIn" ? { model, commands: [SignOut()] } : { model },
+        ),
+        Match.tag("AuthStateChanged", ({ maybeSession }) =>
+          Option.match(maybeSession, {
+            onNone: () =>
+              model._tag === "LoggedOut" ? { model } : updateLoggedOutRoute(model, model.route),
+            onSome: (session) => updateLoggedInSession(model, session),
+          }),
+        ),
+        Match.tag("GotAdminMessage", ({ message }) =>
+          model._tag === "LoggedIn"
+            ? foldAdmin(model, {
+                message,
+                context: {
+                  userId: model.session.userId,
+                  maybeAdminSection: adminSectionForRoute(model.route),
+                },
+              })
+            : { model },
+        ),
+        Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
+        Match.tag("SelectedNavigationLink", () => foldPopoverClose(model)),
+        Match.tag("GotThemeMessage", ({ message }) => foldTheme(model, message)),
+        Match.tag("SelectedTheme", ({ theme }) =>
+          Update.combine(model, [
+            foldPopoverClose,
+            (currentModel) => foldThemeSet(currentModel, theme),
+          ]),
+        ),
+        Match.exhaustive,
+      ),
     ),
-    Match.tag("GotToastMessage", ({ message }) => foldToast(model, message)),
-    Match.tag("ClickedLogout", () =>
-      model._tag === "LoggedIn" ? { model, commands: [SignOut()] } : { model },
-    ),
-    Match.tag("AuthStateChanged", ({ maybeSession }) =>
-      Option.match(maybeSession, {
-        onNone: () =>
-          model._tag === "LoggedOut" ? { model } : updateLoggedOutRoute(model, model.route),
-        onSome: (session) => updateLoggedInSession(model, session),
-      }),
-    ),
-    Match.tag("GotAdminMessage", ({ message }) =>
-      model._tag === "LoggedIn"
-        ? foldAdmin(model, {
-            message,
-            context: {
-              userId: model.session.userId,
-              maybeAdminSection: adminSectionForRoute(model.route),
-            },
-          })
-        : { model },
-    ),
-    Match.tag(
-      "SelectedNextDateRange",
-      "SelectedPreviousDateRange",
-      "SelectedCurrentDateRange",
-      "SelectedDayView",
-      "SelectedWeekView",
-      "SelectedMonthView",
-      "SyncedInitialDate",
-      (activeDateMessage) => foldActiveDate(model, activeDateMessage),
-    ),
-    Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => ({
-      model: evo(model, { tabletOrAbove: () => tabletOrAbove }),
-      ...(tabletOrAbove ? {} : { commands: [Command.SelectDayView()] }),
-    })),
-    Match.tag("GotPopoverMessage", ({ message }) => foldPopover(model, message)),
-    Match.tag("SelectedNavigationLink", () => foldPopoverClose(model)),
-    Match.tag("GotThemeMessage", ({ message }) => foldTheme(model, message)),
-    Match.tag("SelectedTheme", ({ theme }) =>
-      Update.combine(model, [
-        foldPopoverClose,
-        (currentModel) => foldThemeSet(currentModel, theme),
-      ]),
-    ),
-    Match.tag("SelectedMainMenuAction", ({ action }) =>
-      Update.combine(model, [
-        foldPopoverClose,
-        (currentModel) => ({
-          model: currentModel,
-          commands: [
-            Match.value(action).pipe(
-              Match.when("Day", () => Command.SelectDayView()),
-              Match.when("Week", () => Command.SelectWeekView()),
-              Match.when("Month", () => Command.SelectMonthView()),
-              Match.exhaustive,
-            ),
-          ],
-        }),
-      ]),
-    ),
-    Match.exhaustive,
   );
 
 // SUBSCRIPTION
@@ -354,6 +420,17 @@ const rootSubscriptions = Subscription.make<Model, Message, Resource>()((entry) 
   ),
 }));
 
+const calendarSubscriptions = Subscription.lift(CalendarPageSubscription.subscriptions)<
+  Model,
+  Message
+>({
+  toChildModel: (model) => model.calendar,
+  toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+  when: {
+    freshness: (model) => model.route._tag === "Home" || model.route._tag === "Session",
+  },
+});
+
 const themeSubscriptions = Subscription.lift(Theme.subscriptions)<Model, Message>({
   toChildModel: (model) => model.theme,
   toParentMessage: (message) => Message.GotThemeMessage({ message }),
@@ -361,6 +438,7 @@ const themeSubscriptions = Subscription.lift(Theme.subscriptions)<Model, Message
 
 export const subscriptions = Subscription.aggregate<Model, Message, Resource>()(
   rootSubscriptions,
+  calendarSubscriptions,
   themeSubscriptions,
 );
 
@@ -392,8 +470,16 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                       (model._tag === "LoggedIn" && canAccessAdmin(model.adminModel.adminAccess))),
                 ),
                 sections:
-                  model.route._tag === "Home" && model.tabletOrAbove
-                    ? [CalendarView.calendarViewSection(model.activeDateRange, h)]
+                  model.route._tag === "Home"
+                    ? [
+                        h.submodel({
+                          slotId: "calendar-main-menu-view",
+                          model: model.calendar,
+                          view: CalendarView.mainMenuView,
+                          viewInputs: { tabletOrAbove: model.tabletOrAbove },
+                          toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+                        }),
+                      ]
                     : [],
               },
               h,
@@ -491,7 +577,29 @@ const pageView = (model: Model, h: HtmlBuilder<Message>): Page => {
     };
   }
 
-  return { title: "skate.to", ...CalendarView.slots(model, h) };
+  return {
+    title: "skate.to",
+    width: model.calendar.activeDateRange._tag === "Day" ? "compact" : "wide",
+    headerEnd: h.submodel({
+      slotId: "calendar-header-end",
+      model: model.calendar,
+      view: CalendarView.headerEndView,
+      toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+    }),
+    footerStart: h.submodel({
+      slotId: "calendar-footer-start",
+      model: model.calendar,
+      view: CalendarView.footerStartView,
+      toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+    }),
+    content: h.submodel({
+      slotId: "calendar-content",
+      model: model.calendar,
+      view: CalendarView.contentView,
+      viewInputs: { route: model.route },
+      toParentMessage: (message) => Message.GotCalendarMessage({ message }),
+    }),
+  };
 };
 
 // INIT
@@ -504,16 +612,22 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Resourc
     systemTheme: flags.systemTheme,
     maybeUserTheme: flags.maybeUserTheme,
   });
-  const route = urlToAppRoute(url);
-  const common = {
+  const calendarBoot = CalendarPage.boot({
     today: flags.today,
-    activeDateRange: ActiveDate.machine.initial,
+    pageVisible: flags.pageVisible,
+  });
+
+  const route = urlToAppRoute(url);
+
+  const common = {
+    calendar: calendarBoot.model,
     menu: Popover.init({ id: "main-menu", contentFocus: true }),
     theme: themeBoot.model,
     tabletOrAbove: flags.tabletOrAbove,
     toast: Toast.init({ id: "app-toast" }),
   };
-  const initial = Option.match(flags.maybeSession, {
+
+  const routeInit = Option.match(flags.maybeSession, {
     onNone: () => {
       const access = guardLoggedOutRoute(route);
       return {
@@ -537,28 +651,39 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Resourc
       };
     },
   });
-  return {
-    model: initial.model,
-    commands: [
-      ...initial.commands,
-      ...FoldkitCommand.mapMessages(themeBoot.commands, (message) =>
+
+  const maybeInitialSessionId =
+    routeInit.model.route._tag === "Session"
+      ? Option.some(routeInit.model.route.id)
+      : Option.none();
+
+  return Update.combine<Model, Message, Resource>(routeInit.model, [
+    () => routeInit,
+    ...Option.match(maybeInitialSessionId, {
+      onNone: () => [],
+      onSome: (id) => [(model: Model) => foldCalendarSessionEntry(model, id)],
+    }),
+    (model) => ({
+      model,
+      commands: FoldkitCommand.mapMessages(calendarBoot.commands, (message) =>
+        Message.GotCalendarMessage({ message }),
+      ),
+    }),
+    (model) => ({
+      model,
+      commands: FoldkitCommand.mapMessages(themeBoot.commands, (message) =>
         Message.GotThemeMessage({ message }),
       ),
-      Command.SyncInitialDate({ today: flags.today }),
-    ],
-  };
+    }),
+  ]);
 };
 
-type HomeState = Pick<
-  Model,
-  "today" | "activeDateRange" | "menu" | "theme" | "tabletOrAbove" | "toast"
-> & {
+type HomeState = Pick<Model, "calendar" | "menu" | "theme" | "tabletOrAbove" | "toast"> & {
   readonly loginModel?: typeof Login.Model.Type;
 };
 
 const homeState = (model: HomeState) => ({
-  today: model.today,
-  activeDateRange: model.activeDateRange,
+  calendar: model.calendar,
   menu: model.menu,
   theme: model.theme,
   tabletOrAbove: model.tabletOrAbove,

@@ -187,7 +187,10 @@ const tableDataLoadingIndicators = (
         Match.tag("End", () => []),
         Match.exhaustive,
       ),
-      h.div([h.AriaHidden(true), h.OnMount(ObserveLoadMore())]),
+      Match.value(narrowed.more).pipe(
+        Match.tag("End", () => h.empty),
+        Match.orElse(() => h.div([h.AriaHidden(true), h.OnMount(ObserveLoadMore())])),
+      ),
     ],
   );
 

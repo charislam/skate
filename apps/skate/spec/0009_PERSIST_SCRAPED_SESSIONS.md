@@ -32,9 +32,9 @@ Enable RLS on both new tables. Revoke inherited/default table and sequence privi
 
 Column grants are shared by the `authenticated` database role; RLS applies application permissions. Readers and writers use the same readable column set:
 
-| Table | SELECT columns | INSERT / UPDATE columns |
-| --- | --- | --- |
-| `rink` | `id`, `foreign_id`, `name`, `url`, `address`, `created_at`, `updated_at` | `name`, `foreign_id`, `url`, `address` |
+| Table             | SELECT columns                                                                                                    | INSERT / UPDATE columns                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `rink`            | `id`, `foreign_id`, `name`, `url`, `address`, `created_at`, `updated_at`                                          | `name`, `foreign_id`, `url`, `address`                                          |
 | `skating_session` | `id`, `rink_id`, `source_id`, `start`, `end`, `audience`, `is_cancelled`, `certainty`, `created_at`, `updated_at` | `rink_id`, `source_id`, `start`, `end`, `audience`, `is_cancelled`, `certainty` |
 
 IDs and timestamps are database-managed and cannot be inserted or updated by authenticated users. Avoid broad table-level SELECT/INSERT/UPDATE grants that override these restrictions. Supply only the sequence privileges actually required by identity-backed inserts; do not grant sequence mutation access.
@@ -45,15 +45,15 @@ Extend existing source column grants to permit reading, inserting, and updating 
 
 ### `public.rink`
 
-| Column | Definition |
-| --- | --- |
-| `id` | `bigint generated always as identity primary key` |
-| `name` | `text not null` |
-| `foreign_id` | `text not null unique` |
-| `url` | nullable `text` |
-| `address` | nullable `text` |
-| `created_at` | `timestamptz not null default now()` |
-| `updated_at` | `timestamptz not null default now()` |
+| Column       | Definition                                        |
+| ------------ | ------------------------------------------------- |
+| `id`         | `bigint generated always as identity primary key` |
+| `name`       | `text not null`                                   |
+| `foreign_id` | `text not null unique`                            |
+| `url`        | nullable `text`                                   |
+| `address`    | nullable `text`                                   |
+| `created_at` | `timestamptz not null default now()`              |
+| `updated_at` | `timestamptz not null default now()`              |
 
 Require the literal, case-sensitive prefix `tor_` on `foreign_id`. Use a literal-prefix expression such as `starts_with(foreign_id, 'tor_')`; an unescaped underscore in LIKE would be a wildcard. Future providers can expand this constraint in a later migration. Reuse `public.set_updated_at()` in a BEFORE UPDATE trigger.
 
@@ -63,18 +63,18 @@ Add `rink_id bigint references public.rink(id) on delete restrict` and an index 
 
 ### `public.skating_session`
 
-| Column | Definition |
-| --- | --- |
-| `id` | `bigint generated always as identity primary key` |
-| `rink_id` | `bigint not null references public.rink(id) on delete cascade` |
-| `source_id` | `bigint not null references public.source(id) on delete cascade` |
-| `start` | `timestamp without time zone not null` |
-| `end` | `timestamp without time zone not null` |
-| `audience` | `text not null`, one of `general`, `family`, `adult`, `children`, `senior` |
-| `is_cancelled` | `boolean not null default false` |
-| `certainty` | `text not null default 'certain'`, one of `certain`, `uncertain` |
-| `created_at` | `timestamptz not null default now()` |
-| `updated_at` | `timestamptz not null default now()` |
+| Column         | Definition                                                                 |
+| -------------- | -------------------------------------------------------------------------- |
+| `id`           | `bigint generated always as identity primary key`                          |
+| `rink_id`      | `bigint not null references public.rink(id) on delete cascade`             |
+| `source_id`    | `bigint not null references public.source(id) on delete cascade`           |
+| `start`        | `timestamp without time zone not null`                                     |
+| `end`          | `timestamp without time zone not null`                                     |
+| `audience`     | `text not null`, one of `general`, `family`, `adult`, `children`, `senior` |
+| `is_cancelled` | `boolean not null default false`                                           |
+| `certainty`    | `text not null default 'certain'`, one of `certain`, `uncertain`           |
+| `created_at`   | `timestamptz not null default now()`                                       |
+| `updated_at`   | `timestamptz not null default now()`                                       |
 
 Require `"end" > "start"`. Reuse `public.set_updated_at()` in a BEFORE UPDATE trigger. Audit timestamps represent instants; session timestamps represent local wall time in the existing `America/Toronto` schedule convention.
 

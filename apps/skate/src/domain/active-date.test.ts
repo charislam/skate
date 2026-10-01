@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Calendar } from "foldkit";
-import { Message as GlobalMessage } from "~/message";
 import { ActiveDate } from "./active-date";
 import { ActiveDateMessage } from "./active-date-message";
+
+const GlobalMessage = ActiveDateMessage.Message;
 
 const { machine, Model } = ActiveDate;
 const context = { today: Calendar.make(2024, 5, 17) };

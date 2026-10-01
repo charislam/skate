@@ -1,5 +1,5 @@
-import { Popover, Toast as UiToast } from "@foldkit/ui";
-import { Option, Result } from "effect";
+import { Dialog, Popover, Toast as UiToast } from "@foldkit/ui";
+import { DateTime, HashMap, Option, Result } from "effect";
 import { Calendar } from "foldkit";
 import { fromString } from "foldkit/url";
 import { Command, given, message, model, story } from "foldkit/story";
@@ -7,14 +7,18 @@ import { describe, expect, test } from "vitest";
 
 import { Command as AppCommand } from "./command";
 import { ActiveDate } from "./domain";
+import { Calendar as CalendarDomain } from "./domain/calendar";
+import * as CalendarCache from "./domain/calendar-cache";
 import { AdminAccess } from "./domain/admin-access";
 import * as Admin from "./page/admin/model";
 import { Message as AdminMessage } from "./page/admin/message";
+import * as CalendarPageCommand from "./page/calendar/command";
+import * as CalendarPageMessage from "./page/calendar/message";
 import { UserId } from "./domain/session";
 import { Message } from "./message";
 import type { Model } from "./model";
 import { Toast } from "./toast";
-import { AppRoute, urlToAppRoute } from "./route";
+import { AppRoute, sessionRouter, urlToAppRoute } from "./route";
 import * as Login from "./page/login/model";
 import { update } from "./main";
 
@@ -25,8 +29,17 @@ const url = (value: string) =>
 const initialModel: Model = {
   _tag: "LoggedOut",
   route: AppRoute.Home(),
-  today,
-  activeDateRange: ActiveDate.Model.Day({ date: today }),
+  calendar: {
+    today,
+    pageVisible: true,
+    activeDateRange: ActiveDate.Model.Day({ date: today }),
+    sessionMenus: HashMap.empty(),
+    calendarCache: CalendarCache.init(),
+    sessionDialog: Dialog.init({ id: "session-details" }),
+    dayDialog: Dialog.init({ id: "calendar-day" }),
+    maybeDayDialogDate: Option.none(),
+    refreshingDates: [],
+  },
   menu: Popover.init({ id: "main-menu", contentFocus: true }),
   theme: { userTheme: Option.none(), systemTheme: "light" },
   tabletOrAbove: true,
@@ -34,13 +47,119 @@ const initialModel: Model = {
   loginModel: Login.init(),
 };
 
+const resolveCalendarPreparation = Command.resolve(
+  CalendarPageCommand.PrepareCalendarDates,
+  CalendarPageMessage.Message.PreparedCalendarDates({
+    dates: [],
+    now: 0,
+    force: false,
+    origin: "automatic",
+  }),
+);
+
+const calendarMessage = (message: typeof CalendarPageMessage.Message.Type) =>
+  Message.GotCalendarMessage({ message });
+
 describe("update", () => {
+  describe("calendar outmessages", () => {
+    test("routes session-detail navigation through the parent", () => {
+      const id = CalendarDomain.SessionId.make("session-1");
+      story(
+        update,
+        given(initialModel),
+        message(
+          calendarMessage(
+            CalendarPageMessage.Message.ClickedSessionDetails({ menuId: "menu-1", id }),
+          ),
+        ),
+        Command.expectHas(
+          AppCommand.NavigateInternal({
+            url: sessionRouter({ id }),
+          }),
+        ),
+        Command.resolve(AppCommand.NavigateInternal, Message.CompletedNavigateInternal()),
+      );
+    });
+
+    test("routes returning home through the parent", () => {
+      story(
+        update,
+        given(initialModel),
+        message(calendarMessage(CalendarPageMessage.Message.ClickedBackToDayDialog())),
+        Command.expectHas(AppCommand.RedirectForAuthentication({ destination: "Home" })),
+        Command.resolve(AppCommand.RedirectForAuthentication, Message.CompletedRedirect()),
+      );
+    });
+  });
+
+  test("moves a desktop calendar to the settled session date when entered from calendar", () => {
+    const id = CalendarDomain.SessionId.make("session-1");
+    const requested = CalendarCache.requestDetail(initialModel.calendar.calendarCache, {
+      id,
+      now: 0,
+    });
+    if (Option.isNone(requested.request)) throw new Error("Expected a session detail request");
+
+    const session: CalendarDomain.CalendarSession = {
+      id,
+      start: DateTime.makeZonedUnsafe(
+        { year: 2024, month: 6, day: 4, hour: 10 },
+        { timeZone: "America/Toronto", adjustForTimeZone: true },
+      ),
+      end: DateTime.makeZonedUnsafe(
+        { year: 2024, month: 6, day: 4, hour: 11 },
+        { timeZone: "America/Toronto", adjustForTimeZone: true },
+      ),
+      raw_start: "2024-06-04 10:00:00",
+      raw_end: "2024-06-04 11:00:00",
+      audience: "general",
+      is_cancelled: false,
+      certainty: "certain",
+      rink_id: "7",
+      rink_name: "Central rink",
+      rink_address: null,
+      rink_url: Option.none(),
+    };
+    const model: Model = {
+      ...initialModel,
+      route: AppRoute.Session({ id }),
+      calendar: {
+        ...initialModel.calendar,
+        activeDateRange: ActiveDate.Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
+        calendarCache: requested.model,
+      },
+    };
+
+    const settled = update(
+      model,
+      calendarMessage(
+        CalendarPageMessage.Message.SettledCalendarDetail({
+          id,
+          requestId: requested.request.value.requestId,
+          now: 1,
+          result: Result.succeed(Option.some(session)),
+        }),
+      ),
+    );
+
+    expect(settled.model.calendar.activeDateRange).toEqual(
+      ActiveDate.Model.Month({ startDate: Calendar.make(2024, 6, 1) }),
+    );
+  });
+
   describe("route access", () => {
     test.each([
       ["/admin", "Overview"],
       ["/admin/sources", "Sources"],
     ] as const)("parses %s as an admin section", (path, section) => {
       expect(urlToAppRoute(url(`http://localhost${path}`))).toEqual(AppRoute.Admin({ section }));
+    });
+
+    test("brands session IDs when they enter through the route", () => {
+      const id = "9223372036854775000";
+      expect(urlToAppRoute(url(`http://localhost/sessions/${id}`))).toEqual(
+        AppRoute.Session({ id: CalendarDomain.SessionId.make(id) }),
+      );
     });
 
     test.each(["/admin", "/admin/sources"])("redirects logged-out users away from %s", (path) => {
@@ -222,17 +341,22 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Day({ date: Calendar.make(2024, 2, 29) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Day({ date: Calendar.make(2024, 2, 29) }),
+          },
         }),
-        message(Message.SelectedNextDateRange()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedNextDateRange())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Day({ date: Calendar.make(2024, 3, 1) }),
           );
         }),
-        message(Message.SelectedPreviousDateRange()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedPreviousDateRange())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Day({ date: Calendar.make(2024, 2, 29) }),
           );
         }),
@@ -244,11 +368,15 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2024, 12, 30) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2024, 12, 30) }),
+          },
         }),
-        message(Message.SelectedNextDateRange()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedNextDateRange())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Week({ startDate: Calendar.make(2025, 1, 6) }),
           );
         }),
@@ -260,11 +388,15 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Month({ startDate: Calendar.make(2024, 12, 1) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Month({ startDate: Calendar.make(2024, 12, 1) }),
+          },
         }),
-        message(Message.SelectedNextDateRange()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedNextDateRange())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Month({ startDate: Calendar.make(2025, 1, 1) }),
           );
         }),
@@ -276,11 +408,15 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2020, 1, 6) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2020, 1, 6) }),
+          },
         }),
-        message(Message.SelectedCurrentDateRange()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedCurrentDateRange())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
           );
         }),
@@ -293,9 +429,10 @@ describe("update", () => {
       story(
         update,
         given(initialModel),
-        message(Message.SelectedWeekView()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedWeekView())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
           );
         }),
@@ -307,11 +444,15 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
+          },
         }),
-        message(Message.SelectedMonthView()),
+        message(calendarMessage(CalendarPageMessage.Message.SelectedMonthView())),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
           );
         }),
@@ -325,16 +466,19 @@ describe("update", () => {
         update,
         given({
           ...initialModel,
-          activeDateRange: ActiveDate.Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
+          calendar: {
+            ...initialModel.calendar,
+            activeDateRange: ActiveDate.Model.Month({ startDate: Calendar.make(2024, 5, 1) }),
+          },
         }),
         message(Message.MediaWidthChanged({ tabletOrAbove: false })),
         model((nextModel) => {
           expect(nextModel.tabletOrAbove).toBe(false);
         }),
-        Command.expectHas(AppCommand.SelectDayView),
-        Command.resolve(AppCommand.SelectDayView, Message.SelectedDayView()),
+        Command.expectHas(CalendarPageCommand.PrepareCalendarDates),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Day({ date: Calendar.make(2024, 5, 1) }),
           );
         }),
@@ -348,7 +492,7 @@ describe("update", () => {
         message(Message.MediaWidthChanged({ tabletOrAbove: true })),
         model((nextModel) => {
           expect(nextModel.tabletOrAbove).toBe(true);
-          expect(nextModel.activeDateRange).toEqual(initialModel.activeDateRange);
+          expect(nextModel.calendar.activeDateRange).toEqual(initialModel.calendar.activeDateRange);
         }),
         Command.expectNone(),
       );
@@ -366,10 +510,10 @@ describe("update", () => {
         }),
         Command.expectHas(Popover.FocusButton({ id: "main-menu" })),
         Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
-        Command.expectHas(AppCommand.SelectWeekView),
-        Command.resolve(AppCommand.SelectWeekView, Message.SelectedWeekView()),
+        Command.expectHas(CalendarPageCommand.PrepareCalendarDates),
+        resolveCalendarPreparation,
         model((nextModel) => {
-          expect(nextModel.activeDateRange).toEqual(
+          expect(nextModel.calendar.activeDateRange).toEqual(
             ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) }),
           );
         }),

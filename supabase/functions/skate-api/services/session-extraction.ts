@@ -12,7 +12,7 @@ import {
 import { type Answer } from "./classifier.ts";
 import type { SessionField } from "../domain/questions.ts";
 
-export const confidenceThreshold = 0.6;
+export const confidenceThreshold = 0.1;
 
 export const choice = (
   answer: Answer | undefined,
