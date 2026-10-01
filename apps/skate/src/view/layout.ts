@@ -34,7 +34,7 @@ export const view = <Message>(slots: Slots, h: HtmlBuilder<Message>): Html =>
         [h.Class("flex gap-2 justify-between items-baseline")],
         [brandView(h), slots.headerEnd ?? h.empty],
       ),
-      h.main([h.Class("flex-1")], [slots.content]),
+      h.main([h.Class("flex-1 min-h-0 overflow-y-auto")], [slots.content]),
       h.footer(
         [h.Class("flex gap-2 justify-between items-baseline")],
         [h.div([], [slots.footerStart ?? h.empty]), slots.menu],
