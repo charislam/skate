@@ -158,22 +158,25 @@ const update = (
     >(),
     Match.when(ActiveDateMessage.isMessage, (value) => updateDateRange(model, value)),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
-      updateDateRange(
-        model,
-        Match.value(action).pipe(
-          Match.when("Day", () => CalendarMessage.SelectedDayView()),
-          Match.when("Week", () =>
-            context.tabletOrAbove
-              ? CalendarMessage.SelectedWeekView()
-              : CalendarMessage.SelectedDayView(),
+      Update.withOutMessage(
+        updateDateRange(
+          model,
+          Match.value(action).pipe(
+            Match.when("Day", () => CalendarMessage.SelectedDayView()),
+            Match.when("Week", () =>
+              context.tabletOrAbove
+                ? CalendarMessage.SelectedWeekView()
+                : CalendarMessage.SelectedDayView(),
+            ),
+            Match.when("Month", () =>
+              context.tabletOrAbove
+                ? CalendarMessage.SelectedMonthView()
+                : CalendarMessage.SelectedDayView(),
+            ),
+            Match.exhaustive,
           ),
-          Match.when("Month", () =>
-            context.tabletOrAbove
-              ? CalendarMessage.SelectedMonthView()
-              : CalendarMessage.SelectedDayView(),
-          ),
-          Match.exhaustive,
         ),
+        CalendarOutMessage.SelectedMainMenuAction(),
       ),
     ),
     Match.tag("GotSessionDialogMessage", ({ message }) => foldSessionDialog(model, message)),

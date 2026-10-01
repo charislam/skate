@@ -114,6 +114,7 @@ const foldCalendarPage = Update.foldChild({
         model,
         commands: [NavigateInternal({ url: sessionRouter({ id }) })],
       }),
+    SelectedMainMenuAction: () => foldPopoverClose,
     RedirectToHome: () => (model) => ({
       model,
       commands: [RedirectForAuthentication({ destination: "Home" })],
@@ -289,19 +290,6 @@ export const update = (model: Model, message: Message) =>
         context: { route: model.route, tabletOrAbove },
       });
     }),
-    Match.tag("SelectedMainMenuAction", (message) =>
-      Update.combine(model, [
-        foldPopoverClose,
-        (currentModel) =>
-          foldCalendarPage(currentModel, {
-            message,
-            context: {
-              route: currentModel.route,
-              tabletOrAbove: currentModel.tabletOrAbove,
-            },
-          }),
-      ]),
-    ),
     Match.orElse((message) =>
       Match.value(message).pipe(
         Match.withReturnType<Update.Return<Model, Message, Resource>>(),

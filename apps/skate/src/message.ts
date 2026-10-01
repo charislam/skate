@@ -3,7 +3,7 @@ import { Schema } from "effect";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
-import { MainMenu, Theme } from "./domain";
+import { Theme } from "./domain";
 import { Auth } from "./domain/auth";
 import { Session } from "./domain/session";
 import * as CalendarPageMessage from "./page/calendar/message";
@@ -29,10 +29,6 @@ export const Message = defineMessageUnion({
 
   SelectedTheme: {
     theme: Schema.Option(Theme.Theme_),
-  },
-
-  SelectedMainMenuAction: {
-    ...MainMenu.ActionFields,
   },
 
   SelectedNavigationLink: {},

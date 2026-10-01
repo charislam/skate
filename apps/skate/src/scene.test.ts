@@ -235,6 +235,35 @@ describe("view", () => {
     );
   });
 
+  test.each(["Day", "Week", "Month"] as const)(
+    "selecting %s in the main menu closes the popover and changes the view",
+    (action) => {
+      const range =
+        action === "Day"
+          ? ActiveDate.Model.Week({ startDate: Calendar.make(2024, 5, 13) })
+          : ActiveDate.Model.Day({ date: today });
+
+      scene(
+        { update, view },
+        given(modelWith(range)),
+        click(role("button", { name: "Main menu" })),
+        acknowledgeAnchor,
+        acknowledgeBackdrop,
+        click(role("button", { name: action })),
+        expect(role("button", { name: "Main menu" })).toHaveAttr("aria-expanded", "false"),
+        Mount.expectEnded(Popover.AnchorPopover, Popover.PortalPopoverBackdrop),
+        Command.expectHas(Popover.FocusButton({ id: "main-menu" })),
+        Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
+        Command.expectHas(CalendarPageCommand.PrepareCalendarDates),
+        resolveCalendarPreparation,
+        click(role("button", { name: "Main menu" })),
+        acknowledgeAnchor,
+        acknowledgeBackdrop,
+        expect(role("button", { name: action })).toHaveAttr("aria-pressed", "true"),
+      );
+    },
+  );
+
   test("day navigation updates the rendered date", () => {
     scene(
       { update, view },

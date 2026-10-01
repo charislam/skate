@@ -504,7 +504,11 @@ describe("update", () => {
       story(
         update,
         given({ ...initialModel, menu: { ...initialModel.menu, isOpen: true } }),
-        message(Message.SelectedMainMenuAction({ action: "Week" })),
+        message(
+          Message.GotCalendarMessage({
+            message: CalendarPageMessage.Message.SelectedMainMenuAction({ action: "Week" }),
+          }),
+        ),
         model((nextModel) => {
           expect(nextModel.menu.isOpen).toBe(false);
         }),

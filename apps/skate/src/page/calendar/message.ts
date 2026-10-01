@@ -61,6 +61,7 @@ export const Message = defineMessageUnion({
 export type Message = typeof Message.Type;
 
 export const OutMessage = defineMessageUnion({
+  SelectedMainMenuAction: {},
   NavigateToSessionDetails: { id: CalendarDomain.SessionId },
   RedirectToHome: {},
   CopiedSessionLink: { success: Schema.Boolean },
