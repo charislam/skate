@@ -50,7 +50,7 @@ export const Result = Schema.Struct({
   fetchedAt: Schema.String,
   completedAt: Schema.String,
   lastFetched: Schema.String,
-  questionSetVersion: Schema.Literal("source-scrape-v2"),
+  questionSetVersion: Schema.Literal("source-scrape-v3"),
   classifier: Schema.Struct({
     model: Schema.String,
     providerModel: Schema.NullOr(Schema.String),

@@ -1,5 +1,9 @@
 import { Match, Option, Schema } from "effect";
-import { addCalendarDays, timezone } from "../domain/window.ts";
+import {
+  decodeExactTime,
+  decodeTimeChoice,
+} from "../domain/classifier-time.ts";
+import type { SessionField } from "../domain/questions.ts";
 import {
   Cancellation,
   Category,
@@ -9,8 +13,8 @@ import {
   Session,
   UncertaintyReason,
 } from "../domain/schedule.ts";
+import { addCalendarDays, timezone } from "../domain/window.ts";
 import { type Answer } from "./classifier.ts";
-import type { SessionField } from "../domain/questions.ts";
 
 export const confidenceThreshold = 0.1;
 
@@ -49,14 +53,29 @@ const exactTime = ({
       const minute = choice(answers.minute);
       const time = hour && minute && hour.choice !== "unknown" &&
           minute.choice !== "unknown"
-        ? `${hour.choice}:${minute.choice}`
+        ? Option.match(
+          decodeExactTime({ hour: hour.choice, minute: minute.choice }),
+          {
+            onNone: () => undefined,
+            onSome: (value) => value,
+          },
+        )
         : null;
       return {
         value: time,
         confidence: Math.min(hour?.confidence ?? 0, minute?.confidence ?? 0),
       };
     }),
-    Match.when(Match.string, (time) => ({ value: time, confidence: 1 })),
+    Match.when(
+      Match.string,
+      (time) => ({
+        value: Option.match(decodeTimeChoice(time), {
+          onNone: () => undefined,
+          onSome: (value) => value,
+        }),
+        confidence: 1,
+      }),
+    ),
     Match.exhaustive,
   );
 

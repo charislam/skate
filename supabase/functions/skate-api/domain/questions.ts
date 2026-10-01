@@ -1,7 +1,8 @@
 import { Classifier } from "../services/classifier.ts";
+import { hourOptions, timeOptions } from "./classifier-time.ts";
 import { weekdayName } from "./window.ts";
 
-export const questionSetVersion = "source-scrape-v2" as const;
+export const questionSetVersion = "source-scrape-v3" as const;
 
 export const countOptions = Object.fromEntries([
   ...Array.from(
@@ -25,22 +26,6 @@ export const makeCountQuestion = (date: string): Classifier.Question => ({
     })? Apply state.instructions and state.additional_notes to state.rink_info. Include cancelled sessions.`,
   options: countOptions,
 });
-
-const timeOptions = Object.fromEntries([
-  ...Array.from(
-    { length: 24 },
-    (_, hour) =>
-      [0, 10, 15, 20, 30, 40, 45, 50].map((minute) => {
-        const value = `${String(hour).padStart(2, "0")}:${
-          String(minute).padStart(2, "0")
-        }`;
-        return [value, `Local clock time ${value}`];
-      }),
-  ).flat(),
-  ["off_grid", "An exact stated time outside the listed marks"],
-  ["not_stated", "No time is stated"],
-  ["unclear", "The time cannot be determined"],
-]);
 
 export type SessionField =
   | "start_time"
@@ -74,13 +59,13 @@ export const makeDetailQuestions = (
     start_time: {
       type: "choice",
       instructions:
-        `${target} What time does it start? Give your answer in 24-hour time.`,
+        `${target} What time does it start? Choose the appropriate 12-hour time with AM/PM.`,
       options: timeOptions,
     },
     end_time: {
       type: "choice",
       instructions:
-        `${target} What time does it end? Give your answer in 24-hour time.`,
+        `${target} What time does it end? Choose the appropriate 12-hour time with AM/PM.`,
       options: timeOptions,
     },
     category: {
@@ -131,19 +116,8 @@ export const makeExactTimeQuestions = (
   return {
     hour: {
       type: "choice",
-      instructions: `${target} Which hour is stated?`,
-      options: Object.fromEntries(
-        Array.from(
-          { length: 24 },
-          (
-            _,
-            hour,
-          ) => [
-            String(hour).padStart(2, "0"),
-            `Hour ${String(hour).padStart(2, "0")}`,
-          ],
-        ).concat([["unknown", "Unknown hour"]]),
-      ),
+      instructions: `${target} Which hour is stated, including AM/PM?`,
+      options: hourOptions,
     },
     minute: {
       type: "choice",

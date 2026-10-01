@@ -5,7 +5,11 @@ The following commands are used to enforce repository conventions:
 - `pnpm lint`
 - `pnpm typecheck`
 
-## Function signatures
+### Options
+
+Prefer Option<T> over T | undefined. Only convert an Option<T> to T | undefined at the boundary, where third-party code does not accept Option<T>.
+
+### Function signatures
 
 - Avoid signatures with more than three positional parameters; group related inputs into a named options object.
 - Do not use two positional parameters of the same type, since callers can accidentally swap them.
