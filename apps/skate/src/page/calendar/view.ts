@@ -9,6 +9,7 @@ import * as CalendarCache from "~/domain/calendar-cache";
 import type { AppRoute } from "~/route";
 import { Button } from "~/view/button";
 import { Heading } from "~/view/heading";
+import { MAIN_MENU_ITEM_CLASS_IDENTIFIER } from "~/view/main-menu";
 import { selectorButtonClass } from "~/view/selector-button";
 import * as CalendarPageMessage from "./message";
 import type { Message } from "./message";
@@ -881,11 +882,14 @@ const calendarViewSection = (
                 h.AriaPressed(isActive ? "true" : "false"),
                 ...(isActive ? [h.Disabled(true)] : []),
                 h.Class(
-                  selectorButtonClass({
-                    isFirst: index === 0,
-                    isLast: index === arr.length - 1,
-                    isActive,
-                  }),
+                  cn(
+                    MAIN_MENU_ITEM_CLASS_IDENTIFIER,
+                    selectorButtonClass({
+                      isFirst: index === 0,
+                      isLast: index === arr.length - 1,
+                      isActive,
+                    }),
+                  ),
                 ),
                 ...(!isActive
                   ? [h.OnClick(CalendarPageMessage.Message.SelectedMainMenuAction({ action }))]

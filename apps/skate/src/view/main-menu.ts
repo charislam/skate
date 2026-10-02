@@ -1,3 +1,4 @@
+import { cn } from "cn";
 import { Option } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { MainMenu } from "~/domain";
@@ -5,6 +6,8 @@ import { Message } from "~/message";
 import type { Model } from "~/model";
 import { navigationHref } from "~/route";
 import { selectorButtonClass } from "./selector-button";
+
+export const MAIN_MENU_ITEM_CLASS_IDENTIFIER = "main-menu-item";
 
 export const view = (
   model: Pick<Model, "menu" | "theme">,
@@ -22,6 +25,7 @@ export const view = (
     toParentMessage: (message) => Message.GotPopoverMessage({ message }),
     viewInputs: {
       ariaLabel: "Main menu",
+      focusSelector: `.${MAIN_MENU_ITEM_CLASS_IDENTIFIER}:not(:disabled)`,
       anchor: { placement: "top-end", gap: 8 },
       toView: (childAttributes) =>
         h.div(
@@ -76,11 +80,14 @@ export const view = (
                                           h.Href(navigationHref[route]),
                                           h.OnClick(Message.SelectedNavigationLink()),
                                           h.Class(
-                                            selectorButtonClass({
-                                              isFirst: index === 0,
-                                              isLast: index === arr.length - 1,
-                                              isActive: false,
-                                            }),
+                                            cn(
+                                              MAIN_MENU_ITEM_CLASS_IDENTIFIER,
+                                              selectorButtonClass({
+                                                isFirst: index === 0,
+                                                isLast: index === arr.length - 1,
+                                                isActive: false,
+                                              }),
+                                            ),
                                           ),
                                         ],
                                         [label],
@@ -128,11 +135,14 @@ export const view = (
                                       h.AriaPressed(isActive ? "true" : "false"),
                                       ...(isActive ? [h.Disabled(true)] : []),
                                       h.Class(
-                                        selectorButtonClass({
-                                          isFirst: index === 0,
-                                          isLast: index === arr.length - 1,
-                                          isActive,
-                                        }),
+                                        cn(
+                                          MAIN_MENU_ITEM_CLASS_IDENTIFIER,
+                                          selectorButtonClass({
+                                            isFirst: index === 0,
+                                            isLast: index === arr.length - 1,
+                                            isActive,
+                                          }),
+                                        ),
                                       ),
                                       ...(!isActive
                                         ? [
@@ -162,7 +172,10 @@ export const view = (
                                       [
                                         h.OnClick(Message.ClickedLogout()),
                                         h.Class(
-                                          "cursor-pointer w-fit border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
+                                          cn(
+                                            MAIN_MENU_ITEM_CLASS_IDENTIFIER,
+                                            "cursor-pointer w-fit border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
+                                          ),
                                         ),
                                       ],
                                       ["Sign out"],
