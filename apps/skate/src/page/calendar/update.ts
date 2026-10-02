@@ -1,7 +1,7 @@
 import { Dialog, Popover } from "@foldkit/ui";
 import { AsyncData, Calendar, Command as FoldkitCommand, Update } from "foldkit";
-import { Machine } from "foldkit/experimental";
 import { HashMap, Match, Option } from "effect";
+import { Machine } from "foldkit/experimental";
 import { evo } from "foldkit/struct";
 import { ActiveDate, ActiveDateMessage } from "~/domain";
 import { Calendar as CalendarDomain } from "~/domain/calendar";
@@ -14,9 +14,11 @@ import {
   FetchCalendarDetail,
   PrepareCalendarDates,
   PrepareSessionDetail,
+  SaveUserCalendarView,
 } from "./command";
 import { Message as CalendarMessage, OutMessage as CalendarOutMessage } from "./message";
 import type { Model } from "./model";
+import { resolveCalendarView, viewMessage } from "./view-preference";
 
 export type DateRangeMessage = Extract<
   CalendarMessage,
@@ -132,8 +134,11 @@ const foldActiveDate: Update.Fold<Model, CalendarMessage, DateRangeMessage> = Ma
     evo(model, { activeDateRange: () => activeDateRange }),
 });
 
-const updateDateRange = (model: Model, message: DateRangeMessage) => {
-  return Update.combine(model, [
+const updateDateRange = (
+  model: Model,
+  message: DateRangeMessage,
+): Update.Return<Model, CalendarMessage, Resource> => {
+  return Update.combine<Model, CalendarMessage, Resource>(model, [
     foldActiveDate(message),
     (currentModel) => ({
       model: currentModel,
@@ -157,25 +162,22 @@ const update = (
       Update.ReturnWithOutMessage<Model, CalendarMessage, CalendarOutMessage, Resource>
     >(),
     Match.when(ActiveDateMessage.isMessage, (value) => updateDateRange(model, value)),
+    Match.tag("CompletedSaveUserCalendarView", "FailedSaveUserCalendarView", () => ({ model })),
     Match.tag("SelectedMainMenuAction", ({ action }) =>
       Update.withOutMessage(
-        updateDateRange(
-          model,
-          Match.value(action).pipe(
-            Match.when("Day", () => CalendarMessage.SelectedDayView()),
-            Match.when("Week", () =>
+        Update.combine<Model, CalendarMessage, Resource>(model, [
+          (stepModel) =>
+            updateDateRange(
               context.tabletOrAbove
-                ? CalendarMessage.SelectedWeekView()
-                : CalendarMessage.SelectedDayView(),
+                ? evo(stepModel, { maybeUserTabletView: () => Option.some(action) })
+                : stepModel,
+              viewMessage(context.tabletOrAbove ? action : "Day"),
             ),
-            Match.when("Month", () =>
-              context.tabletOrAbove
-                ? CalendarMessage.SelectedMonthView()
-                : CalendarMessage.SelectedDayView(),
-            ),
-            Match.exhaustive,
-          ),
-        ),
+          (stepModel) =>
+            context.tabletOrAbove
+              ? { model: stepModel, commands: [SaveUserCalendarView({ view: action })] }
+              : { model: stepModel },
+        ]),
         CalendarOutMessage.SelectedMainMenuAction(),
       ),
     ),
@@ -264,23 +266,52 @@ const update = (
       return { model: nextModel, commands };
     }),
     Match.tag("MediaWidthChanged", ({ tabletOrAbove }) => {
-      if (tabletOrAbove) return { model };
-      if (context.route._tag === "Session") {
-        const detail = CalendarCache.detailEntry(model.calendarCache, context.route.id);
-        const session = Option.flatMap(detail, (entry) =>
-          Option.flatten(AsyncData.getData(entry.value)),
-        );
-        return Option.match(session, {
-          onNone: () => updateDateRange(model, CalendarMessage.SelectedDayView()),
-          onSome: (value) => ({
-            model: evo(model, {
-              activeDateRange: () =>
-                ActiveDate.Model.Day({ date: CalendarDomain.toCalendarDate(value.start) }),
-            }),
-          }),
-        });
+      const view = resolveCalendarView({
+        maybeUserTabletView: model.maybeUserTabletView,
+        tabletOrAbove,
+      });
+      if (model.activeDateRange._tag === view) {
+        return { model };
       }
-      return updateDateRange(model, CalendarMessage.SelectedDayView());
+
+      return Update.combine<Model, CalendarMessage, Resource>(model, [
+        foldActiveDate(viewMessage(view)),
+        (stepModel) => {
+          const maybeSession =
+            context.route._tag === "Session"
+              ? Option.flatMap(
+                  CalendarCache.detailEntry(stepModel.calendarCache, context.route.id),
+                  (entry) => Option.flatten(AsyncData.getData(entry.value)),
+                )
+              : Option.none();
+          return Option.match(maybeSession, {
+            onNone: () => ({ model: stepModel }),
+            onSome: (session) => ({
+              model: evo(stepModel, {
+                activeDateRange: () =>
+                  moveCalendarRange(
+                    stepModel.activeDateRange,
+                    CalendarDomain.toCalendarDate(session.start),
+                    tabletOrAbove,
+                  ),
+              }),
+            }),
+          });
+        },
+        (stepModel) =>
+          context.route._tag === "Home" || context.route._tag === "Session"
+            ? {
+                model: stepModel,
+                commands: [
+                  PrepareCalendarDates({
+                    dates: CalendarCache.displayedDates(stepModel.activeDateRange),
+                    force: false,
+                    origin: "automatic",
+                  }),
+                ],
+              }
+            : { model: stepModel },
+      ]);
     }),
     Match.orElse((remainder) =>
       Match.value(remainder).pipe(

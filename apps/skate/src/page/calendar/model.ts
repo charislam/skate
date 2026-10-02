@@ -3,13 +3,15 @@ import { HashMap, Option, Schema } from "effect";
 import { Calendar, Update } from "foldkit";
 import { ActiveDate } from "~/domain";
 import * as CalendarCache from "~/domain/calendar-cache";
-import { SyncInitialDate } from "./command";
 import { Message } from "./message";
+import { CalendarView, resolveCalendarView, viewMessage } from "./view-preference";
 
 export const Model = Schema.Struct({
   today: Calendar.CalendarDate,
-  pageVisible: Schema.Boolean,
   activeDateRange: ActiveDate.Model,
+
+  pageVisible: Schema.Boolean,
+  maybeUserTabletView: Schema.Option(CalendarView),
 
   calendarCache: CalendarCache.Model,
 
@@ -26,17 +28,34 @@ export type Model = typeof Model.Type;
 export const boot = (input: {
   today: Calendar.CalendarDate;
   pageVisible: boolean;
-}): Update.Return<Model, typeof Message.Type> => ({
-  model: {
-    today: input.today,
-    pageVisible: input.pageVisible,
-    activeDateRange: ActiveDate.machine.initial,
-    calendarCache: CalendarCache.init(),
-    sessionMenus: HashMap.empty(),
-    sessionDialog: Dialog.init({ id: "session-details" }),
-    dayDialog: Dialog.init({ id: "calendar-day" }),
-    maybeDayDialogDate: Option.none(),
-    refreshingDates: [],
-  },
-  commands: [SyncInitialDate({ today: input.today })],
-});
+  tabletOrAbove: boolean;
+  maybeUserTabletView: Option.Option<CalendarView>;
+}): Update.Return<Model, typeof Message.Type> => {
+  const context = { today: input.today };
+  const initialized = ActiveDate.initialize(input.today);
+  const resolved = ActiveDate.machine.transition(
+    initialized,
+    viewMessage(resolveCalendarView(input)),
+    context,
+  );
+
+  return {
+    model: {
+      today: input.today,
+      activeDateRange: resolved.model,
+
+      pageVisible: input.pageVisible,
+      maybeUserTabletView: input.maybeUserTabletView,
+
+      calendarCache: CalendarCache.init(),
+
+      sessionMenus: HashMap.empty(),
+      sessionDialog: Dialog.init({ id: "session-details" }),
+
+      dayDialog: Dialog.init({ id: "calendar-day" }),
+      maybeDayDialogDate: Option.none(),
+
+      refreshingDates: [],
+    },
+  };
+};

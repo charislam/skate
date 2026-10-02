@@ -122,11 +122,10 @@ describe("ActiveDate machine", () => {
       expect(result.commands).toEqual([]);
     });
 
-    it("ignores current range selection from Initial", () => {
-      expect(step(Model.Initial(), GlobalMessage.SelectedCurrentDateRange())).toMatchObject({
-        _tag: "Ignored",
-        reason: "NotApplicable",
-      });
+    it("initializes the current range from context", () => {
+      expect(transition(Model.Initial(), GlobalMessage.SelectedCurrentDateRange()).model).toEqual(
+        Model.Day({ date: context.today }),
+      );
     });
   });
 

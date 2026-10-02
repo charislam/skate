@@ -55,6 +55,9 @@ export const Message = defineMessageUnion({
   ChangedPageVisibility: { isVisible: Schema.Boolean },
   MediaWidthChanged: { tabletOrAbove: Schema.Boolean },
 
+  CompletedSaveUserCalendarView: {},
+  FailedSaveUserCalendarView: {},
+
   SelectedMainMenuAction: MainMenu.ActionFields,
 });
 

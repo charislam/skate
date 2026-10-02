@@ -1,3 +1,7 @@
+import {
+  CalendarView as CalendarViewPreference,
+  loadUserCalendarView,
+} from "./page/calendar/view-preference";
 import { Popover } from "@foldkit/ui";
 import { BrowserKeyValueStore } from "@effect/platform-browser";
 import { cn } from "cn";
@@ -55,6 +59,7 @@ export const Flags = Schema.Struct({
 
   systemTheme: Theme.Theme_,
   maybeUserTheme: Schema.Option(Theme.Theme_),
+  maybeUserTabletView: Schema.Option(CalendarViewPreference),
 
   tabletOrAbove: Schema.Boolean,
 
@@ -79,6 +84,11 @@ export const flags = Effect.gen(function* () {
     Effect.catch(() => Effect.succeed(Option.none())),
   );
 
+  const maybeUserTabletView = yield* loadUserCalendarView().pipe(
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+    Effect.catchCause(() => Effect.succeed(Option.none())),
+  );
+
   const auth = yield* Auth.Service;
   const maybeSession = yield* auth.getSession.pipe(
     Effect.tapError((error) => Console.warn("Could not restore Supabase session:", error.message)),
@@ -92,6 +102,7 @@ export const flags = Effect.gen(function* () {
 
     systemTheme,
     maybeUserTheme,
+    maybeUserTabletView,
 
     maybeSession,
 
@@ -603,6 +614,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Resourc
   const calendarBoot = CalendarPage.boot({
     today: flags.today,
     pageVisible: flags.pageVisible,
+    tabletOrAbove: flags.tabletOrAbove,
+    maybeUserTabletView: flags.maybeUserTabletView,
   });
 
   const route = urlToAppRoute(url);

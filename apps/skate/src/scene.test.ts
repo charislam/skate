@@ -42,6 +42,7 @@ const modelWith = (
   calendar: {
     today,
     pageVisible: true,
+    maybeUserTabletView: Option.none(),
     activeDateRange,
     sessionMenus: HashMap.empty(),
     calendarCache: CalendarCache.init(),
@@ -256,6 +257,10 @@ describe("view", () => {
         Command.resolve(Popover.FocusButton, Popover.Message.CompletedFocusButton()),
         Command.expectHas(CalendarPageCommand.PrepareCalendarDates),
         resolveCalendarPreparation,
+        Command.resolve(
+          CalendarPageCommand.SaveUserCalendarView,
+          CalendarPageMessage.Message.CompletedSaveUserCalendarView(),
+        ),
         click(role("button", { name: "Main menu" })),
         acknowledgeAnchor,
         acknowledgeBackdrop,
@@ -448,7 +453,7 @@ describe("view", () => {
     );
   });
 
-  test("mobile calendar controls offer only the Day view and retain Refresh", () => {
+  test("mobile calendar controls offer only the Day view", () => {
     scene(
       { update, view },
       given({ ...modelWith(ActiveDate.Model.Day({ date: today })), tabletOrAbove: false }),
@@ -458,7 +463,6 @@ describe("view", () => {
       expect(role("button", { name: "Day" })).toExist(),
       expect(role("button", { name: "Week" })).not.toExist(),
       expect(role("button", { name: "Month" })).not.toExist(),
-      expect(role("button", { name: "Refresh" })).toExist(),
     );
   });
 

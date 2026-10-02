@@ -510,7 +510,13 @@ const dayRangeButton = (
   return h.button(
     [
       h.Class(DAY_HEADER_RANGE_BUTTON_CLASS),
-      h.OnClick(CalendarPageMessage.Message.SelectedPreviousDateRange()),
+      h.OnClick(
+        Match.value(props.direction).pipe(
+          Match.when("previous", () => CalendarPageMessage.Message.SelectedPreviousDateRange()),
+          Match.when("next", () => CalendarPageMessage.Message.SelectedNextDateRange()),
+          Match.exhaustive,
+        ),
+      ),
       h.AriaLabel(label),
     ],
     [symbol],

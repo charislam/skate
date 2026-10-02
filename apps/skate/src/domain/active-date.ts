@@ -71,8 +71,8 @@ export const machine = Machine.define({
   states: {
     Initial: {
       on: {
-        SyncedInitialDate: to("Day", ({ message }) => ({
-          model: Model.Day({ date: message.date }),
+        SelectedCurrentDateRange: to("Day", ({ context }) => ({
+          model: Model.Day({ date: context.today }),
         })),
       },
     },
@@ -168,5 +168,7 @@ export const machine = Machine.define({
     },
   },
 });
+
+export const initialize = (today: Calendar.CalendarDate): Model => Model.Day({ date: today });
 
 export * as ActiveDate from "./active-date";

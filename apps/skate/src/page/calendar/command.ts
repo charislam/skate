@@ -1,14 +1,20 @@
-import { Clipboard } from "@effect/platform-browser";
+import { BrowserKeyValueStore, Clipboard } from "@effect/platform-browser";
 import { Effect, Schema } from "effect";
 import { Calendar, Command as FoldkitCommand } from "foldkit";
 import { Calendar as CalendarDomain } from "~/domain/calendar";
 import { sessionRouter } from "~/route";
 import { Message } from "./message";
+import { CalendarView, saveUserCalendarView } from "./view-preference";
 
-export const SyncInitialDate = FoldkitCommand.define("SyncInitialDate", {
-  args: { today: Calendar.CalendarDate },
-  messages: [Message.SyncedInitialDate],
-  execute: ({ today }) => Effect.succeed(Message.SyncedInitialDate({ date: today })),
+export const SaveUserCalendarView = FoldkitCommand.define("SaveUserCalendarView", {
+  args: { view: CalendarView },
+  messages: [Message.CompletedSaveUserCalendarView, Message.FailedSaveUserCalendarView],
+  execute: ({ view }) =>
+    saveUserCalendarView(view).pipe(
+      Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+      Effect.as(Message.CompletedSaveUserCalendarView()),
+      Effect.catchCause(() => Effect.succeed(Message.FailedSaveUserCalendarView())),
+    ),
 });
 
 export const FetchCalendarDay = FoldkitCommand.define("FetchCalendarDay", {
