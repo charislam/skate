@@ -1,6 +1,7 @@
 import { Cause, Deferred, Effect, Exit, Match, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrap } from "./bootstrap";
+import type { ConstructionError } from "./construction";
 import { component, mounting, type MountFailure } from "./framework";
 import { Home } from "./home";
 
@@ -67,7 +68,7 @@ describe("scoped component mounting", () => {
     expect(left.querySelector("main > h1")?.textContent).toBe("Budgerigar");
     h(left, component({ setup: () => Effect.sync(() => [text("a"), text("b")]) }));
     await rendered(left, "ab");
-    expect(left.childNodes.length).toBe(2);
+    expect(left.childNodes.length).toBe(4);
     const emptyStarted = gate();
     h(
       left,
@@ -143,11 +144,9 @@ describe("scoped component mounting", () => {
 
     await open(releaseCleanup);
     await run(Deferred.await(settingUp));
-    expect(parent.textContent).toBe("");
-    expect(events).toEqual(["cleanup:oldexternal", "setup:"]);
-
-    await open(releaseSetup);
     await rendered(parent, "last");
+    await open(releaseSetup);
+
     expect(events).toEqual(["cleanup:oldexternal", "setup:", "last"]);
   });
 
@@ -175,7 +174,7 @@ describe("scoped component mounting", () => {
 
     h(fast, simple("fast"));
     await rendered(fast, "fast");
-    expect(slow.childNodes.length).toBe(0);
+    expect(slow.childNodes.length).toBe(2);
 
     await open(release);
     await rendered(slow, "slow");
@@ -281,12 +280,12 @@ describe("scoped component mounting", () => {
 
     const closing = close();
     await run(Deferred.await(childCleaning));
-    expect(parent.firstChild).toBe(child);
+    expect(parent.firstElementChild).toBe(child);
     expect(child.textContent).toBe("child");
 
     await open(releaseChild);
     await run(Deferred.await(parentCleaning));
-    expect(parent.firstChild).toBe(child);
+    expect(parent.firstElementChild).toBe(child);
     expect(child.textContent).toBe("");
 
     await open(releaseParent);
@@ -358,6 +357,11 @@ describe("scoped component mounting", () => {
       }),
     );
 
+    await run(Deferred.await(ready));
+    await run(Deferred.await(backgroundReady));
+
+    const closing = close();
+
     h(
       parent,
       component({
@@ -369,10 +373,7 @@ describe("scoped component mounting", () => {
       }),
     );
 
-    await run(Deferred.await(ready));
-    await run(Deferred.await(backgroundReady));
-
-    await close();
+    await closing;
     await run(Deferred.await(stopped));
     await open(release);
 
@@ -701,4 +702,621 @@ describe("scoped component mounting", () => {
     await close();
     await run(Deferred.await(stopped));
   });
+});
+
+describe("static DOM construction and regions", () => {
+  it("constructs native properties after literal children and attributes", async () => {
+    const { h } = await harness();
+
+    const parent = document.createElement("div");
+
+    h(
+      parent,
+      component({
+        setup: ({ he }) =>
+          Effect.gen(function* () {
+            const input = yield* he("input", {
+              attrs: {
+                value: "default",
+                disabled: false,
+                required: true,
+                "aria-expanded": "false",
+                "data-empty": "",
+              },
+              props: { value: "current", checked: true },
+            });
+
+            expect(input.defaultValue).toBe("default");
+            expect(input.value).toBe("current");
+            expect(input.checked).toBe(true);
+
+            expect(input.hasAttribute("disabled")).toBe(false);
+            expect(input.getAttribute("required")).toBe("");
+            expect(input.getAttribute("aria-expanded")).toBe("false");
+            expect(input.getAttribute("data-empty")).toBe("");
+
+            const select = yield* he("select", {
+              children: [
+                yield* he("option", { attrs: { value: "apple" }, children: ["Apple"] }),
+                yield* he("option", { attrs: { value: "banana" }, children: ["Banana"] }),
+              ],
+              props: { value: "banana" },
+            });
+
+            expect(select.value).toBe("banana");
+
+            return yield* he("main", {
+              attrs: { class: "welcome" },
+              children: [input, select, "<b>literal</b>"],
+            });
+          }),
+      }),
+    );
+
+    await rendered(parent, "AppleBanana<b>literal</b>");
+    expect(parent.querySelector("b")).toBeNull();
+    expect(parent.querySelector("main")?.className).toBe("welcome");
+  });
+
+  it("preflights construction children and rejects unsupported structural features", async () => {
+    const { h, errors } = await harness();
+
+    const parent = document.createElement("div");
+
+    h(
+      parent,
+      component({
+        setup: ({ he }) =>
+          Effect.gen(function* () {
+            const first = yield* he("span");
+            expect(
+              (yield* he("div", { children: [first, first] }).pipe(Effect.flip)).message,
+            ).toContain("duplicate");
+            expect(first.parentNode).toBeNull();
+            const attached = yield* he("div", { children: [yield* he("span")] });
+            expect(
+              (yield* he("div", { children: [first, attached.firstChild as Node] }).pipe(
+                Effect.flip,
+              )).message,
+            ).toContain("detached");
+            expect(first.parentNode).toBeNull();
+            expect(attached.childNodes.length).toBe(1);
+            expect(
+              (yield* he("div", { attrs: { onclick: "alert(1)" } }).pipe(Effect.flip)).message,
+            ).toContain("unsupported attribute");
+            expect(
+              (yield* he("iframe", { attrs: { srcdoc: "<p>hello</p>" } }).pipe(Effect.flip))
+                .message,
+            ).toContain("unsupported attribute");
+            return yield* he("div", { children: ["valid"] });
+          }),
+      }),
+    );
+    await rendered(parent, "valid");
+    expect(errors).toEqual([]);
+  });
+
+  it("defers discarded trees and independently mounts repeated inline definitions", async () => {
+    const { h, close } = await harness();
+    const parent = document.createElement("div");
+    let started = 0;
+    let cleaned = 0;
+    const child = component({
+      setup: () =>
+        Effect.gen(function* () {
+          started += 1;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              cleaned += 1;
+            }),
+          );
+          return [text("child"), text(String(started))];
+        }),
+    });
+    h(
+      parent,
+      component({
+        setup: ({ he }) =>
+          Effect.gen(function* () {
+            yield* he("section", { children: [child] });
+            expect(started).toBe(0);
+            return yield* he("main", {
+              children: ["before", child, yield* he("hr"), child, "after"],
+            });
+          }),
+      }),
+    );
+    await rendered(parent, "beforechild1child2after");
+    expect(parent.querySelector("main")?.children.length).toBe(1);
+    expect(started).toBe(2);
+    await close();
+    expect(cleaned).toBe(2);
+  });
+
+  it("preserves region order when asynchronous children finish out of order", async () => {
+    const { h, close } = await harness();
+    const parent = document.createElement("div");
+    const firstReady = gate();
+    const secondReady = gate();
+    const firstRelease = gate();
+    const secondRelease = gate();
+    const events: string[] = [];
+    const child = (options: {
+      ready: Deferred.Deferred<void>;
+      release: Deferred.Deferred<void>;
+      value: string;
+    }) =>
+      component({
+        setup: () =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                events.push(options.value);
+              }),
+            );
+            yield* Deferred.succeed(options.ready, undefined);
+            yield* Deferred.await(options.release);
+            return [text(options.value), text("!")];
+          }),
+      });
+    h(
+      parent,
+      component({
+        setup: ({ he }) =>
+          he("main", {
+            children: [
+              "before",
+              child({ ready: firstReady, release: firstRelease, value: "first" }),
+              "between",
+              child({ ready: secondReady, release: secondRelease, value: "second" }),
+              "after",
+            ],
+          }),
+      }),
+    );
+    await Promise.all([run(Deferred.await(firstReady)), run(Deferred.await(secondReady))]);
+    await rendered(parent, "beforebetweenafter");
+    await open(secondRelease);
+    await rendered(parent, "beforebetweensecond!after");
+    await open(firstRelease);
+    await rendered(parent, "beforefirst!betweensecond!after");
+    await close();
+    expect(events).toEqual(["first", "second"]);
+  });
+
+  it("isolates inline failure and empty roots without failing the enclosing setup", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    const release = gate();
+    let cleaned = 0;
+    const failed = component({
+      setup: () =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              cleaned += 1;
+            }),
+          );
+          yield* Deferred.succeed(ready, undefined);
+          yield* Deferred.await(release);
+          return yield* Effect.fail("inline failure");
+        }),
+    });
+    h(
+      parent,
+      component({
+        setup: ({ he }) =>
+          he("main", {
+            children: ["a", failed, component({ setup: () => Effect.succeed([]) }), "b"],
+          }),
+      }),
+    );
+    await run(Deferred.await(ready));
+    await rendered(parent, "ab");
+    await open(release);
+    expect(cleaned).toBe(1);
+    expect(parent.textContent).toBe("ab");
+    expect(errors.map((failure) => failure.operation)).toEqual(["setup"]);
+    expect(errors[0]?.subject.kind).toBe("component");
+  });
+
+  for (const array of [false, true]) {
+    it(`cancels pending ${Match.value(array).pipe(
+      Match.when(true, () => "one-item array"),
+      Match.orElse(() => "standalone component"),
+    )} setup and awaits cleanup`, async () => {
+      const { h, errors } = await harness();
+      const parent = document.createElement("div");
+      const ready = gate();
+      const setupRelease = gate();
+      const cleaning = gate();
+      const cleanupRelease = gate();
+      const slow = component({
+        setup: () =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(cleaning, undefined).pipe(
+                Effect.andThen(Deferred.await(cleanupRelease)),
+              ),
+            );
+            yield* Deferred.succeed(ready, undefined);
+            yield* Deferred.await(setupRelease);
+            return text("stale");
+          }),
+      });
+      h(
+        parent,
+        Match.value(array).pipe(
+          Match.when(true, () => [slow]),
+          Match.orElse(() => slow),
+        ),
+      );
+      await run(Deferred.await(ready));
+      h(parent, text("next"));
+      await run(Deferred.await(cleaning));
+      expect(parent.textContent).toBe("");
+      await open(setupRelease);
+      expect(parent.textContent).toBe("");
+      await open(cleanupRelease);
+      await rendered(parent, "next");
+      expect(errors).toEqual([]);
+    });
+  }
+
+  it("installs mixed replacement arrays once, snapshots membership, and clears empty arrays", async () => {
+    const { h } = await harness();
+    const parent = document.createElement("div");
+    let occurrence = 0;
+    const child = component({ setup: () => Effect.sync(() => text(String(++occurrence))) });
+    const items = [text("a"), child, text("b"), child];
+    h(parent, items);
+    items.splice(0, items.length, text("mutated"));
+    await rendered(parent, "a1b2");
+    expect(occurrence).toBe(2);
+    h(parent, []);
+    await rendered(parent, "");
+    expect(parent.childNodes.length).toBe(0);
+  });
+
+  it("leaves pending valid setup active after invalid mixed requests", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    const release = gate();
+    let badStarted = false;
+    h(
+      parent,
+      component({
+        setup: () =>
+          Deferred.succeed(ready, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.map(() => text("valid")),
+          ),
+      }),
+    );
+    await run(Deferred.await(ready));
+    const duplicate = text("duplicate");
+    h(parent, [
+      component({
+        setup: () =>
+          Effect.sync(() => {
+            badStarted = true;
+            return text("bad");
+          }),
+      }),
+      duplicate,
+      duplicate,
+    ]);
+    expect(badStarted).toBe(false);
+    expect(errors.map((failure) => failure.operation)).toEqual(["validation"]);
+    expect(errors[0]?.subject.kind).toBe("replacement");
+    await open(release);
+    await rendered(parent, "valid");
+  });
+
+  it("rejects invalid node kinds, parented roots, reserved and previously adopted nodes", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    h(parent, text("old"));
+    await rendered(parent, "old");
+    const reserved = text("reserved");
+    h(parent, reserved);
+    h(parent, reserved);
+    const attached = document.createElement("aside");
+    const root = text("attached");
+    attached.append(root);
+    for (const node of [
+      root,
+      document,
+      document.createDocumentFragment(),
+      document.implementation.createDocumentType("html", "", ""),
+    ])
+      h(parent, node);
+    await rendered(parent, "reserved");
+    h(parent, text("fresh"));
+    await rendered(parent, "fresh");
+    h(parent, reserved);
+    expect(parent.textContent).toBe("fresh");
+    expect(attached.textContent).toBe("attached");
+    expect(errors.length).toBe(6);
+    expect(errors.every((failure) => failure.operation === "validation")).toBe(true);
+  });
+
+  it("rejects queued reparenting and mutation before cleaning the active view", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const cleaning = gate();
+    const release = gate();
+    h(
+      parent,
+      component({
+        setup: () =>
+          Effect.addFinalizer(() =>
+            Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          ).pipe(Effect.as(text("old"))),
+      }),
+    );
+    await rendered(parent, "old");
+    h(parent, text("middle"));
+    await run(Deferred.await(cleaning));
+    const reparented = text("stolen");
+    const mutated = document.createElement("section");
+    mutated.append(text("original"));
+    h(parent, reparented);
+    h(parent, mutated);
+    const external = document.createElement("aside");
+    external.append(reparented);
+    mutated.append(text("changed"));
+    await open(release);
+    await rendered(parent, "middle");
+    h(parent, text("last"));
+    await rendered(parent, "last");
+    expect(errors.map((failure) => failure.operation)).toEqual(["validation", "validation"]);
+    expect(external.textContent).toBe("stolen");
+  });
+
+  it("rejects foreign constructed regions, missing anchors, and explicit anchor roots", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const foreign = document.createElement("div");
+    let tree = document.createElement("main");
+    let started = 0;
+    const child = component({
+      setup: () =>
+        Effect.sync(() => {
+          started += 1;
+          return text("child");
+        }),
+    });
+    h(
+      parent,
+      component({
+        setup: ({ he, h: nested }) =>
+          Effect.gen(function* () {
+            tree = yield* he("main", { children: [child] });
+            const tampered = yield* he("section", { children: [child] });
+            tampered.replaceChildren();
+            expect(
+              (yield* he("div", { children: [tampered] }).pipe(Effect.flip)).message,
+            ).toContain("missing region");
+            nested(foreign, tree.firstChild as Node);
+            return yield* he("p", { children: ["owner"] });
+          }),
+      }),
+    );
+    await rendered(parent, "owner");
+    h(foreign, tree);
+    expect(started).toBe(0);
+    expect(tree.parentNode).toBeNull();
+    expect(errors.map((failure) => failure.operation)).toEqual(["validation", "validation"]);
+  });
+
+  it("disposes inline setup and background work on native replacement with DOM attached", async () => {
+    const { h, close, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    const backgroundStopped = gate();
+    const pendingReady = gate();
+    const pendingRelease = gate();
+    const events: string[] = [];
+    let staleConstruct: () => Effect.Effect<Node, ConstructionError> = () =>
+      Effect.succeed(text("unused"));
+    h(
+      parent,
+      component({
+        setup: ({ he, h: nested }) =>
+          Effect.gen(function* () {
+            staleConstruct = () => he("div");
+            const child = component({
+              setup: ({ fork }) =>
+                Effect.gen(function* () {
+                  yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                      events.push(`child:${parent.textContent}`);
+                    }),
+                  );
+                  yield* fork(
+                    Deferred.succeed(ready, undefined).pipe(
+                      Effect.andThen(Effect.never),
+                      Effect.ensuring(Deferred.succeed(backgroundStopped, undefined)),
+                    ),
+                  );
+                  return text("child");
+                }),
+            });
+            const pending = component({
+              setup: () =>
+                Deferred.succeed(pendingReady, undefined).pipe(
+                  Effect.andThen(Deferred.await(pendingRelease)),
+                  Effect.map(() => text("stale")),
+                ),
+            });
+            const target = yield* he("section");
+            nested(target, yield* he("main", { children: ["before", child, pending, "after"] }));
+            return target;
+          }),
+      }),
+    );
+    await Promise.all([run(Deferred.await(ready)), run(Deferred.await(pendingReady))]);
+    await rendered(parent, "beforechildafter");
+    h(parent, text("next"));
+    await rendered(parent, "next");
+    await run(Deferred.await(backgroundStopped));
+    await open(pendingRelease);
+    expect(events).toEqual(["child:beforechildafter"]);
+    expect((await run(staleConstruct().pipe(Effect.flip))).message).toContain("disposed");
+    await close();
+    expect(events.length).toBe(1);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("replacement resource boundaries", () => {
+  it("disposes a native replacement's inline regions while its issuing context stays alive", async () => {
+    const { h, close, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    const release = gate();
+    const stopped = gate();
+    let replace: () => Effect.Effect<void, ConstructionError> = () => Effect.void;
+    let finalized = 0;
+    h(
+      parent,
+      component({
+        setup: ({ he, h: nested }) =>
+          Effect.gen(function* () {
+            const target = yield* he("section");
+            const pending = component({
+              setup: ({ fork }) =>
+                Effect.gen(function* () {
+                  yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                      finalized += 1;
+                    }),
+                  );
+                  yield* fork(
+                    Effect.never.pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
+                  );
+                  yield* Deferred.succeed(ready, undefined);
+                  yield* Deferred.await(release);
+                  return text("stale");
+                }),
+            });
+            nested(target, yield* he("main", { children: ["native", pending] }));
+            replace = () =>
+              he("p", { children: ["replacement"] }).pipe(
+                Effect.map((node) => nested(target, node)),
+              );
+            return target;
+          }),
+      }),
+    );
+    await run(Deferred.await(ready));
+    await rendered(parent, "native");
+    await run(replace());
+    await rendered(parent, "replacement");
+    await run(Deferred.await(stopped));
+    await open(release);
+    expect(finalized).toBe(1);
+    await run(replace());
+    await close();
+    expect(finalized).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("reports genuine cleanup defects in interrupted setup without reporting expected cancellation", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    h(
+      parent,
+      component({
+        setup: () =>
+          Deferred.succeed(ready, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Effect.die("interruption cleanup defect")),
+          ),
+      }),
+    );
+    await run(Deferred.await(ready));
+    h(parent, text("next"));
+    await rendered(parent, "next");
+    expect(errors.map((failure) => failure.operation)).toEqual(["cleanup"]);
+    expect(Cause.pretty(errors[0]?.cause ?? Cause.empty)).toContain("interruption cleanup defect");
+  });
+
+  it("composes a native target after its explicitly mounted descendants have completed", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const ready = gate();
+    h(
+      parent,
+      component({
+        setup: ({ he, h: nested }) =>
+          Effect.gen(function* () {
+            const target = yield* he("section");
+            nested(
+              target,
+              component({
+                setup: ({ he: childElement }) =>
+                  childElement("p", { children: ["child"] }).pipe(
+                    Effect.tap(() => Deferred.succeed(ready, undefined)),
+                  ),
+              }),
+            );
+            yield* Deferred.await(ready);
+            return yield* he("main", { children: ["before", target, "after"] });
+          }),
+      }),
+    );
+    await rendered(parent, "beforechildafter");
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects invalid component output as a group and preserves native siblings", async () => {
+    const { h, errors } = await harness();
+    const parent = document.createElement("div");
+    const supplied = text("duplicate");
+    let cleaned = false;
+    h(parent, [
+      text("before"),
+      component({
+        setup: () =>
+          Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              cleaned = true;
+            }),
+          ).pipe(Effect.as([supplied, supplied])),
+      }),
+      text("after"),
+    ]);
+    await rendered(parent, "beforeafter");
+    expect(supplied.parentNode).toBeNull();
+    expect(cleaned).toBe(true);
+    expect(errors.map((failure) => failure.operation)).toEqual(["validation"]);
+    expect(errors[0]?.subject.kind).toBe("component");
+  });
+});
+
+it("cleans setup resources and reports a typed construction failure", async () => {
+  const { h, errors } = await harness();
+  const parent = document.createElement("div");
+  const cleaned = gate();
+  h(
+    parent,
+    component({
+      setup: ({ he }) =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => Deferred.succeed(cleaned, undefined));
+          return yield* he("div", { attrs: { onclick: "unsupported" } });
+        }),
+    }),
+  );
+  await run(Deferred.await(cleaned));
+  h(parent, text("recovered"));
+  await rendered(parent, "recovered");
+  expect(errors.map((failure) => failure.operation)).toEqual(["setup"]);
+  expect(Cause.hasFails(errors[0]?.cause ?? Cause.empty)).toBe(true);
+  expect(Cause.pretty(errors[0]?.cause ?? Cause.empty)).toContain("unsupported attribute");
 });

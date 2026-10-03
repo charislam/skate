@@ -1,0 +1,97 @@
+import { Effect } from "effect";
+import { expectTypeOf, it } from "vitest";
+import type { ConstructionError } from "./construction";
+import type { Component, Construct, Mount } from "./framework";
+
+it("retains native tag and property types and restricts static construction", () => {
+  // This function is checked by TypeScript but deliberately never executed.
+  const author = (options: { he: Construct; h: Mount; parent: Element }) => {
+    const { he, h, parent } = options;
+
+    // @ts-expect-error A setup method alone does not carry the component type id.
+    const unbranded: Component = {
+      setup: () => Effect.succeed([]),
+    };
+    void unbranded;
+
+    expectTypeOf(he("input")).toEqualTypeOf<Effect.Effect<HTMLInputElement, ConstructionError>>();
+    expectTypeOf(he("select")).toEqualTypeOf<Effect.Effect<HTMLSelectElement, ConstructionError>>();
+
+    he("input", { props: { value: "current", checked: true, disabled: false } });
+    he("div", { attrs: { class: "panel", hidden: true, "aria-expanded": "false" } });
+
+    // @ts-expect-error Only known HTML tags are supported.
+    he("custom-widget");
+
+    // @ts-expect-error SVG is outside this API.
+    he("svg");
+
+    // @ts-expect-error Input values retain their native string type.
+    he("input", { props: { value: 1 } });
+
+    // @ts-expect-error Properties depend on the chosen tag.
+    he("div", { props: { checked: true } });
+
+    // @ts-expect-error Readonly native properties cannot be assigned.
+    he("div", { props: { offsetHeight: 42 } });
+
+    // @ts-expect-error Readonly collections cannot be assigned.
+    he("div", { props: { childNodes: document.createElement("div").childNodes } });
+
+    // @ts-expect-error Native methods are not data properties.
+    he("div", { props: { append: () => {} } });
+
+    // @ts-expect-error Event handlers are deferred to a later API.
+    he("button", { props: { onclick: () => {} } });
+
+    // @ts-expect-error HTML parsing is excluded.
+    he("div", { props: { innerHTML: "<b>hello</b>" } });
+
+    // @ts-expect-error Structural text properties conflict with children.
+    he("div", { props: { textContent: "hello" } });
+
+    // @ts-expect-error Structural text properties conflict with children.
+    he("div", { props: { innerText: "hello" } });
+
+    // @ts-expect-error HTML parsing is excluded.
+    he("iframe", { props: { srcdoc: "hello" } });
+
+    // @ts-expect-error Style objects are not part of the static API.
+    he("div", { props: { style: {} } });
+
+    // @ts-expect-error Attributes accept strings and booleans only.
+    he("div", { attrs: { tabindex: 0 } });
+
+    // @ts-expect-error Null attributes are unsupported.
+    he("div", { attrs: { hidden: null } });
+
+    // @ts-expect-error Undefined attributes are unsupported.
+    he("div", { attrs: { hidden: undefined } });
+
+    // @ts-expect-error Construct child elements before supplying them as children.
+    he("div", { children: [he("span")] });
+
+    // @ts-expect-error Children do not flatten nested arrays.
+    he("div", { children: [["hello"]] });
+
+    // @ts-expect-error Number children are unsupported.
+    he("div", { children: [42] });
+
+    // @ts-expect-error Null children are unsupported.
+    he("div", { children: [null] });
+
+    // @ts-expect-error There is no separate text option.
+    he("div", { text: "hello" });
+
+    // @ts-expect-error Evaluate construction before submitting a native node.
+    h(parent, he("div"));
+
+    // @ts-expect-error Mounting requires an explicit text node.
+    h(parent, "hello");
+
+    // @ts-expect-error Mount arrays cannot be nested.
+    h(parent, [[he("div")]]);
+  };
+
+  expectTypeOf(author).toBeFunction();
+});
