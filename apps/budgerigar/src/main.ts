@@ -1,14 +1,19 @@
-import { Effect } from "effect";
-
+import { Cause, Effect, Fiber, Match } from "effect";
+import { bootstrap } from "./bootstrap";
 import "./style.css";
 
-const main = Effect.sync(() => {
-  const home = document.createElement("main");
-  home.innerHTML = `
-    <h1>Budgerigar</h1>
-    <p>Welcome home.</p>
-  `;
-  document.body.append(home);
-});
+export const application = Effect.runFork(
+  bootstrap((failure) => console.error("Budgerigar mount failed", failure)).pipe(
+    Effect.tapCause((cause) =>
+      Match.value(Cause.hasInterruptsOnly(cause)).pipe(
+        Match.when(true, () => Effect.void),
+        Match.when(false, () => Effect.logError("Budgerigar bootstrap failed", cause)),
+        Match.exhaustive,
+      ),
+    ),
+  ),
+);
 
-Effect.runSync(main);
+import.meta.hot?.dispose(() => {
+  Effect.runFork(Fiber.interrupt(application));
+});

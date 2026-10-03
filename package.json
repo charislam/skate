@@ -19,18 +19,19 @@
     "lint:inflow": "pnpm --filter @charismaticalli/skate-inflow lint",
     "lint:objects": "pnpm --filter @charismaticalli/skate-objects lint",
     "lint:backend": "deno lint supabase/functions/skate-api",
-    "test": "pnpm test:app && pnpm test:inflow && pnpm test:backend",
+    "test": "pnpm test:app && pnpm test:inflow && pnpm test:backend && pnpm test:budgerigar",
     "test:app": "pnpm --filter @charismaticalli/skate-app test",
+    "test:budgerigar": "pnpm --filter @charismaticalli/budgerigar test",
     "test:inflow": "pnpm --filter @charismaticalli/skate-inflow test",
     "test:contract:inflow": "pnpm --filter @charismaticalli/skate-inflow test:contract",
     "test:backend": "deno test --allow-env --config supabase/functions/skate-api/deno.json supabase/functions/skate-api/tests",
     "typecheck": "pnpm typecheck:app && pnpm typecheck:cli && pnpm typecheck:inflow && pnpm typecheck:objects && pnpm typecheck:backend && pnpm typecheck:budgerigar",
     "typecheck:app": "pnpm --filter @charismaticalli/skate-app typecheck",
+    "typecheck:backend": "deno check --config supabase/functions/skate-api/deno.json supabase/functions/skate-api/index.ts",
     "typecheck:budgerigar": "pnpm --filter @charismaticalli/budgerigar typecheck",
     "typecheck:cli": "pnpm --filter @charismaticalli/skate-cli typecheck",
     "typecheck:inflow": "pnpm --filter @charismaticalli/skate-inflow typecheck",
-    "typecheck:objects": "pnpm --filter @charismaticalli/skate-objects typecheck",
-    "typecheck:backend": "deno check --config supabase/functions/skate-api/deno.json supabase/functions/skate-api/index.ts"
+    "typecheck:objects": "pnpm --filter @charismaticalli/skate-objects typecheck"
   },
   "packageManager": "pnpm@11.27.1+sha512.a81d4c21b9b09a4b0aebf90ef5e527d4262bdda322d26082978cb549023ac6d9cafc98b19fffaa5c71db438a65f70224edb78d7311187861ff96480d1cdca23c",
   "devDependencies": {
