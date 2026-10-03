@@ -9,6 +9,7 @@ catalog:
   oxlint: 1.82.0
   oxlint-tsgolint: ^7.0.2001
   typescript: ^7
+  vite: ^8.0.3
   vitest: ^5.0.1
 
 engineStrict: true
