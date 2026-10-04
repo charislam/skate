@@ -29,7 +29,7 @@ export const rendered = (options: { parent: Node; check: () => boolean }): Promi
 export const harness = async (options: { onError?: (failure: MountFailure) => void } = {}) => {
   const scope = await run(Scope.make());
   const failures: MountFailure[] = [];
-  const h = await run(
+  const { h } = await run(
     mounting({
       scope,
       onError: (failure) => {

@@ -8,7 +8,12 @@ import { rendered as waitFor } from "./test-helpers";
 
 const run = Effect.runPromise;
 
-const gate = () => Deferred.makeUnsafe<void>();
+const gates: Array<Deferred.Deferred<void>> = [];
+const gate = () => {
+  const deferred = Deferred.makeUnsafe<void>();
+  gates.push(deferred);
+  return deferred;
+};
 const open = (deferred: Deferred.Deferred<void>) => run(Deferred.succeed(deferred, undefined));
 
 const text = (value: string) => document.createTextNode(value);
@@ -19,7 +24,7 @@ const cleanups: Array<() => Promise<void>> = [];
 const harness = async () => {
   const scope = await run(Scope.make());
   const errors: MountFailure[] = [];
-  const h = await run(
+  const { h } = await run(
     mounting({
       scope,
       onError: (failure) => {
@@ -51,6 +56,7 @@ const rendered = (parent: Element, value: string): Promise<void> =>
   });
 
 afterEach(async () => {
+  for (const deferred of gates.splice(0)) await run(Deferred.succeed(deferred, undefined));
   for (const close of cleanups.splice(0)) await close();
 });
 
@@ -93,7 +99,7 @@ describe("scoped component mounting", () => {
     expect(right.childNodes.length).toBe(0);
   });
 
-  it("awaits cleanup with old DOM attached, clears all children, and mounts every request", async () => {
+  it("detaches immediately, overlaps cleanup, and mounts every imperative request in order", async () => {
     const { h } = await harness();
 
     const parent = document.createElement("div");
@@ -152,15 +158,15 @@ describe("scoped component mounting", () => {
     );
 
     await run(Deferred.await(cleaning));
-    expect(parent.textContent).toBe("oldexternal");
-    expect(events).toEqual(["cleanup:oldexternal"]);
+    await rendered(parent, "last");
+    expect(events).toEqual(["setup:", "last", "cleanup:last"]);
 
     await open(releaseCleanup);
     await run(Deferred.await(settingUp));
     await rendered(parent, "last");
     await open(releaseSetup);
 
-    expect(events).toEqual(["cleanup:oldexternal", "setup:", "last"]);
+    expect(events).toEqual(["setup:", "last", "cleanup:last"]);
   });
 
   it("lets another parent's queue progress during slow setup", async () => {
@@ -247,7 +253,7 @@ describe("scoped component mounting", () => {
     expect(errors).toEqual([]);
   });
 
-  it("keeps enclosing DOM attached until asynchronous child and parent cleanup finish", async () => {
+  it("detaches enclosing DOM before asynchronous descendant and parent cleanup finish", async () => {
     const { h, close } = await harness();
 
     const parent = document.createElement("div");
@@ -293,12 +299,12 @@ describe("scoped component mounting", () => {
 
     const closing = close();
     await run(Deferred.await(childCleaning));
-    expect(parent.firstElementChild).toBe(child);
-    expect(child.textContent).toBe("child");
+    expect(parent.firstElementChild).toBeNull();
+    expect(child.textContent).toBe("");
 
     await open(releaseChild);
     await run(Deferred.await(parentCleaning));
-    expect(parent.firstElementChild).toBe(child);
+    expect(parent.firstElementChild).toBeNull();
     expect(child.textContent).toBe("");
 
     await open(releaseParent);
@@ -307,7 +313,7 @@ describe("scoped component mounting", () => {
   });
 
   it("cleans failed setup and preserves both setup and cleanup causes before progressing", async () => {
-    const { h, errors } = await harness();
+    const { h, errors, close } = await harness();
 
     const parent = document.createElement("div");
 
@@ -334,10 +340,11 @@ describe("scoped component mounting", () => {
     h(parent, simple("recovered"));
     await rendered(parent, "recovered");
 
+    await close();
     expect(events).toEqual(["remaining"]);
-    expect(errors.map((error) => error.operation)).toEqual(["cleanup", "setup"]);
-    expect(Cause.pretty(errors.at(1)?.cause ?? Cause.empty)).toContain("setup failed");
-    expect(Cause.pretty(errors.at(0)?.cause ?? Cause.empty)).toContain("cleanup failed");
+    expect(errors.map((error) => error.operation)).toEqual(["setup", "cleanup"]);
+    expect(Cause.pretty(errors.at(0)?.cause ?? Cause.empty)).toContain("setup failed");
+    expect(Cause.pretty(errors.at(1)?.cause ?? Cause.empty)).toContain("cleanup failed");
   });
 
   it("discards pending work, interrupts setup and background work, and rejects late requests", async () => {
@@ -401,7 +408,7 @@ describe("scoped component mounting", () => {
     const scope = await run(Scope.make());
     const errors: MountFailure[] = [];
 
-    const h = await run(
+    const { h } = await run(
       mounting({
         scope,
         onError: (error) => {
@@ -440,6 +447,7 @@ describe("scoped component mounting", () => {
     h(parent, simple("new"));
     await rendered(parent, "new");
 
+    await run(Scope.close(scope, Exit.void));
     expect(errors.map((error) => error.operation)).toEqual(["setup", "cleanup"]);
     expect(Cause.pretty(errors.at(1)?.cause ?? Cause.empty)).toContain("first cleanup");
     expect(Cause.pretty(errors.at(1)?.cause ?? Cause.empty)).toContain("second cleanup");
@@ -466,7 +474,7 @@ describe("scoped component mounting", () => {
     await rendered(parent, "second");
   });
 
-  it("does not start replacement setup when disposed during old cleanup", async () => {
+  it("starts replacement setup during old cleanup and awaits both lifetimes on disposal", async () => {
     const { h, close, errors } = await harness();
 
     const parent = document.createElement("div");
@@ -507,12 +515,12 @@ describe("scoped component mounting", () => {
     await run(Deferred.await(cleaning));
     const closing = close();
 
-    expect(parent.textContent).toBe("old");
+    expect(parent.textContent).toBe("");
 
     await open(release);
     await closing;
 
-    expect(replacementRan).toBe(false);
+    expect(replacementRan).toBe(true);
     expect(parent.textContent).toBe("");
     expect(errors).toEqual([]);
   });
@@ -906,7 +914,7 @@ describe("static DOM construction and regions", () => {
   });
 
   it("isolates inline failure and empty roots without failing the enclosing setup", async () => {
-    const { h, errors } = await harness();
+    const { h, errors, close } = await harness();
     const parent = document.createElement("div");
     const ready = gate();
     const release = gate();
@@ -936,8 +944,8 @@ describe("static DOM construction and regions", () => {
     await run(Deferred.await(ready));
     await rendered(parent, "ab");
     await open(release);
+    await close();
     expect(cleaned).toBe(1);
-    expect(parent.textContent).toBe("ab");
     expect(errors.map((failure) => failure.operation)).toEqual(["setup"]);
     expect(errors[0]?.subject.kind).toBe("component");
   });
@@ -976,9 +984,9 @@ describe("static DOM construction and regions", () => {
       await run(Deferred.await(ready));
       h(parent, text("next"));
       await run(Deferred.await(cleaning));
-      expect(parent.textContent).toBe("");
+      expect(parent.textContent).toBe("next");
       await open(setupRelease);
-      expect(parent.textContent).toBe("");
+      expect(parent.textContent).toBe("next");
       await open(cleanupRelease);
       await rendered(parent, "next");
       expect(errors).toEqual([]);
@@ -1133,7 +1141,7 @@ describe("static DOM construction and regions", () => {
     expect(errors.map((failure) => failure.operation)).toEqual(["validation", "validation"]);
   });
 
-  it("disposes inline setup and background work on native replacement with DOM attached", async () => {
+  it("runs inline synchronous finalizers before detachment and cancels owned work on native replacement", async () => {
     const { h, close, errors } = await harness();
     const parent = document.createElement("div");
     const ready = gate();
@@ -1150,13 +1158,11 @@ describe("static DOM construction and regions", () => {
           Effect.gen(function* () {
             staleConstruct = () => he("div");
             const child = component({
-              setup: ({ fork }) =>
+              setup: ({ fork, addSyncFinalizer }) =>
                 Effect.gen(function* () {
-                  yield* Effect.addFinalizer(() =>
-                    Effect.sync(() => {
-                      events.push(`child:${parent.textContent}`);
-                    }),
-                  );
+                  yield* addSyncFinalizer(() => {
+                    events.push(`child:${parent.textContent}`);
+                  });
                   yield* fork(
                     Deferred.succeed(ready, undefined).pipe(
                       Effect.andThen(Effect.never),
@@ -1185,9 +1191,9 @@ describe("static DOM construction and regions", () => {
     await rendered(parent, "next");
     await run(Deferred.await(backgroundStopped));
     await open(pendingRelease);
+    await close();
     expect(events).toEqual(["child:beforechildafter"]);
     expect((await run(staleConstruct().pipe(Effect.flip))).message).toContain("disposed");
-    await close();
     expect(events.length).toBe(1);
     expect(errors).toEqual([]);
   });
@@ -1239,7 +1245,6 @@ describe("replacement resource boundaries", () => {
     await rendered(parent, "replacement");
     await run(Deferred.await(stopped));
     await open(release);
-    expect(finalized).toBe(1);
     await run(replace());
     await close();
     expect(finalized).toBe(1);
@@ -1296,7 +1301,7 @@ describe("replacement resource boundaries", () => {
   });
 
   it("rejects invalid component output as a group and preserves native siblings", async () => {
-    const { h, errors } = await harness();
+    const { h, errors, close } = await harness();
     const parent = document.createElement("div");
     const supplied = text("duplicate");
     let cleaned = false;
@@ -1314,6 +1319,7 @@ describe("replacement resource boundaries", () => {
     ]);
     await rendered(parent, "beforeafter");
     expect(supplied.parentNode).toBeNull();
+    await close();
     expect(cleaned).toBe(true);
     expect(errors.map((failure) => failure.operation)).toEqual(["validation"]);
     expect(errors[0]?.subject.kind).toBe("component");

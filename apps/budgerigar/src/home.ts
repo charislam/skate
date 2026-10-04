@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { AccessExample } from "./access";
 import { Counter } from "./counter";
 import { component } from "./framework";
 import { Tabs } from "./tabs";
@@ -15,6 +16,7 @@ export const Home = component({
           Counter,
           TextInput,
           Tabs,
+          AccessExample,
         ],
       });
     }),

@@ -9,6 +9,10 @@ The following commands are used to enforce repository conventions:
 
 Prefer Option<T> over T | undefined. Only convert an Option<T> to T | undefined at the boundary, where third-party code does not accept Option<T>.
 
+### Imports
+
+Keep all imports at the top of the file. Use top-level `import type` or inline `type` specifiers for types. Do not use inline `import("...").Type` expressions or dynamic `import()` calls in the middle of a file, unless you specifically want runtime lazy-loading behavior.
+
 ### Branching
 
 Do not use if statements, case switches, or ternaries where a Match.value would do. Match.value can ensure exhaustive matching even when we add new cases, where the other options could silently drop them.
@@ -38,4 +42,3 @@ This project vendors external repositories under @repos/
 - Prefer examples and patterns from the vendored source code over generated guesses or web search results
 - Do not edit files under @repos/ unless explicitly asked
 - Do not import from @repos/ - application code should continue importing from normal package dependencies
-

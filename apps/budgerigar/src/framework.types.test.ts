@@ -1,9 +1,12 @@
-import { Effect, Option } from "effect";
+import { Effect, Match, Option } from "effect";
 import { expectTypeOf, it } from "vitest";
 import type { ConstructionError } from "./construction";
+import { component } from "./framework";
 import type {
+  ApplicationContext,
   Component,
   ComponentContext,
+  MountFailure,
   Construct,
   Mount,
   ReactiveError,
@@ -191,5 +194,88 @@ it("types independent reactive attributes, native properties, and writable text 
       // @ts-expect-error Only input/textarea elements support two-way text binding.
       ctx.bindValue({ element: yield* ctx.he("select"), signal: text });
     });
+  expectTypeOf(author).toBeFunction();
+});
+
+it("accepts covariant Option component signals at both construction boundaries", () => {
+  const author = (
+    ctx: ApplicationContext,
+    parent: Element,
+    signals: {
+      empty: Signal<Option.Option<never>>;
+      specific: Signal<Option.Option<Component & { readonly name: string }>>;
+      boolean: Signal<boolean>;
+      optionalBoolean: Signal<Option.Option<boolean>>;
+      bare: Signal<Component>;
+      node: Signal<Option.Option<Node>>;
+      nullable: Signal<Component | null>;
+      undefined: Signal<Component | undefined>;
+    },
+  ) => {
+    ctx.h(parent, signals.empty);
+    ctx.h(parent, [signals.specific, document.createTextNode("sibling")]);
+    ctx.he("div", { children: [signals.empty, signals.specific] });
+    // @ts-expect-error Selection requires an Option of a component definition.
+    ctx.h(parent, signals.boolean);
+    // @ts-expect-error Option booleans must first be derived into definitions.
+    ctx.he("div", { children: [signals.optionalBoolean] });
+    // @ts-expect-error Component selection requires explicit Option absence.
+    ctx.h(parent, signals.bare);
+    // @ts-expect-error Native node signals cannot select reusable definitions.
+    ctx.h(parent, signals.node);
+    // @ts-expect-error Null is not Option absence.
+    ctx.he("div", { children: [signals.nullable] });
+    // @ts-expect-error Undefined is not Option absence.
+    ctx.h(parent, signals.undefined);
+  };
+  const describe = (failure: MountFailure) =>
+    Match.value(failure).pipe(
+      Match.when({ subject: { kind: "application" } }, (failure) => {
+        // @ts-expect-error Application failures have no DOM parent.
+        void failure.parent;
+        return failure.subject.id;
+      }),
+      Match.when({ subject: { kind: "component" } }, (failure) => {
+        expectTypeOf(failure.parent).toEqualTypeOf<Element>();
+        return failure.subject.region;
+      }),
+      Match.when({ subject: { kind: "replacement" } }, (failure) => {
+        expectTypeOf(failure.parent).toEqualTypeOf<Element>();
+        return failure.subject.items;
+      }),
+      Match.exhaustive,
+    );
+  expectTypeOf(author).toBeFunction();
+  expectTypeOf(describe).toBeFunction();
+});
+
+it("requires synchronous native fallbacks and synchronous finalizer callbacks", () => {
+  const author = (ctx: ComponentContext) => {
+    component({
+      fallback: () => document.createTextNode("loading"),
+      setup: () => Effect.succeed([]),
+    });
+    component({
+      fallback: () => [document.createElement("span"), document.createTextNode("loading")],
+      setup: () => Effect.succeed([]),
+    });
+    ctx.addSyncFinalizer(() => {});
+    // @ts-expect-error Synchronous finalizers cannot return a Promise.
+    ctx.addSyncFinalizer(async () => {});
+    // @ts-expect-error Synchronous finalizers cannot return an Effect.
+    ctx.addSyncFinalizer(() => Effect.void);
+    component({
+      // @ts-expect-error Fallback factories cannot await work.
+      fallback: async () => document.createElement("div"),
+      setup: () => Effect.succeed([]),
+    });
+    // @ts-expect-error Fallback factories return native output, not Effects.
+    component({ fallback: () => ctx.he("div"), setup: () => Effect.succeed([]) });
+    component({
+      // @ts-expect-error Deferred components are not native fallback output.
+      fallback: () => component({ setup: () => Effect.succeed([]) }),
+      setup: () => Effect.succeed([]),
+    });
+  };
   expectTypeOf(author).toBeFunction();
 });

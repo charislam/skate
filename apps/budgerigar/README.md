@@ -13,18 +13,24 @@ The context provides:
 - `he(tag, options?)` to return an Effect that constructs a detached HTML element.
   Validation failures use the typed `ConstructionError` channel. Options
   contain optional-value `attrs`, writable native `props`, and ordered `children`
-  consisting of strings, nodes, signals of strings, or component definitions.
-  Attribute and property entries can themselves be signals. Attributes precede
-  children, and properties are assigned last. Strings become literal text nodes.
+  consisting of strings, nodes, signals of strings, component definitions, or
+  signals of `Option<Component>`. Attribute and property entries can themselves
+  be signals. Attributes precede children, and properties are assigned last.
+  Strings become literal text nodes.
 - `h(parent, content)` to enqueue replacement of all children and return
-  immediately. Content is a node, component, or readonly mixed array; `[]` clears
-  the target after cleanup.
-- `scope` to register resource finalizers with `Scope.addFinalizer`. Setup also
-  receives this scope as an Effect service, so `Effect.addFinalizer` works.
+  immediately. Content is a node, component, signal of `Option<Component>`, or
+  readonly mixed array; `[]` clears the target after cleanup.
+- `addSyncFinalizer(callback)` to register synchronous DOM cleanup. Callbacks run
+  in reverse registration order, descendants before owners, while outgoing DOM is
+  still attached. Callbacks return `undefined` and cannot await work.
+- `scope` to register asynchronous resource finalizers with `Scope.addFinalizer`.
+  Setup also receives this scope as an Effect service, so `Effect.addFinalizer`
+  works. These finalizers run after DOM detachment.
 - `fork(work)` to start background Effect work owned by the component. Use this
-  binding for work that must be interrupted before descendant cleanup. It shares
-  the component scope for resource acquisition and reports failures to the
-  application's error handler.
+  binding for work whose cancellation must be requested before synchronous DOM
+  finalizers and completed before asynchronous descendant resource cleanup. It
+  shares the component scope for resource acquisition and reports failures to
+  the application's error handler.
 
 ```ts
 const Child = component({
@@ -49,19 +55,28 @@ is independent of their enclosing setup. Properties that depend on component
 children, such as a select's `value`, are assigned before those children mount and
 are not replayed later.
 
-Acquire an application binding with `mounting({ scope, onError })`, then call
-`h(root, Parent)`. Keep the application scope alive; closing it awaits disposal.
+Acquire an application context with `const app = yield* mounting({ scope, onError })`,
+then destructure `const { h } = app` and call `h(root, Parent)`. The context provides
+the same construction, scope, fork, synchronous-finalizer, and reactive helpers as
+a component context. Keep the application scope alive; closing it awaits disposal.
 `bootstrap` does this for the welcome page and requires the existing `#app` root.
 
-Requests for a parent execute in order: validate, cancel the current installation,
-await cleanup with its DOM attached, then install native nodes and region anchors
-and start component setup. Pending setup never holds the queue; a later valid
-request can cancel it. Cleanup still holds the queue. Other parents progress
-independently. A failed component cleans its resources and leaves an empty region,
-preserving its siblings. Disposal cancels pending requests and owned work, cleans
-descendants before their owner, and removes DOM after cleanup. Failures include
-the parent, a replacement or component-occurrence subject, lifecycle operation,
-and original Effect cause; an error handler throwing does not stall the queue.
+Requests for a parent execute in order: validate, deactivate the current
+installation, run synchronous finalizers while its DOM is attached, remove it,
+install the incoming fallback (if provided), and start setup. Asynchronous resource
+cleanup runs in tracked background fibers and can overlap incoming setup. It does
+not hold the replacement queue. Every valid imperative request is processed in
+order; signal selections skip superseded setup attempts.
+
+A failed component immediately removes its fallback or partial output and leaves
+an empty region, preserving siblings. Disposal cancels pending requests and owned
+work. Synchronous DOM finalizers run descendants before their owner, followed by
+DOM detachment; asynchronous resource finalizers also run descendants before their
+owner. Application scope closure awaits every outstanding cleanup fiber, including
+retired branches. Failures include the parent, a replacement or component-occurrence
+subject, lifecycle operation, and original Effect cause; a throwing error handler
+does not stall other work. Application-owned failures have a stable
+`subject.kind === "application"` identity and no `parent` field.
 
 A target belongs to one live mount context. Trees containing deferred regions must
 be adopted by the context that constructed them. Native roots must be detached;
@@ -135,11 +150,11 @@ while the parent awaits, but changing a source captured by the parent causes
 the parent's batch to conflict.
 
 Awaiting asynchronous work and then writing on the original fiber is supported.
-Reactive resources are component-owned, children may consume ancestor signals,
-and unrelated owners cannot derive from or bind one another's signals. Disposal
-stops events and subscriptions, cancels batches, and prevents late DOM updates.
-Reactive text binds on adoption and stops on tree replacement; constructing an
-unadopted tree does not install live bindings.
+Reactive resources belong to their issuing application or component, children
+may consume ancestor signals, and unrelated owners cannot derive from or bind
+one another's signals. Disposal stops events and subscriptions, cancels batches,
+and prevents late DOM updates. Reactive text binds on adoption and stops on tree
+replacement; constructing an unadopted tree does not install live bindings.
 
 ## Runtime internals
 
@@ -256,3 +271,105 @@ through click alone; Tab leaves the list normally. Panels remain mounted and use
 reactive `hidden` properties, with keyboard entry points and unique ARIA IDs.
 
 Run `pnpm test:budgerigar` for the deterministic DOM-emulator and type regressions.
+
+## Signal-selected subtrees
+
+A `Signal<Option<Component>>` is a child in `he` or a direct mount item in `h`.
+`None` has no visible output; `Some(definition)` mounts a fresh occurrence between
+stable comment anchors.
+
+Declare definitions outside derivations. A fresh `Some` of the same definition
+preserves its occurrence and state, including while setup is pending. A different
+definition disposes the previous occurrence; returning after disposal begins
+creates fresh local state. Use reactive `props: { hidden: signal }` instead when
+you want mounted content and its state to survive hiding, as the tabs demo does.
+
+Writes validate and commit selection requests without awaiting setup or resource
+cleanup. Ordinary reactive text, attributes, and properties flush in the same
+synchronous commit as outgoing DOM removal and incoming fallback insertion. When
+a write returns, outgoing content is gone and the region displays its fallback or
+is empty. Observers see that pending view; successful setup later replaces it with
+its output. This makes the transition to pending content visually atomic, while
+setup completion remains asynchronous.
+
+A component can declare `fallback: () => Node | ReadonlyArray<Node>`. The factory
+runs synchronously once per occurrence and must return fresh, detached native
+nodes, including an empty array. It receives no reactive context and does not
+start subscriptions or component descendants. Fallbacks are single-use, just like
+ordinary native output. A fresh `Some` of the same definition preserves its
+fallback and pending setup. If there is no fallback, an empty region during setup
+is the intended pending view. The access demo's page has a loading fallback.
+
+```ts
+const Page = component({
+  fallback: () => document.createTextNode("Loading…"),
+  setup: ({ he }) =>
+    loadPage.pipe(Effect.flatMap((page) => he("article", { children: [page.title] }))),
+});
+```
+
+Use `yield* addSyncFinalizer(() => { ... })` in setup for DOM-dependent work such
+as checking `panel.contains(document.activeElement)` and focusing a surviving
+trigger before the panel detaches. Reactive handles owned by the outgoing
+occurrence are already inactive during this callback. Keep asynchronous work in
+ordinary scope finalizers; those see detached outgoing nodes. Old resource cleanup
+and new resource acquisition may overlap, so shared resources need ownership rules
+that support overlapping lifetimes. Avoid restoring focus in delayed cleanup,
+which could override a newer user interaction.
+
+Synchronous finalizer exceptions report as `cleanup` failures and do not stop
+removal, other finalizers, or fallback insertion. Fallback failures report as
+`fallback` failures, remove any partial fallback, and continue setup in an empty
+region. Successful setup installs its output normally. Setup/adoption failures
+also leave an empty region, removing pending content immediately while cleanup
+continues. These failures do not reject an already committed write. Repeating the
+failed definition does not retry it; changing the selection re-arms it for a later
+attempt. Reporter exceptions remain isolated. Signal writes reentered from a
+synchronous callback during a commit fail with `ReactiveError`; schedule subsequent
+writes after that commit instead.
+
+Different regions and targets progress independently. Aborted batches and
+transient selections inside a batch perform no finalization, fallback construction,
+or setup. Superseded setup cannot adopt output, and its eventual cleanup cannot
+remove another occurrence's nodes. External structural DOM changes remain
+unsupported and do not automatically dispose resources.
+
+Root signals can select components directly, and descendants can consume root
+signals across multiple targets. Each application context has its own lifetime,
+ancestor chain, and commit coordinator, even if two contexts share a scope.
+Shared coordination grants no access to descendant, sibling, or foreign resources.
+Clearing a target disposes its installed bindings and components while preserving
+application state, subscriptions, work, and other targets. Scope closure stops
+root handles and work, runs synchronous finalizers, removes DOM immediately, and
+awaits descendant and retired-branch resource cleanup before completing.
+
+For example, with an existing `root` element and application `onError` reporter:
+
+```ts
+import { Effect, Match, Option } from "effect";
+import { AccessWarning, AccessiblePage } from "./src/access";
+import { mounting, type Component } from "./src/framework";
+
+const program = Effect.gen(function* () {
+  const scope = yield* Effect.scope;
+  const app = yield* mounting({ scope, onError });
+  const access = yield* app.signal<Option.Option<boolean>>({ initial: Option.none() });
+  const selected = yield* app.derive({
+    sources: { access },
+    compute: ({ access }): Option.Option<Component> =>
+      Option.match(access, {
+        onNone: () => Option.none(),
+        onSome: (allowed) =>
+          Match.value(allowed).pipe(
+            Match.when(false, () => Option.some(AccessWarning)),
+            Match.when(true, () => Option.some(AccessiblePage)),
+            Match.exhaustive,
+          ),
+      }),
+  });
+  const { h } = app;
+  h(root, selected);
+  yield* access.set(Option.some(true)); // Commits the request, not setup completion.
+  yield* Effect.never; // Keep the application lifetime open.
+}).pipe(Effect.scoped);
+```

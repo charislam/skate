@@ -4,13 +4,14 @@ import {
   calculate,
   requireValid,
   ReactiveError,
+  type ComponentLifetime,
   type ReactiveRuntime,
 } from "./runtime";
 import { destination } from "./destinations";
 import { isSignal, signalData, type DomSink, type Signal } from "./signal";
 
 export type AttributeValue = Option.Option<true | string>;
-export type BindingKind = "text" | "attribute" | "property";
+export type BindingKind = "text" | "attribute" | "property" | "selection";
 export interface DomResource {
   readonly element: Node;
   readonly kind: BindingKind;
@@ -22,6 +23,7 @@ interface Declaration {
 }
 interface Binding extends DomSink {
   readonly issuer: ReactiveRuntime;
+  report: Option.Option<ComponentLifetime["report"]>;
   readonly signal: Signal<unknown>;
   readonly start: () => () => void;
 }
@@ -92,13 +94,17 @@ const reportAssignment = (options: {
   runtime: ReactiveRuntime;
   resource: DomResource;
   error: ReactiveError;
+  report?: Option.Option<ComponentLifetime["report"]>;
 }): Effect.Effect<void> =>
   Effect.sync(() => {
     // The handler may be asynchronous or throw before returning its Effect. Run
     // reporting separately so it cannot delay or interrupt the synchronous flush.
     Effect.runFork(
       Effect.suspend(() =>
-        options.runtime.lifetime.report({
+        Option.getOrElse(
+          options.report ?? Option.none(),
+          () => options.runtime.lifetime.report,
+        )({
           operation: "reactive-dom",
           resource: options.resource,
           cause: Cause.die(
@@ -113,6 +119,7 @@ const assignOwned = (options: {
   runtime: ReactiveRuntime;
   resource: DomResource;
   write: Effect.Effect<void, ReactiveError>;
+  report?: Option.Option<ComponentLifetime["report"]>;
 }): Effect.Effect<void> =>
   options.write.pipe(Effect.catch((error) => reportAssignment({ ...options, error })));
 
@@ -146,6 +153,7 @@ export const registerBinding = Effect.fn("Budgerigar.registerBinding")(function*
   const resource: DomResource = { element: options.node, kind: options.kind, name: options.name };
   const binding: Binding = {
     issuer: options.runtime,
+    report: Option.none(),
     signal: options.signal,
     validate: (transaction) =>
       Effect.suspend(() =>
@@ -155,6 +163,7 @@ export const registerBinding = Effect.fn("Budgerigar.registerBinding")(function*
       assignOwned({
         runtime: options.runtime,
         resource,
+        report: binding.report,
         write: Effect.suspend(() =>
           options.write(signalData(options.signal).candidate(Option.none())),
         ),
@@ -232,9 +241,14 @@ export const validateReactiveNode = (options: {
   });
 
 export const activateReactiveNode = Effect.fn("Budgerigar.activateReactiveNode")(
-  function* (options: { node: Node; lifetime: { readonly cleanups: Set<() => void> } }) {
+  function* (options: {
+    node: Node;
+    lifetime: { readonly cleanups: Set<() => void> };
+    report?: Option.Option<ComponentLifetime["report"]>;
+  }) {
     activated.add(options.node);
     for (const binding of bindings.get(options.node) ?? []) {
+      binding.report = options.report ?? Option.none();
       yield* binding.flush();
       const disconnect = signalData(binding.signal).bind(binding);
       const stopIngress = binding.start();

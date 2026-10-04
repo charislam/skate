@@ -5,11 +5,12 @@ import {
   reactiveText,
   type Signal,
   type ReactiveRuntime,
-  type ReactiveError,
+  ReactiveError,
 } from "./reactive";
 import {
   attributeNameValid,
   bindEntry,
+  registerBinding,
   markElementOwner,
   validateAttribute,
   validateReactiveNode,
@@ -18,7 +19,7 @@ import {
 } from "./reactive/dom";
 import { propertyValidator, writeProperty } from "./reactive/properties";
 
-export type MountItem = Component | Node;
+export type MountItem = Component | Node | Signal<Option.Option<Component>>;
 export type Child = string | MountItem | Signal<string>;
 
 type Equal<X, Y> =
@@ -70,7 +71,9 @@ export interface ConstructionOwner {
 export interface Region {
   readonly start: Comment;
   readonly end: Comment;
-  readonly definition: Component;
+  readonly definition: Component | Signal<unknown>;
+  desired: Option.Option<Component>;
+  request: Option.Option<(selection: Option.Option<Component>) => void>;
   readonly issuer: ConstructionOwner;
   activated: boolean;
 }
@@ -105,7 +108,7 @@ export const validate = (valid: boolean, message: string): Effect.Effect<void, C
 export const isNode = (value: unknown): value is Node => value instanceof Node;
 
 export const makeRegion = (options: {
-  definition: Component;
+  definition: Component | Signal<unknown>;
   issuer: ConstructionOwner;
 }): Region => {
   const region: Region = {
@@ -113,11 +116,60 @@ export const makeRegion = (options: {
     start: document.createComment("budgerigar:start"),
     end: document.createComment("budgerigar:end"),
     activated: false,
+    desired: Option.none(),
+    request: Option.none(),
   };
   anchors.set(region.start, region);
   anchors.set(region.end, region);
   return region;
 };
+
+const isSelection = (value: unknown): value is Option.Option<Component> =>
+  Option.isOption(value) && (Option.isNone(value) || isComponent(value.value));
+
+export const validateSelection = (
+  value: unknown,
+): Effect.Effect<Option.Option<Component>, ReactiveError> =>
+  Effect.suspend(() =>
+    Match.value(value).pipe(
+      Match.when(isSelection, (selection) => Effect.succeed(selection)),
+      Match.orElse(() =>
+        Effect.fail(new ReactiveError({ message: "Selection requires Option<Component>" })),
+      ),
+    ),
+  );
+
+export const selectedRegion = Effect.fn("Budgerigar.selectedRegion")(function* (options: {
+  signal: Signal<unknown>;
+  issuer: ConstructionOwner;
+}) {
+  const runtime = yield* Option.match(options.issuer.reactiveRuntime, {
+    onNone: () =>
+      Effect.fail(new ConstructionError({ message: "Selection requires a live issuing context" })),
+    onSome: Effect.succeed,
+  });
+  const region = makeRegion({ definition: options.signal, issuer: options.issuer });
+  yield* registerBinding({
+    runtime,
+    node: region.start,
+    signal: options.signal,
+    kind: "selection",
+    name: "selection",
+    validate: validateSelection,
+    initialize: () => {},
+    write: (value) =>
+      validateSelection(value).pipe(
+        Effect.map((selection) => {
+          region.desired = selection;
+          Option.match(region.request, {
+            onNone: () => {},
+            onSome: (request) => request(selection),
+          });
+        }),
+      ),
+  }).pipe(Effect.mapError((error) => new ConstructionError({ message: error.message })));
+  return region;
+});
 
 /** Validate the entire forest before moving or consuming any of its nodes. */
 export const inspect = Effect.fn("Budgerigar.inspect")(function* (options: {
@@ -125,6 +177,7 @@ export const inspect = Effect.fn("Budgerigar.inspect")(function* (options: {
   readonly owner: ConstructionOwner;
   readonly reservation?: object;
   readonly ownedTarget?: (node: Node) => boolean;
+  readonly direct?: ReadonlyArray<Region>;
 }) {
   const nodes: Node[] = [];
   const regions: Region[] = [];
@@ -141,6 +194,9 @@ export const inspect = Effect.fn("Budgerigar.inspect")(function* (options: {
   const visitAnchor = Effect.fn("Budgerigar.inspectAnchor")(function* (node: Node) {
     yield* validate(!seen.has(node), "duplicate region anchor");
     yield* checkReservation(node);
+    yield* validateReactiveNode({ node, runtime: options.owner.reactiveRuntime }).pipe(
+      Effect.mapError((error) => new ConstructionError({ message: error.message })),
+    );
     seen.add(node);
     nodes.push(node);
     structure.set(node, []);
@@ -210,7 +266,26 @@ export const inspect = Effect.fn("Budgerigar.inspect")(function* (options: {
       );
     });
 
-  for (const root of options.roots) yield* visit({ node: root, root: true });
+  for (const root of options.roots) {
+    yield* Option.match(Option.fromUndefinedOr(anchors.get(root)), {
+      onNone: () => visit({ node: root, root: true }),
+      onSome: (region) =>
+        Effect.gen(function* () {
+          yield* validate(
+            options.direct?.includes(region) === true &&
+              region.issuer === options.owner &&
+              !region.activated &&
+              root.parentNode === null,
+            "region anchors cannot be explicit content",
+          );
+          yield* visitAnchor(root);
+          Match.value(root === region.start).pipe(
+            Match.when(true, () => regions.push(region)),
+            Match.orElse(() => {}),
+          );
+        }),
+    });
+  }
 
   return { roots: [...options.roots], nodes, regions, structure } satisfies Tree;
 });
@@ -306,13 +381,34 @@ const constructElement = Effect.fn("Budgerigar.constructElement")(function* <
         Option.match(owner.reactiveRuntime, {
           onNone: () =>
             Effect.fail(
-              new ConstructionError({ message: "Reactive text requires a component owner" }),
+              new ConstructionError({
+                message: "Reactive children require a live issuing context",
+              }),
             ),
-          onSome: (reactiveRuntime) =>
-            reactiveText({ runtime: reactiveRuntime, signal }).pipe(
-              Effect.mapError((error) => new ConstructionError({ message: error.message })),
-              Effect.map((node) => element.append(node)),
-            ),
+          onSome: (runtime) =>
+            Effect.gen(function* () {
+              const input: Signal<unknown> = signal;
+              const value = yield* input.get.pipe(
+                Effect.mapError((error) => new ConstructionError({ message: error.message })),
+              );
+              yield* Match.value(typeof value === "string").pipe(
+                Match.when(true, () =>
+                  reactiveText({ runtime, signal }).pipe(
+                    Effect.mapError((error) => new ConstructionError({ message: error.message })),
+                    Effect.map((node) => element.append(node)),
+                  ),
+                ),
+                Match.when(false, () =>
+                  selectedRegion({ signal, issuer: owner }).pipe(
+                    Effect.map((region) => {
+                      element.append(region.start, region.end);
+                      regions.push(region);
+                    }),
+                  ),
+                ),
+                Match.exhaustive,
+              );
+            }),
         }),
       ),
       Match.orElse((definition) => {

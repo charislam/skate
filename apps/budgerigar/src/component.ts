@@ -5,6 +5,8 @@ const TypeId = "~budgerigar/Component";
 
 export interface Component {
   readonly [TypeId]: typeof TypeId;
+  /** Fresh native pending content, constructed synchronously before setup starts. */
+  readonly fallback?: () => Output;
   readonly setup: (context: ComponentContext) => Effect.Effect<Output, unknown, Scope.Scope>;
 }
 

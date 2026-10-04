@@ -20,7 +20,7 @@ const harness = async () => {
   const scope = await run(Scope.make());
   const failures: MountFailure[] = [];
   const errors = Deferred.makeUnsafe<MountFailure>();
-  const h = await run(
+  const { h } = await run(
     mounting({
       scope,
       onError: (failure) => {
@@ -183,7 +183,7 @@ describe("reactive DOM and ownership", () => {
     ).toBe(true);
   });
 
-  it("interrupts active batches before attached-DOM finalizers and rejects retained handles", async () => {
+  it("interrupts active batches before asynchronous finalizers and rejects retained handles", async () => {
     const { h, close } = await harness();
     const parent = document.createElement("div");
     const ready = Deferred.makeUnsafe<{
@@ -221,7 +221,7 @@ describe("reactive DOM and ownership", () => {
     await run(Deferred.await(staged));
     const closing = close();
     await run(Deferred.await(cleaning));
-    expect(parent.textContent).toBe("old");
+    expect(parent.textContent).toBe("");
     expect(Exit.isFailure(await run(Fiber.await(batch)))).toBe(true);
     expect(Exit.isFailure(await run(signal.set("late").pipe(Effect.exit)))).toBe(true);
     await run(Deferred.succeed(releaseCleanup, undefined));

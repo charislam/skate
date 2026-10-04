@@ -59,7 +59,7 @@ it("fails string signal construction through the error channel without a reactiv
         const construction = construct(owner)("p", { children: [text] });
         const error = yield* construction.pipe(Effect.flip);
         expect(error).toBeInstanceOf(ConstructionError);
-        expect(error.message).toBe("Reactive text requires a component owner");
+        expect(error.message).toBe("Reactive children require a live issuing context");
         expect(yield* text.get).toBe("count: 0");
       }),
     ),
