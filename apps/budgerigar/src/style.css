@@ -17,6 +17,8 @@ body {
 }
 
 main {
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 2rem;
   text-align: center;
 }
@@ -29,4 +31,96 @@ h1 {
 p {
   margin: 0;
   color: #4b5563;
+}
+
+.counter {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, auto) repeat(3, auto);
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 2px 8px #1f293708;
+}
+
+.counter:first-of-type {
+  margin-top: 2rem;
+}
+
+.counter output {
+  padding: 0.375rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.counter button {
+  appearance: none;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.625rem;
+  background: #f9fafb;
+  color: #374151;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.counter button:hover {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+}
+
+.counter button:first-of-type {
+  border-color: #047857;
+  background: #047857;
+  color: #fff;
+}
+
+.counter button:first-of-type:hover {
+  border-color: #065f46;
+  background: #065f46;
+}
+
+.counter button:focus-visible {
+  outline: 3px solid #6ee7b7;
+  outline-offset: 3px;
+}
+
+.counter button:active {
+  transform: translateY(1px);
+}
+
+@media (max-width: 480px) {
+  main {
+    width: 100%;
+    padding: 1rem;
+  }
+
+  .counter {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .counter output {
+    grid-column: 1 / -1;
+  }
+
+  .counter button {
+    padding-inline: 0.5rem;
+    font-size: 0.8125rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .counter button {
+    transition: none;
+  }
 }

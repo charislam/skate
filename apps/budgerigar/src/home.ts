@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { Counter } from "./counter";
 import { component } from "./framework";
 
 export const Home = component({
@@ -8,6 +9,8 @@ export const Home = component({
         children: [
           yield* he("h1", { children: ["Budgerigar"] }),
           yield* he("p", { children: ["Welcome home."] }),
+          Counter,
+          Counter,
         ],
       });
     }),

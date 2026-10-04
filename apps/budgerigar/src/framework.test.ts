@@ -61,8 +61,8 @@ describe("scoped component mounting", () => {
     h(left, Home);
     h(right, Home);
     await Promise.all([
-      rendered(left, "BudgerigarWelcome home."),
-      rendered(right, "BudgerigarWelcome home."),
+      rendered(left, "BudgerigarWelcome home.0IncrementDecrementReset0IncrementDecrementReset"),
+      rendered(right, "BudgerigarWelcome home.0IncrementDecrementReset0IncrementDecrementReset"),
     ]);
     expect(left.firstChild).not.toBe(right.firstChild);
     expect(left.querySelector("main > h1")?.textContent).toBe("Budgerigar");
