@@ -1,11 +1,22 @@
 import { Effect, Match } from "effect";
 import { registerBinding } from "./dom";
-import { calculate, requireValid, type ReactiveRuntime } from "./runtime";
+import { calculate, ReactiveError, type ReactiveRuntime } from "./runtime";
 import { type Signal } from "./signal";
+
+const validateText = (value: unknown) =>
+  Match.value(value).pipe(
+    Match.when(
+      (value: unknown): value is string => typeof value === "string",
+      (text) => Effect.succeed(text),
+    ),
+    Match.orElse(() =>
+      Effect.fail(new ReactiveError({ message: "Reactive text requires a string signal" })),
+    ),
+  );
 
 export const reactiveText = Effect.fn("Budgerigar.reactiveText")(function* (options: {
   runtime: ReactiveRuntime;
-  signal: Signal<string>;
+  signal: Signal<unknown>;
 }) {
   const text = document.createTextNode("");
   yield* registerBinding({
@@ -13,15 +24,18 @@ export const reactiveText = Effect.fn("Budgerigar.reactiveText")(function* (opti
     node: text,
     kind: "text",
     name: "data",
-    validate: (value) =>
-      requireValid(typeof value === "string", "Reactive text requires a string signal"),
+    validate: validateText,
     write: (value) =>
-      calculate(() =>
-        Match.value(text.data !== value).pipe(
-          Match.when(true, () => {
-            text.data = value;
-          }),
-          Match.orElse(() => {}),
+      validateText(value).pipe(
+        Effect.flatMap((value) =>
+          calculate(() =>
+            Match.value(text.data !== value).pipe(
+              Match.when(true, () => {
+                text.data = value;
+              }),
+              Match.orElse(() => {}),
+            ),
+          ),
         ),
       ),
   });

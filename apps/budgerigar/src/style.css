@@ -143,6 +143,8 @@ p {
   max-width: 100%;
   padding: 0.5rem;
   font: inherit;
+  border-radius: 1rem;
+  border: 1px solid #d1d5db;
 }
 .text-input p {
   margin-block: 0.75rem;
@@ -168,6 +170,6 @@ p {
 .tabs button:focus-visible,
 .tabs [role="tabpanel"]:focus-visible,
 .text-input :focus-visible {
-  outline: 3px solid #2563eb;
+  outline: 3px solid #6ee7b7;
   outline-offset: 3px;
 }

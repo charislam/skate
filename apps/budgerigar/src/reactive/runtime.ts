@@ -71,6 +71,7 @@ export interface SignalCommit {
 /** Shared signal membership; commits run synchronously without yielding. */
 export interface CommitCoordinator {
   readonly signals: Set<SignalCommit>;
+  committing: boolean;
 }
 
 export interface ReactiveFailure {
@@ -109,7 +110,7 @@ export const makeReactiveRuntime = Effect.fn("Budgerigar.makeReactiveRuntime")(f
 }) {
   const eventQueue = yield* Queue.unbounded<EventWork>();
   const coordinator = Option.match(options.parent, {
-    onNone: (): CommitCoordinator => ({ signals: new Set() }),
+    onNone: (): CommitCoordinator => ({ signals: new Set(), committing: false }),
     onSome: (parent) => parent.coordinator,
   });
   const lifetime: ComponentLifetime = {
@@ -210,42 +211,60 @@ export const poison = <A, E, R>(options: {
   );
 
 const commit = (transaction: Transaction): Effect.Effect<void, ReactiveError> =>
-  // Run the complete synchronous Effect in one section of the calling fiber.
-  // The sync runner drains cooperative continuations before returning; validation cannot race a
-  // competing commit, and publication cannot precede the DOM flush.
+  // The guard, validation, flush, publication, and guard release all run within
+  // one synchronous section. Reentrant callbacks cannot enter another commit.
   Effect.sync(() =>
     Effect.runSyncExit(
-      Effect.gen(function* () {
-        for (const [participant, version] of transaction.reads) {
-          yield* requireValid(
-            participant.lifetime.active() && participant.version === version,
-            "Batch conflict: a signal read or written by this batch changed or was disposed",
-          );
-        }
-        const affected = new Set(transaction.touched);
-        for (const participant of affected)
-          for (const dependent of participant.dependents) affected.add(dependent);
-        const ordered = Array.from(affected).sort((a, b) => a.depth - b.depth);
-        transaction.phase = TransactionPhase.Preparing({ prepared: new Set() });
-        for (const participant of ordered) {
-          yield* Match.value(
-            participant.lifetime.active() &&
-              (transaction.touched.has(participant) ||
-                participant.dependencies.some((dependency) => transaction.touched.has(dependency))),
-          ).pipe(
-            Match.when(true, () => participant.prepare(transaction)),
-            Match.orElse(() => Effect.void),
-          );
-        }
-        const changed = Array.from(transaction.touched).filter((participant) =>
-          participant.hasChange(transaction),
-        );
-        for (const participant of changed) yield* participant.validateDom(transaction);
-        for (const participant of changed) participant.apply(transaction);
-        for (const participant of changed) yield* participant.flushDom();
-        for (const participant of changed) participant.publishChanges();
-        for (const publish of transaction.publications) publish();
-      }),
+      Effect.acquireUseRelease(
+        requireValid(
+          !transaction.coordinator.committing,
+          "Reentrant commits during DOM flushing are not allowed",
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              transaction.coordinator.committing = true;
+            }),
+          ),
+        ),
+        () =>
+          Effect.gen(function* () {
+            for (const [participant, version] of transaction.reads) {
+              yield* requireValid(
+                participant.lifetime.active() && participant.version === version,
+                "Batch conflict: a signal read or written by this batch changed or was disposed",
+              );
+            }
+            const affected = new Set(transaction.touched);
+            for (const participant of affected)
+              for (const dependent of participant.dependents) affected.add(dependent);
+            const ordered = Array.from(affected).sort((a, b) => a.depth - b.depth);
+            transaction.phase = TransactionPhase.Preparing({ prepared: new Set() });
+            for (const participant of ordered) {
+              yield* Match.value(
+                participant.lifetime.active() &&
+                  (transaction.touched.has(participant) ||
+                    participant.dependencies.some((dependency) =>
+                      transaction.touched.has(dependency),
+                    )),
+              ).pipe(
+                Match.when(true, () => participant.prepare(transaction)),
+                Match.orElse(() => Effect.void),
+              );
+            }
+            const changed = Array.from(transaction.touched).filter((participant) =>
+              participant.hasChange(transaction),
+            );
+            for (const participant of changed) yield* participant.validateDom(transaction);
+            for (const participant of changed) participant.apply(transaction);
+            for (const participant of changed) yield* participant.flushDom();
+            for (const participant of changed) participant.publishChanges();
+            for (const publish of transaction.publications) publish();
+          }),
+        () =>
+          Effect.sync(() => {
+            transaction.coordinator.committing = false;
+          }),
+      ),
     ),
   ).pipe(Effect.flatMap((exit) => exit));
 
