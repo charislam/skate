@@ -1,4 +1,4 @@
-import { Effect, Match } from "effect";
+import { Effect, Match, Option } from "effect";
 import { component, mapEvents, mergeEvents } from "./framework";
 
 type Action = "increment" | "decrement" | "reset";
@@ -27,7 +27,7 @@ export const Counter = component({
       });
       const label = yield* derive({ sources: { count }, compute: ({ count }) => String(count) });
       return yield* he("section", {
-        attrs: { class: "counter", "aria-label": "Counter" },
+        attrs: { class: Option.some("counter"), "aria-label": Option.some("Counter") },
         children: [yield* he("output", { children: [label] }), increment, decrement, reset],
       });
     }),

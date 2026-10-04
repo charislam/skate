@@ -60,9 +60,10 @@ export interface SignalCommit {
   readonly dependents: Set<SignalCommit>;
   readonly depth: number;
   version: number;
-  readonly prepare: (transaction: Transaction) => void;
+  readonly prepare: (transaction: Transaction) => Effect.Effect<void, ReactiveError>;
   readonly apply: (transaction: Transaction) => void;
-  readonly flushText: () => void;
+  readonly validateDom: (transaction: Transaction) => Effect.Effect<void, ReactiveError>;
+  readonly flushDom: () => Effect.Effect<void>;
   readonly publishChanges: () => void;
   readonly hasChange: (transaction: Transaction) => boolean;
 }
@@ -73,7 +74,7 @@ export interface CommitCoordinator {
 }
 
 export interface ReactiveFailure {
-  readonly operation: "reactive";
+  readonly operation: "reactive" | "reactive-dom";
   readonly resource: object;
   readonly cause: Cause.Cause<unknown>;
 }
@@ -209,46 +210,44 @@ export const poison = <A, E, R>(options: {
   );
 
 const commit = (transaction: Transaction): Effect.Effect<void, ReactiveError> =>
-  calculate(() => {
-    // Validation, preparation, installation, and publication form one synchronous
-    // section. No other fiber can commit between validation and installation.
-    for (const [participant, version] of transaction.reads) {
-      Match.value(participant.lifetime.active() && participant.version === version).pipe(
-        Match.when(false, () => {
-          throw new ReactiveError({
-            message:
-              "Batch conflict: a signal read or written by this batch changed or was disposed",
-          });
-        }),
-        Match.orElse(() => {}),
-      );
-    }
-    const affected = new Set(transaction.touched);
-    for (const participant of affected)
-      for (const dependent of participant.dependents) affected.add(dependent);
-    const ordered = Array.from(affected).sort((a, b) => a.depth - b.depth);
-    transaction.phase = TransactionPhase.Preparing({ prepared: new Set() });
-    // No user calculation runs after prepare: installation and DOM flush cannot yield.
-    for (const participant of ordered) {
-      Match.value(
-        participant.lifetime.active() &&
-          (transaction.touched.has(participant) ||
-            participant.dependencies.some((dependency) => transaction.touched.has(dependency))),
-      ).pipe(
-        Match.when(true, () => {
-          participant.prepare(transaction);
-        }),
-        Match.orElse(() => {}),
-      );
-    }
-    const changed = Array.from(transaction.touched).filter((participant) =>
-      participant.hasChange(transaction),
-    );
-    for (const participant of changed) participant.apply(transaction);
-    for (const participant of changed) participant.flushText();
-    for (const participant of changed) participant.publishChanges();
-    for (const publish of transaction.publications) publish();
-  });
+  // Run the complete synchronous Effect in one section of the calling fiber.
+  // The sync runner drains cooperative continuations before returning; validation cannot race a
+  // competing commit, and publication cannot precede the DOM flush.
+  Effect.sync(() =>
+    Effect.runSyncExit(
+      Effect.gen(function* () {
+        for (const [participant, version] of transaction.reads) {
+          yield* requireValid(
+            participant.lifetime.active() && participant.version === version,
+            "Batch conflict: a signal read or written by this batch changed or was disposed",
+          );
+        }
+        const affected = new Set(transaction.touched);
+        for (const participant of affected)
+          for (const dependent of participant.dependents) affected.add(dependent);
+        const ordered = Array.from(affected).sort((a, b) => a.depth - b.depth);
+        transaction.phase = TransactionPhase.Preparing({ prepared: new Set() });
+        for (const participant of ordered) {
+          yield* Match.value(
+            participant.lifetime.active() &&
+              (transaction.touched.has(participant) ||
+                participant.dependencies.some((dependency) => transaction.touched.has(dependency))),
+          ).pipe(
+            Match.when(true, () => participant.prepare(transaction)),
+            Match.orElse(() => Effect.void),
+          );
+        }
+        const changed = Array.from(transaction.touched).filter((participant) =>
+          participant.hasChange(transaction),
+        );
+        for (const participant of changed) yield* participant.validateDom(transaction);
+        for (const participant of changed) participant.apply(transaction);
+        for (const participant of changed) yield* participant.flushDom();
+        for (const participant of changed) participant.publishChanges();
+        for (const publish of transaction.publications) publish();
+      }),
+    ),
+  ).pipe(Effect.flatMap((exit) => exit));
 
 const evaluateBatch = <A, E, R>(options: {
   runtime: ReactiveRuntime;

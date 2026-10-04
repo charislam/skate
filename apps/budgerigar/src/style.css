@@ -124,3 +124,50 @@ p {
     transition: none;
   }
 }
+
+.text-input,
+.tabs {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 1rem;
+  background: #fff;
+}
+.text-input label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+.text-input input {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+}
+.text-input p {
+  margin-block: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.text-input button,
+.tabs button {
+  padding: 0.625rem;
+  margin: 0.25rem;
+  font: inherit;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.tabs button.selected {
+  background: #047857;
+  color: white;
+  border-color: #047857;
+}
+.tabs [role="tabpanel"] {
+  padding: 1rem;
+}
+.tabs button:focus-visible,
+.tabs [role="tabpanel"]:focus-visible,
+.text-input :focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
+}

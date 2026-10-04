@@ -3,10 +3,20 @@ import { isComponent, type Component } from "./component";
 import {
   isSignal,
   reactiveText,
-  validateReactiveNode,
   type Signal,
   type ReactiveRuntime,
+  type ReactiveError,
 } from "./reactive";
+import {
+  attributeNameValid,
+  bindEntry,
+  markElementOwner,
+  validateAttribute,
+  validateReactiveNode,
+  writeAttribute,
+  type AttributeValue,
+} from "./reactive/dom";
+import { propertyValidator, writeProperty } from "./reactive/properties";
 
 export type MountItem = Component | Node;
 export type Child = string | MountItem | Signal<string>;
@@ -34,12 +44,14 @@ type PropertyKeys<T> = {
       : K;
 }[WritableKeys<T>];
 
-export type ElementProperties<K extends keyof HTMLElementTagNameMap> = Partial<
-  Pick<HTMLElementTagNameMap[K], PropertyKeys<HTMLElementTagNameMap[K]>>
->;
+export type ElementProperties<K extends keyof HTMLElementTagNameMap> = {
+  readonly [P in PropertyKeys<HTMLElementTagNameMap[K]>]?:
+    | HTMLElementTagNameMap[K][P]
+    | Signal<HTMLElementTagNameMap[K][P]>;
+};
 
 export interface ElementOptions<K extends keyof HTMLElementTagNameMap> {
-  readonly attrs?: Readonly<Record<string, string | boolean>>;
+  readonly attrs?: Readonly<Record<string, AttributeValue | Signal<AttributeValue>>>;
   readonly props?: ElementProperties<K>;
   readonly children?: ReadonlyArray<Child>;
 }
@@ -218,15 +230,6 @@ export const checkStructure = Effect.fn("Budgerigar.checkStructure")(function* (
   }
 });
 
-const forbiddenAttribute = (name: string): boolean =>
-  name.toLowerCase().startsWith("on") || name.toLowerCase() === "srcdoc";
-
-const forbiddenProperty = (name: string): boolean =>
-  forbiddenAttribute(name) ||
-  ["innerhtml", "outerhtml", "textcontent", "innertext", "outertext", "srcdoc"].includes(
-    name.toLowerCase(),
-  );
-
 const tags = new Set(
   "a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script search section select slot small source span strong style sub summary sup table tbody td template textarea tfoot th thead time title tr track u ul var video wbr".split(
     " ",
@@ -254,18 +257,41 @@ const constructElement = Effect.fn("Budgerigar.constructElement")(function* <
   });
 
   const element = document.createElement(tag);
+  markElementOwner({ element, runtime: owner.reactiveRuntime });
 
+  const constructionFailure = (error: { message: string }) =>
+    new ConstructionError({ message: error.message });
   for (const [name, value] of Object.entries(options.attrs ?? {})) {
-    yield* validate(!forbiddenAttribute(name), `unsupported attribute ${name}`);
-    yield* Match.value(value).pipe(
-      Match.when(
-        (v): v is string => typeof v === "string",
-        (v) => Effect.sync(() => element.setAttribute(name, v)),
-      ),
-      Match.when(true, () => Effect.sync(() => element.setAttribute(name, ""))),
-      Match.when(false, () => Effect.void),
-      Match.orElse(() => validate(false, `unsupported attribute value for ${name}`)),
+    yield* validate(attributeNameValid(name), `unsupported attribute ${name}`);
+    yield* bindEntry({
+      runtime: owner.reactiveRuntime,
+      element,
+      kind: "attribute",
+      name: name.toLowerCase(),
+      value,
+      validate: validateAttribute,
+      write: (value) => writeAttribute({ element, name: name.toLowerCase(), value }),
+    }).pipe(Effect.mapError(constructionFailure));
+  }
+  // Validate and claim property destinations before moving children. Native
+  // properties are still assigned last, preserving wholly static precedence.
+  const propertyWrites: Array<Effect.Effect<void, ReactiveError>> = [];
+  for (const [name, value] of Object.entries(options.props ?? {})) {
+    const check = yield* propertyValidator({ element, name }).pipe(
+      Effect.mapError(constructionFailure),
     );
+    yield* bindEntry({
+      runtime: owner.reactiveRuntime,
+      element,
+      kind: "property",
+      name,
+      value,
+      validate: check,
+      write: (value) => writeProperty({ element, name, value }),
+      initialize: (write) => {
+        propertyWrites.push(write);
+      },
+    }).pipe(Effect.mapError(constructionFailure));
   }
 
   const regions: Region[] = [];
@@ -300,16 +326,9 @@ const constructElement = Effect.fn("Budgerigar.constructElement")(function* <
   }
   constructedRegions.set(element, regions);
 
-  for (const [name, value] of Object.entries(options.props ?? {})) {
-    yield* validate(
-      !forbiddenProperty(name) &&
-        name !== "style" &&
-        name in element &&
-        typeof Reflect.get(element, name) !== "function",
-      `unsupported property ${name}`,
-    );
-    Reflect.set(element, name, value);
-  }
+  for (const write of propertyWrites) yield* write.pipe(Effect.mapError(constructionFailure));
+  propertyWrites.length = 0;
+
   return element;
 });
 

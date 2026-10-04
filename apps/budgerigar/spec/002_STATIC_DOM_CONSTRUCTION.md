@@ -1,5 +1,10 @@
 # Budgerigar: static DOM construction and mixed children
 
+The attribute-value rules in this historical specification are superseded by
+`004_REACTIVE_ATTRIBUTES_AND_PROPERTIES.md`: current attributes require
+`Option<true | string>` (or a signal of that type), with `None` removing an
+attribute. Wholly static attribute/property precedence remains unchanged.
+
 ## Purpose and scope
 
 Add Effect-based static HTML construction through `he` and extend `h` to replace a

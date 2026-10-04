@@ -14,12 +14,19 @@ import {
   TransactionPhase,
 } from "./runtime";
 
+export interface DomSink {
+  readonly validate: (
+    transaction: Option.Option<Transaction>,
+  ) => Effect.Effect<void, ReactiveError>;
+  readonly flush: () => Effect.Effect<void>;
+}
+
 const SignalTypeId = "~budgerigar/Signal";
 const SignalState = Symbol("Budgerigar/SignalState");
 interface SignalData<A> {
   readonly participant: SignalCommit;
   readonly candidate: (transaction: Option.Option<Transaction>) => A;
-  readonly bind: (text: Text) => () => void;
+  readonly bind: (sink: DomSink) => () => void;
 }
 export interface Signal<A> {
   readonly [SignalTypeId]: typeof SignalTypeId;
@@ -56,7 +63,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
   let value = options.initial;
   const staged = new WeakMap<Transaction, { readonly value: A }>();
   const readCache = new WeakMap<Transaction, { readonly value: A; readonly revision: number }>();
-  const bindings = new Set<Text>();
+  const bindings = new Set<DomSink>();
   const observers = new Set<Queue.Queue<A>>();
   const equals: Equality<A> =
     options.equals ?? (({ previous, proposed }) => Object.is(previous, proposed));
@@ -141,40 +148,45 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
       0,
     ),
     version: 0,
-    prepare: (transaction) => {
-      const proposed = Option.match(options.compute, {
-        onNone: () => stagedValue(transaction),
-        // Dependencies prepared earlier in creation order retain equal old values.
-        onSome: (compute) => compute(Option.some(transaction)),
-      });
-      Match.value(equals({ previous: value, proposed })).pipe(
-        Match.when(true, () => {
-          staged.set(transaction, { value });
-          transaction.touched.delete(participant);
-        }),
-        Match.when(false, () => {
-          staged.set(transaction, { value: proposed });
-          transaction.touched.add(participant);
-        }),
-        Match.exhaustive,
-      );
-      Match.value(transaction.phase).pipe(
-        Match.tag("Preparing", ({ prepared }) => {
+    prepare: (transaction) =>
+      Effect.gen(function* () {
+        const prepared = yield* Match.value(transaction.phase).pipe(
+          Match.tag("Preparing", ({ prepared }) => Effect.succeed(prepared)),
+          Match.orElse(() =>
+            Effect.fail(
+              new ReactiveError({ message: "Signal preparation requires the preparing phase" }),
+            ),
+          ),
+        );
+        yield* calculate(() => {
+          const proposed = Option.match(options.compute, {
+            onNone: () => stagedValue(transaction),
+            onSome: (compute) => compute(Option.some(transaction)),
+          });
+          Match.value(equals({ previous: value, proposed })).pipe(
+            Match.when(true, () => {
+              staged.set(transaction, { value });
+              transaction.touched.delete(participant);
+            }),
+            Match.when(false, () => {
+              staged.set(transaction, { value: proposed });
+              transaction.touched.add(participant);
+            }),
+            Match.exhaustive,
+          );
           prepared.add(participant);
-        }),
-        Match.orElse(() => {
-          throw new ReactiveError({ message: "Signal preparation requires the preparing phase" });
-        }),
-      );
-    },
+        });
+      }),
     hasChange: (transaction) => !Object.is(stagedValue(transaction), value),
     apply: (transaction) => {
       value = stagedValue(transaction);
       participant.version += 1;
     },
-    flushText: () => {
-      for (const text of bindings) text.data = String(value);
-    },
+    validateDom: (transaction) =>
+      Effect.forEach(bindings, (sink) => sink.validate(Option.some(transaction)), {
+        discard: true,
+      }),
+    flushDom: () => Effect.forEach(bindings, (sink) => sink.flush(), { discard: true }),
     publishChanges: () => {
       for (const queue of observers) Queue.offerUnsafe(queue, value);
     },
@@ -204,23 +216,31 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
         );
         yield* poison({
           transaction,
-          work: calculate(() => {
-            const previous = readSource(transaction);
-            const proposed = f(previous);
-            Match.value(equals({ previous, proposed })).pipe(
-              Match.when(false, () => {
-                transaction.phase = Match.value(transaction.phase).pipe(
+          work: Effect.gen(function* () {
+            const change = yield* calculate(() => {
+              const previous = readSource(transaction);
+              const proposed = f(previous);
+              return { proposed, equal: equals({ previous, proposed }) };
+            });
+            yield* Match.value(change.equal).pipe(
+              Match.when(true, () => Effect.void),
+              Match.when(false, () =>
+                Match.value(transaction.phase).pipe(
                   Match.tag("Staging", ({ revision }) =>
-                    TransactionPhase.Staging({ revision: revision + 1 }),
+                    Effect.sync(() => {
+                      transaction.phase = TransactionPhase.Staging({ revision: revision + 1 });
+                      staged.set(transaction, { value: change.proposed });
+                      transaction.touched.add(participant);
+                    }),
                   ),
-                  Match.orElse(() => {
-                    throw new ReactiveError({ message: "Signal writes require the staging phase" });
-                  }),
-                );
-                staged.set(transaction, { value: proposed });
-                transaction.touched.add(participant);
-              }),
-              Match.orElse(() => {}),
+                  Match.orElse(() =>
+                    Effect.fail(
+                      new ReactiveError({ message: "Signal writes require the staging phase" }),
+                    ),
+                  ),
+                ),
+              ),
+              Match.exhaustive,
             );
           }),
         });
@@ -231,11 +251,10 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
     [SignalState]: {
       participant,
       candidate,
-      bind: (text) => {
-        text.data = String(value);
-        bindings.add(text);
+      bind: (sink) => {
+        bindings.add(sink);
         return () => {
-          bindings.delete(text);
+          bindings.delete(sink);
         };
       },
     },

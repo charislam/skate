@@ -12,9 +12,10 @@ The context provides:
 
 - `he(tag, options?)` to return an Effect that constructs a detached HTML element.
   Validation failures use the typed `ConstructionError` channel. Options
-  contain static `attrs`, writable native `props`, and ordered `children` consisting
-  of strings, nodes, or component definitions. Attributes precede children, and
-  properties are assigned last. Strings become literal text nodes.
+  contain optional-value `attrs`, writable native `props`, and ordered `children`
+  consisting of strings, nodes, signals of strings, or component definitions.
+  Attribute and property entries can themselves be signals. Attributes precede
+  children, and properties are assigned last. Strings become literal text nodes.
 - `h(parent, content)` to enqueue replacement of all children and return
   immediately. Content is a node, component, or readonly mixed array; `[]` clears
   the target after cleanup.
@@ -72,9 +73,10 @@ ignored; evaluating a construction Effect after disposal fails with `Constructio
 
 ## Reactive state
 
-The welcome page mounts two independent counters. Each folds a merged stream of
-button clicks into state and derives its displayed text without rerunning setup.
-Setup also receives these owner-bound helpers:
+The welcome page mounts two independent counters, a text input, and accessible
+tabs. Each folds a merged stream of button clicks into state and derives its
+displayed text without rerunning setup. Setup also receives these owner-bound
+helpers:
 
 - `signal({ initial, equals? })` creates a writable signal with effectful `get`,
   `set(value)`, and `update(f)` operations.
@@ -101,7 +103,7 @@ Setup also receives these owner-bound helpers:
   Outside readers see committed state and other writers can proceed. A concurrent
   change to a source read or written by the batch fails it with a batch conflict;
   the body is never retried automatically. Success flushes affected derivations
-  and text together before returning. Failure or interruption discards the
+  and DOM bindings together before returning. Failure or interruption discards the
   complete batch. A failed nested batch invalidates the outer batch even when
   caught. External side effects cannot be rolled back.
 
@@ -149,7 +151,7 @@ The runtime separates component lifetime from transaction coordination:
 - `ReactiveRuntime` connects a component lifetime to that coordinator and the
   component's ordered DOM event queue.
 - `SignalCommit` is a signal's participation in commits: dependencies, preparation,
-  value installation, text flushing, and change publication. Signal values,
+  value installation, DOM validation/flushing, and change publication. Signal values,
   staged candidates, and read caches remain private to the signal. Reverse
   dependency links and dependency depth identify and order affected signals;
   committed versions detect conflicting batches.
@@ -160,9 +162,97 @@ The runtime separates component lifetime from transaction coordination:
 
 A batch stages writes privately without blocking other batches. On success it
 validates captured source versions and prepares affected signals in dependency
-order, installs every changed value, flushes text, and then publishes signal
-changes and events. This entire commit is synchronous and cannot interleave with
+order, validates affected DOM sinks, installs every changed value, flushes DOM,
+and then publishes signal changes and events. This entire commit is synchronous and cannot interleave with
 another fiber's commit. It never scans unrelated signals. Failure discards the
 staged work, preserving other batches' successful commits. Either
 outcome closes the transaction. Component disposal cancels its batch fibers and
 runs its cleanup callbacks, which unregister its signals from the coordinator.
+
+## Reactive DOM values and editing
+
+Each `attrs` or `props` entry accepts an independent static value or signal.
+Attributes **require** `Option<true | string>`: `Some(true)` sets an empty
+attribute, `Some(string)` sets that literal string, and only `None` removes it.
+Empty strings and strings such as `"false"`, `"true"`, and `"null"` stay literal.
+For a boolean HTML attribute, `Some("false")` still leaves it present. Bare
+strings/booleans, `Some(false)`, numbers, objects, null, and undefined are rejected
+by types and runtime validation. Attribute names are validated before adoption.
+Omitted keys install no writer.
+
+Properties retain their native, tag-specific types, including nullability;
+`Signal<boolean>` can drive `input.disabled`, for example. Methods, readonly
+members, event handlers, HTML injection, structural text fields, and `style`
+remain excluded. `Option` does not delete properties. Native undefined is only
+accepted for a native property whose domain includes it.
+
+```ts
+const Input = component({
+  setup: ({ he, signal, derive, bindValue }) =>
+    Effect.gen(function* () {
+      const text = yield* signal({ initial: "" });
+      const hint = yield* derive({
+        sources: { text },
+        compute: ({ text }) =>
+          Match.value(text.length > 0).pipe(
+            Match.when(true, () => Option.some("Clear to reset")),
+            Match.when(false, () => Option.none<string>()),
+            Match.exhaustive,
+          ),
+      });
+      const input = yield* he("input", {
+        attrs: { "aria-label": Option.some("Your text"), title: hint },
+        props: { type: "text" },
+      });
+      yield* bindValue({ element: input, signal: text });
+      return yield* he("section", { children: [input, text] });
+    }),
+});
+```
+
+Construction initializes detached nodes without subscriptions. Adoption validates
+again, refreshes from committed snapshots, and activates the bindings. Tree
+replacement and component disposal release sinks and listeners before DOM removal,
+including bindings to ancestor signals. External DOM removal still does not
+trigger disposal. Signals preserve equality: an equal write does not force a
+refresh or a retry. Redundant destination assignments are skipped.
+
+Candidate commits validate affected DOM values before installing any state;
+invalid candidates fail with `ReactiveError` and leave state and DOM intact.
+All changed state is installed before synchronous text, attribute, and property
+flushing, followed by observations. Only affected bindings are visited.
+
+A native assignment failure occurs **after** a valid state commit. It reports
+`operation: "reactive-dom"` through `mounting({ onError })`, with a resource
+`{ element, kind, name }` and the original cause. Each failed attempt reports once;
+other bindings and observations continue even if the error handler throws. The
+write succeeds, and the failed binding stays active. A later changed value retries;
+equal writes do not. Initialization and adoption use the same reporting policy.
+Successful browser normalization does not rewrite the source signal.
+
+`bindValue({ element, signal })` requires a writable string signal and an input or
+textarea constructed by the issuing context. Register it during setup before
+adoption. Supported input types are text, search, tel, url, email, and password.
+Listeners are installed only at adoption and released with the tree. Programmatic
+writes do not synthesize input/change events. Browser input snapshots are captured
+synchronously and processed in order; older queued echoes do not overwrite a newer
+editing buffer. Ordinary input echo skips assignment, preserving focus and caret.
+
+During IME composition, model writes leave the browser buffer intact and user
+publication is deferred. Composition end enqueues the completed string once;
+a duplicate trailing input does not publish again. **Composition completion wins
+over programmatic text changes made during composition.** Later programmatic
+writes work normally. Disposal cancels pending owned input work.
+
+`events(element, name, { synchronous })` optionally runs a small native ingress
+callback before queueing the event. Use it for timely `preventDefault`; keep
+signal changes and focus work in the normal ordered handlers. Existing two-argument
+calls behave as before.
+
+The home page now includes an independent text-input demo and three manual tabs.
+Tab buttons keep distinct selected and focused state. Left/Right wrap focus;
+Home/End focus the ends without selecting. Native Enter/Space activation selects
+through click alone; Tab leaves the list normally. Panels remain mounted and use
+reactive `hidden` properties, with keyboard entry points and unique ARIA IDs.
+
+Run `pnpm test:budgerigar` for the deterministic DOM-emulator and type regressions.

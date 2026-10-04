@@ -14,13 +14,13 @@ import {
   type Tree,
 } from "./construction";
 import {
-  activateReactiveNode,
   makeReactiveRuntime,
   reactive,
   stopReactiveRuntime,
   type ReactiveContext,
   type ReactiveRuntime,
 } from "./reactive";
+import { activateReactiveNode } from "./reactive/dom";
 
 export { component, type Component } from "./component";
 export { ConstructionError } from "./construction";
@@ -71,7 +71,8 @@ export interface MountFailure {
     | "queue"
     | "background"
     | "validation"
-    | "reactive";
+    | "reactive"
+    | "reactive-dom";
   readonly resource?: object;
   readonly parent: Element;
   readonly subject: MountSubject;
@@ -329,7 +330,7 @@ const activate = Effect.fn("Budgerigar.activate")(function* (options: {
                     "region boundaries were removed",
                   );
 
-                  bindTree({ tree, lifetime: owner });
+                  yield* bindTree({ tree, lifetime: owner });
 
                   for (const node of roots) region.end.parentNode?.insertBefore(node, region.end);
                   return tree;
@@ -367,10 +368,19 @@ const failAttempt = Effect.fn("Budgerigar.failAttempt")(function* (options: {
   });
 });
 
-const bindTree = (options: { tree: Tree; lifetime: Owner }): void => {
-  for (const node of options.tree.nodes)
-    activateReactiveNode({ node, lifetime: { cleanups: options.lifetime.bindingCleanups } });
-};
+const bindTree = Effect.fn("Budgerigar.bindTree")((options: { tree: Tree; lifetime: Owner }) =>
+  // Adoption must activate the entire tree before another fiber can dispose it.
+  Effect.sync(() =>
+    Effect.runSyncExit(
+      Effect.forEach(
+        options.tree.nodes,
+        (node) =>
+          activateReactiveNode({ node, lifetime: { cleanups: options.lifetime.bindingCleanups } }),
+        { discard: true },
+      ),
+    ),
+  ).pipe(Effect.flatMap((exit) => exit)),
+);
 
 const activateTree: (options: {
   tree: Tree;
@@ -432,7 +442,7 @@ const install = Effect.fn("Budgerigar.install")(function* (queue: ParentQueue, r
 
               const direct: Region[] = [];
 
-              bindTree({ tree, lifetime });
+              yield* bindTree({ tree, lifetime });
 
               for (const item of request.subject.items) {
                 Match.value(item).pipe(

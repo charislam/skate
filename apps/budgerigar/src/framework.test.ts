@@ -1,9 +1,10 @@
-import { Cause, Deferred, Effect, Exit, Match, Scope } from "effect";
+import { Option, Cause, Deferred, Effect, Exit, Match, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrap } from "./bootstrap";
 import type { ConstructionError } from "./construction";
 import { component, mounting, type MountFailure } from "./framework";
 import { Home } from "./home";
+import { rendered as waitFor } from "./test-helpers";
 
 const run = Effect.runPromise;
 
@@ -61,8 +62,20 @@ describe("scoped component mounting", () => {
     h(left, Home);
     h(right, Home);
     await Promise.all([
-      rendered(left, "BudgerigarWelcome home.0IncrementDecrementReset0IncrementDecrementReset"),
-      rendered(right, "BudgerigarWelcome home.0IncrementDecrementReset0IncrementDecrementReset"),
+      waitFor({
+        parent: left,
+        check: () =>
+          left.querySelectorAll(".counter output").length === 2 &&
+          left.querySelector(".tabs") !== null &&
+          left.querySelector(".text-input") !== null,
+      }),
+      waitFor({
+        parent: right,
+        check: () =>
+          right.querySelectorAll(".counter output").length === 2 &&
+          right.querySelector(".tabs") !== null &&
+          right.querySelector(".text-input") !== null,
+      }),
     ]);
     expect(left.firstChild).not.toBe(right.firstChild);
     expect(left.querySelector("main > h1")?.textContent).toBe("Budgerigar");
@@ -717,11 +730,11 @@ describe("static DOM construction and regions", () => {
           Effect.gen(function* () {
             const input = yield* he("input", {
               attrs: {
-                value: "default",
-                disabled: false,
-                required: true,
-                "aria-expanded": "false",
-                "data-empty": "",
+                value: Option.some("default"),
+                disabled: Option.none(),
+                required: Option.some(true),
+                "aria-expanded": Option.some("false"),
+                "data-empty": Option.some(""),
               },
               props: { value: "current", checked: true },
             });
@@ -737,8 +750,14 @@ describe("static DOM construction and regions", () => {
 
             const select = yield* he("select", {
               children: [
-                yield* he("option", { attrs: { value: "apple" }, children: ["Apple"] }),
-                yield* he("option", { attrs: { value: "banana" }, children: ["Banana"] }),
+                yield* he("option", {
+                  attrs: { value: Option.some("apple") },
+                  children: ["Apple"],
+                }),
+                yield* he("option", {
+                  attrs: { value: Option.some("banana") },
+                  children: ["Banana"],
+                }),
               ],
               props: { value: "banana" },
             });
@@ -746,7 +765,7 @@ describe("static DOM construction and regions", () => {
             expect(select.value).toBe("banana");
 
             return yield* he("main", {
-              attrs: { class: "welcome" },
+              attrs: { class: Option.some("welcome") },
               children: [input, select, "<b>literal</b>"],
             });
           }),
@@ -782,11 +801,13 @@ describe("static DOM construction and regions", () => {
             expect(first.parentNode).toBeNull();
             expect(attached.childNodes.length).toBe(1);
             expect(
-              (yield* he("div", { attrs: { onclick: "alert(1)" } }).pipe(Effect.flip)).message,
+              (yield* he("div", { attrs: { onclick: Option.some("alert(1)") } }).pipe(Effect.flip))
+                .message,
             ).toContain("unsupported attribute");
             expect(
-              (yield* he("iframe", { attrs: { srcdoc: "<p>hello</p>" } }).pipe(Effect.flip))
-                .message,
+              (yield* he("iframe", { attrs: { srcdoc: Option.some("<p>hello</p>") } }).pipe(
+                Effect.flip,
+              )).message,
             ).toContain("unsupported attribute");
             return yield* he("div", { children: ["valid"] });
           }),
@@ -1309,7 +1330,7 @@ it("cleans setup resources and reports a typed construction failure", async () =
       setup: ({ he }) =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() => Deferred.succeed(cleaned, undefined));
-          return yield* he("div", { attrs: { onclick: "unsupported" } });
+          return yield* he("div", { attrs: { onclick: Option.some("unsupported") } });
         }),
     }),
   );
