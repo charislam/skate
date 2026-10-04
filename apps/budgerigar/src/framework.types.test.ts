@@ -1,7 +1,15 @@
 import { Effect } from "effect";
 import { expectTypeOf, it } from "vitest";
 import type { ConstructionError } from "./construction";
-import type { Component, Construct, Mount } from "./framework";
+import type {
+  Component,
+  ComponentContext,
+  Construct,
+  Mount,
+  ReactiveError,
+  Signal,
+  WritableSignal,
+} from "./framework";
 
 it("retains native tag and property types and restricts static construction", () => {
   // This function is checked by TypeScript but deliberately never executed.
@@ -93,5 +101,50 @@ it("retains native tag and property types and restricts static construction", ()
     h(parent, [[he("div")]]);
   };
 
+  expectTypeOf(author).toBeFunction();
+});
+
+it("retains reactive value and event types and hides mutation on derived and folded signals", () => {
+  const author = (context: ComponentContext) =>
+    Effect.gen(function* () {
+      const count = yield* context.signal({ initial: 0 });
+      expectTypeOf(count).toEqualTypeOf<WritableSignal<number>>();
+      expectTypeOf(count.get).toEqualTypeOf<Effect.Effect<number, ReactiveError>>();
+      const label = yield* context.derive({
+        sources: { count },
+        compute: ({ count }) => String(count),
+      });
+      expectTypeOf(label).toEqualTypeOf<Signal<string>>();
+      context.he("p", { children: [label] });
+      // @ts-expect-error Numeric signals must be explicitly formatted for text.
+      context.he("p", { children: [count] });
+      // @ts-expect-error Writable signal values retain their inferred type.
+      count.set("one");
+      // @ts-expect-error Derived signals have no mutation capability.
+      label.set("new");
+      // @ts-expect-error Derivation sources retain their value types.
+      context.derive({ sources: { count }, compute: ({ count }) => count.toUpperCase() });
+      const source = yield* context.source<number>();
+      // @ts-expect-error Event source emissions retain their payload type.
+      source.emit("event");
+      const folded = yield* context.fold({
+        events: source.events,
+        initial: 0,
+        reducer: ({ state, event }) => state + event,
+      });
+      expectTypeOf(folded).toEqualTypeOf<Signal<number>>();
+      // @ts-expect-error A fold reducer must return the state type.
+      context.fold({ events: source.events, initial: 0, reducer: () => "invalid" });
+      // @ts-expect-error Folded signals are read-only.
+      folded.update((n: number) => n + 1);
+      const button = yield* context.he("button");
+      const clicks = yield* context.events(button, "click");
+      context.subscribe(clicks, (event) => {
+        expectTypeOf(event).toEqualTypeOf<HTMLElementEventMap["click"]>();
+        return Effect.void;
+      });
+      // @ts-expect-error DOM event names are native and typed.
+      context.events(button, "invented-event");
+    });
   expectTypeOf(author).toBeFunction();
 });

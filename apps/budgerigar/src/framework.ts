@@ -13,9 +13,27 @@ import {
   type Region,
   type Tree,
 } from "./construction";
+import {
+  activateReactiveNode,
+  makeReactiveRuntime,
+  reactive,
+  stopReactiveRuntime,
+  type ReactiveContext,
+  type ReactiveRuntime,
+} from "./reactive";
 
 export { component, type Component } from "./component";
 export { ConstructionError } from "./construction";
+export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
+export type {
+  Signal,
+  WritableSignal,
+  SignalOptions,
+  Equality,
+  EventStream,
+  EventSource,
+  ReactiveContext,
+} from "./reactive";
 export type {
   Child,
   Construct,
@@ -26,7 +44,7 @@ export type {
 
 export type Output = Node | ReadonlyArray<Node>;
 
-export interface ComponentContext {
+export interface ComponentContext extends ReactiveContext {
   readonly h: Mount;
   readonly he: Construct;
   readonly scope: Scope.Scope;
@@ -46,7 +64,15 @@ export type MountSubject =
     };
 
 export interface MountFailure {
-  readonly operation: "setup" | "cleanup" | "ownership" | "queue" | "background" | "validation";
+  readonly operation:
+    | "setup"
+    | "cleanup"
+    | "ownership"
+    | "queue"
+    | "background"
+    | "validation"
+    | "reactive";
+  readonly resource?: object;
   readonly parent: Element;
   readonly subject: MountSubject;
   readonly cause: Cause.Cause<unknown>;
@@ -64,6 +90,9 @@ interface Owner {
   readonly scope: Option.Option<Scope.Closeable>;
   readonly report: (failure: MountFailure) => void;
   readonly failureContext: Option.Option<{ parent: Element; subject: MountSubject }>;
+  reactiveRuntime: Option.Option<ReactiveRuntime>;
+  readonly parentRuntime: Option.Option<ReactiveRuntime>;
+  readonly bindingCleanups: Set<() => void>;
 }
 
 interface Request {
@@ -84,6 +113,7 @@ const makeOwner = (options: {
   readonly report: Owner["report"];
   readonly scope?: Scope.Closeable;
   readonly failureContext?: { parent: Element; subject: MountSubject };
+  readonly parentRuntime: Option.Option<ReactiveRuntime>;
 }): Owner => ({
   active: true,
   ownsTarget(node) {
@@ -98,19 +128,31 @@ const makeOwner = (options: {
   scope: Option.fromUndefinedOr(options.scope),
   report: options.report,
   failureContext: Option.fromUndefinedOr(options.failureContext),
+  reactiveRuntime: Option.none(),
+  parentRuntime: options.parentRuntime,
+  bindingCleanups: new Set(),
 });
+
+const reactiveParent = (owner: Owner) =>
+  Option.orElse(owner.reactiveRuntime, () => owner.parentRuntime);
 
 const report = (owner: Owner, failure: MountFailure) =>
   Effect.sync(() => owner.report(failure)).pipe(Effect.catchCause(() => Effect.void));
 
 const deactivate = (owner: Owner): void => {
   owner.active = false;
+  Option.match(owner.reactiveRuntime, { onNone: () => {}, onSome: stopReactiveRuntime });
+  for (const stop of owner.bindingCleanups) stop();
+  owner.bindingCleanups.clear();
   for (const queue of owner.queues) queue.pending.length = 0;
   for (const child of owner.children) deactivate(child);
 };
 
 const ownedFibers = (owner: Owner): ReadonlyArray<Fiber.Fiber<unknown, unknown>> => [
   ...owner.background,
+  ...Option.toArray(owner.reactiveRuntime).flatMap((reactiveRuntime) => [
+    ...reactiveRuntime.lifetime.batchFibers,
+  ]),
   ...Option.toArray(owner.setup),
   ...Array.from(owner.queues).flatMap((queue) => Option.toArray(queue.worker)),
   ...Array.from(owner.children).flatMap(ownedFibers),
@@ -220,19 +262,33 @@ const activate = Effect.fn("Budgerigar.activate")(function* (options: {
   const scope = yield* Scope.make();
 
   const subject: MountSubject = { kind: "component", id: {}, component: region.definition, region };
-  const owner = makeOwner({ report: lifetime.report, scope, failureContext: { parent, subject } });
+  const owner = makeOwner({
+    report: lifetime.report,
+    scope,
+    failureContext: { parent, subject },
+    parentRuntime: reactiveParent(lifetime),
+  });
 
   lifetime.children.add(owner);
 
   const task = Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
+      const fork = background({ owner, scope, parent, subject });
+      const stateOwner = yield* makeReactiveRuntime({
+        active: () => owner.active,
+        parent: owner.parentRuntime,
+        fork,
+        report: (failure) => report(owner, { parent, subject, ...failure }),
+      });
+      owner.reactiveRuntime = Option.some(stateOwner);
       const exit = yield* restore(
         Effect.suspend(() =>
           region.definition.setup({
             h: bind(owner),
             he: construct(owner),
             scope,
-            fork: background({ owner, scope, parent, subject }),
+            fork,
+            ...reactive(stateOwner),
           }),
         ).pipe(Scope.provide(scope)),
       ).pipe(Effect.exit);
@@ -273,6 +329,8 @@ const activate = Effect.fn("Budgerigar.activate")(function* (options: {
                     "region boundaries were removed",
                   );
 
+                  bindTree({ tree, lifetime: owner });
+
                   for (const node of roots) region.end.parentNode?.insertBefore(node, region.end);
                   return tree;
                 }).pipe(Effect.exit);
@@ -308,6 +366,11 @@ const failAttempt = Effect.fn("Budgerigar.failAttempt")(function* (options: {
     operation: options.operation,
   });
 });
+
+const bindTree = (options: { tree: Tree; lifetime: Owner }): void => {
+  for (const node of options.tree.nodes)
+    activateReactiveNode({ node, lifetime: { cleanups: options.lifetime.bindingCleanups } });
+};
 
 const activateTree: (options: {
   tree: Tree;
@@ -360,11 +423,16 @@ const install = Effect.fn("Budgerigar.install")(function* (queue: ParentQueue, r
           Match.when(false, () => Effect.void),
           Match.when(true, () =>
             Effect.gen(function* () {
-              const lifetime = makeOwner({ report: queue.owner.report });
+              const lifetime = makeOwner({
+                report: queue.owner.report,
+                parentRuntime: reactiveParent(queue.owner),
+              });
               queue.owner.children.add(lifetime);
               queue.current = Option.some(lifetime);
 
               const direct: Region[] = [];
+
+              bindTree({ tree, lifetime });
 
               for (const item of request.subject.items) {
                 Match.value(item).pipe(
@@ -498,7 +566,7 @@ export const mounting = Effect.fn("Budgerigar.mounting")(function* (options: {
   readonly scope: Scope.Scope;
   readonly onError: (failure: MountFailure) => void;
 }) {
-  const owner = makeOwner({ report: options.onError });
+  const owner = makeOwner({ report: options.onError, parentRuntime: Option.none() });
   yield* Scope.addFinalizer(options.scope, disposeOwner(owner));
   return bind(owner);
 });

@@ -1,8 +1,15 @@
 import { Effect, Match, Option, Schema } from "effect";
 import { isComponent, type Component } from "./component";
+import {
+  isSignal,
+  reactiveText,
+  validateReactiveNode,
+  type Signal,
+  type ReactiveRuntime,
+} from "./reactive";
 
 export type MountItem = Component | Node;
-export type Child = string | MountItem;
+export type Child = string | MountItem | Signal<string>;
 
 type Equal<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
@@ -45,6 +52,7 @@ export type Construct = <K extends keyof HTMLElementTagNameMap>(
 export interface ConstructionOwner {
   readonly active: boolean;
   readonly ownsTarget: (node: Node) => boolean;
+  readonly reactiveRuntime: Option.Option<ReactiveRuntime>;
 }
 
 export interface Region {
@@ -141,6 +149,11 @@ export const inspect = Effect.fn("Budgerigar.inspect")(function* (options: {
 
       yield* checkReservation(node);
 
+      yield* validateReactiveNode({
+        node,
+        runtime: options.owner.reactiveRuntime,
+      }).pipe(Effect.mapError((error) => new ConstructionError({ message: error.message })));
+
       nodes.push(node);
 
       const children = Array.from(node.childNodes);
@@ -229,7 +242,7 @@ const constructElement = Effect.fn("Budgerigar.constructElement")(function* <
   const children = [...(options.children ?? [])];
   for (const child of children) {
     yield* validate(
-      typeof child === "string" || isNode(child) || isComponent(child),
+      typeof child === "string" || isNode(child) || isComponent(child) || isSignal(child),
       "unsupported child",
     );
   }
@@ -257,16 +270,31 @@ const constructElement = Effect.fn("Budgerigar.constructElement")(function* <
 
   const regions: Region[] = [];
   for (const child of children) {
-    Match.value(child).pipe(
+    yield* Match.value(child).pipe(
       Match.when(
         (v): v is string => typeof v === "string",
-        (v) => element.append(document.createTextNode(v)),
+        (v) => Effect.sync(() => element.append(document.createTextNode(v))),
       ),
-      Match.when(isNode, (node) => element.append(node)),
+      Match.when(isNode, (node) => Effect.sync(() => element.append(node))),
+      Match.when(isSignal, (signal) =>
+        Option.match(owner.reactiveRuntime, {
+          onNone: () =>
+            Effect.fail(
+              new ConstructionError({ message: "Reactive text requires a component owner" }),
+            ),
+          onSome: (reactiveRuntime) =>
+            reactiveText({ runtime: reactiveRuntime, signal }).pipe(
+              Effect.mapError((error) => new ConstructionError({ message: error.message })),
+              Effect.map((node) => element.append(node)),
+            ),
+        }),
+      ),
       Match.orElse((definition) => {
         const region = makeRegion({ definition, issuer: owner });
-        element.append(region.start, region.end);
-        regions.push(region);
+        return Effect.sync(() => {
+          element.append(region.start, region.end);
+          regions.push(region);
+        });
       }),
     );
   }
