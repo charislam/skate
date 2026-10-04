@@ -1,6 +1,8 @@
 import { Effect } from "effect";
 import { Counter } from "./counter";
 import { component } from "./framework";
+import { Tabs } from "./tabs";
+import { TextInput } from "./text-input";
 
 export const Home = component({
   setup: ({ he }) =>
@@ -11,6 +13,8 @@ export const Home = component({
           yield* he("p", { children: ["Welcome home."] }),
           Counter,
           Counter,
+          TextInput,
+          Tabs,
         ],
       });
     }),

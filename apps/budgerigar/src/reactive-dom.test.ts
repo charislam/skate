@@ -69,8 +69,11 @@ describe("reactive DOM and ownership", () => {
     const { h, close } = await harness();
     const parent = document.createElement("div");
     h(parent, Home);
-    await rendered({ parent, check: () => parent.querySelectorAll("output").length === 2 });
-    const [left, right] = Array.from(parent.querySelectorAll("section"));
+    await rendered({
+      parent,
+      check: () => parent.querySelectorAll(".counter output").length === 2,
+    });
+    const [left, right] = Array.from(parent.querySelectorAll(".counter"));
     expect(left).toBeDefined();
     expect(right).toBeDefined();
     const counter = left ?? document.createElement("section");

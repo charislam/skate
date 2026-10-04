@@ -6,4 +6,4 @@ export { isSignal } from "./reactive/signal";
 export type { Signal, WritableSignal, SignalOptions, Equality } from "./reactive/signal";
 export { mapEvents, mergeEvents } from "./reactive/events";
 export type { EventSource, EventStream } from "./reactive/events";
-export { reactiveText, validateReactiveNode, activateReactiveNode } from "./reactive/text";
+export { reactiveText } from "./reactive/text";

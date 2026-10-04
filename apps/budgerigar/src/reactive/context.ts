@@ -21,6 +21,8 @@ import {
   type Equality,
 } from "./signal";
 
+import { bindValue } from "./input";
+
 export const reactive = (runtime: ReactiveRuntime) => ({
   signal: <A>(options: SignalOptions<A>): Effect.Effect<WritableSignal<A>, ReactiveError> =>
     Effect.suspend(() =>
@@ -55,8 +57,15 @@ export const reactive = (runtime: ReactiveRuntime) => ({
         Effect.map(() => createSource<A>(runtime)),
       ),
     ),
-  events: <K extends keyof HTMLElementEventMap>(element: HTMLElement, name: K) =>
-    domEvents({ runtime, element, name }),
+  bindValue: (options: {
+    element: HTMLInputElement | HTMLTextAreaElement;
+    signal: WritableSignal<string>;
+  }) => bindValue({ ...options, runtime }),
+  events: <K extends keyof HTMLElementEventMap>(
+    element: HTMLElement,
+    name: K,
+    options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
+  ) => domEvents({ runtime, element, name, ...options }),
   fold: <A, B>(options: {
     events: EventStream<A>;
     initial: B;

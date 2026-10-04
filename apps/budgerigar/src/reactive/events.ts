@@ -169,6 +169,7 @@ export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
   runtime: ReactiveRuntime;
   element: HTMLElement;
   name: K;
+  synchronous?: (event: HTMLElementEventMap[K]) => void;
 }): Effect.Effect<EventStream<HTMLElementEventMap[K]>, ReactiveError> =>
   Effect.gen(function* () {
     const { runtime, element, name } = options;
@@ -176,6 +177,7 @@ export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
     const source = createSource<HTMLElementEventMap[K]>(runtime);
     let references = 0;
     const listener = (event: HTMLElementEventMap[K]) => {
+      options.synchronous?.(event);
       Match.value(runtime.lifetime.active()).pipe(
         Match.when(true, () =>
           Queue.offerUnsafe(runtime.eventQueue, {

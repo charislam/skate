@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { expectTypeOf, it } from "vitest";
 import type { ConstructionError } from "./construction";
 import type {
@@ -26,7 +26,13 @@ it("retains native tag and property types and restricts static construction", ()
     expectTypeOf(he("select")).toEqualTypeOf<Effect.Effect<HTMLSelectElement, ConstructionError>>();
 
     he("input", { props: { value: "current", checked: true, disabled: false } });
-    he("div", { attrs: { class: "panel", hidden: true, "aria-expanded": "false" } });
+    he("div", {
+      attrs: {
+        class: Option.some("panel"),
+        hidden: Option.some(true),
+        "aria-expanded": Option.some("false"),
+      },
+    });
 
     // @ts-expect-error Only known HTML tags are supported.
     he("custom-widget");
@@ -145,6 +151,45 @@ it("retains reactive value and event types and hides mutation on derived and fol
       });
       // @ts-expect-error DOM event names are native and typed.
       context.events(button, "invented-event");
+    });
+  expectTypeOf(author).toBeFunction();
+});
+
+it("types independent reactive attributes, native properties, and writable text bindings", () => {
+  const author = (ctx: ComponentContext) =>
+    Effect.gen(function* () {
+      const text = yield* ctx.signal({ initial: "text" });
+      const optional = yield* ctx.signal({ initial: Option.some("hint") });
+      const present = yield* ctx.signal({ initial: Option.some(true as const) });
+      const disabled = yield* ctx.signal({ initial: false });
+      const tabIndex = yield* ctx.signal({ initial: 0 });
+      const input = yield* ctx.he("input", {
+        attrs: { title: optional, required: present, hidden: Option.none() },
+        props: { disabled, tabIndex, value: text, files: null },
+      });
+      const textarea = yield* ctx.he("textarea");
+      ctx.bindValue({ element: textarea, signal: text });
+      // @ts-expect-error Bare strings are not optional attributes.
+      ctx.he("div", { attrs: { title: "hint" } });
+      // @ts-expect-error Bare booleans are not optional attributes.
+      ctx.he("div", { attrs: { hidden: false } });
+      // @ts-expect-error Some(false) is not attribute removal.
+      ctx.he("div", { attrs: { hidden: Option.some(false) } });
+      // @ts-expect-error Attributes do not accept arbitrary objects.
+      ctx.he("div", { attrs: { title: {} } });
+      // @ts-expect-error Reactive native values retain the tag-specific type.
+      ctx.he("input", { props: { disabled: text } });
+      // @ts-expect-error Reactive attributes must be Option-wrapped.
+      ctx.he("input", { attrs: { title: text } });
+      // @ts-expect-error Readonly properties remain excluded even with signals.
+      ctx.he("input", { props: { offsetHeight: tabIndex } });
+      const derived = yield* ctx.derive({ sources: { text }, compute: ({ text }) => text });
+      // @ts-expect-error Two-way binding requires a writable signal.
+      ctx.bindValue({ element: input, signal: derived });
+      // @ts-expect-error Two-way input values must be strings.
+      ctx.bindValue({ element: input, signal: disabled });
+      // @ts-expect-error Only input/textarea elements support two-way text binding.
+      ctx.bindValue({ element: yield* ctx.he("select"), signal: text });
     });
   expectTypeOf(author).toBeFunction();
 });
