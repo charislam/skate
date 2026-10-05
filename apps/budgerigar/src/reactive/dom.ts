@@ -1,14 +1,15 @@
-import { Cause, Effect, Match, Option } from "effect";
+import { Cause, Effect, Match, Option, Result } from "effect";
+import { lazy } from "~/synchronous";
+import { destination } from "./destinations";
 import {
-  accessible,
-  calculate,
-  requireValid,
+  accessibleSync,
+  calculateSync,
   ReactiveError,
+  requireValidSync,
   type ComponentLifetime,
   type ReactiveRuntime,
 } from "./runtime";
-import { destination } from "./destinations";
-import { isSignal, signalData, type DomSink, type Signal } from "./signal";
+import { isSignal, readSync, signalData, type DomSink, type Signal } from "./signal";
 
 export type AttributeValue = Option.Option<true | string>;
 export type BindingKind = "text" | "attribute" | "property" | "selection";
@@ -35,8 +36,12 @@ export const markElementOwner = (options: {
 }): void => {
   elementIssuers.set(options.element, options.runtime);
 };
-export const validateElementOwner = (options: { element: HTMLElement; runtime: ReactiveRuntime }) =>
-  requireValid(
+
+export const validateElementOwnerSync = (options: {
+  element: HTMLElement;
+  runtime: ReactiveRuntime;
+}) =>
+  requireValidSync(
     Option.exists(
       elementIssuers.get(options.element) ?? Option.none(),
       (issuer) => issuer === options.runtime,
@@ -54,13 +59,13 @@ const isAttributeValue = (value: unknown): value is AttributeValue =>
   Option.isOption(value) &&
   (Option.isNone(value) || typeof value.value === "string" || value.value === true);
 
-export const validateAttribute = (value: unknown): Effect.Effect<AttributeValue, ReactiveError> =>
-  Effect.suspend(() =>
-    Match.value(value).pipe(
-      Match.when(isAttributeValue, (attribute) => Effect.succeed(attribute)),
-      Match.orElse(() =>
-        Effect.fail(new ReactiveError({ message: "Attributes require Option<true | string>" })),
-      ),
+export const validateAttributeSync = (
+  value: unknown,
+): Result.Result<AttributeValue, ReactiveError> =>
+  Match.value(value).pipe(
+    Match.when(isAttributeValue, (attribute) => Result.succeed(attribute)),
+    Match.orElse(() =>
+      Result.fail(new ReactiveError({ message: "Attributes require Option<true | string>" })),
     ),
   );
 // https://dom.spec.whatwg.org/#valid-attribute-local-name
@@ -72,23 +77,24 @@ export const attributeNameValid = (name: string): boolean =>
   !name.toLowerCase().startsWith("on") &&
   name.toLowerCase() !== "srcdoc";
 
-export const claimDestination = Effect.fn("Budgerigar.claimDestination")(function* (options: {
+export const claimDestinationSync = (options: {
   element: HTMLElement;
   kind: "attribute" | "property";
   name: string;
   reactive: boolean;
-}) {
-  const key = destination(options);
-  const existing = declarations.get(options.element) ?? [];
-  yield* requireValid(
-    !existing.some((entry) => entry.destination === key && (entry.reactive || options.reactive)),
-    `Conflicting DOM destination ${options.name}`,
-  );
-  declarations.set(options.element, [
-    ...existing,
-    { destination: key, reactive: options.reactive },
-  ]);
-});
+}) =>
+  Result.gen(function* () {
+    const key = destination(options);
+    const existing = declarations.get(options.element) ?? [];
+    yield* requireValidSync(
+      !existing.some((entry) => entry.destination === key && (entry.reactive || options.reactive)),
+      `Conflicting DOM destination ${options.name}`,
+    );
+    declarations.set(options.element, [
+      ...existing,
+      { destination: key, reactive: options.reactive },
+    ]);
+  });
 
 const reportAssignment = (options: {
   runtime: ReactiveRuntime;
@@ -133,103 +139,112 @@ export const assign = (options: {
     onSome: (runtime) => assignOwned({ ...options, runtime }),
   });
 
-export const registerBinding = Effect.fn("Budgerigar.registerBinding")(function* <A>(options: {
+export const registerBindingSync = <A>(options: {
   runtime: ReactiveRuntime;
   node: Node;
   signal: Signal<A>;
   kind: BindingKind;
   name: string;
-  validate: (value: A) => Effect.Effect<unknown, ReactiveError>;
-  write: (value: A) => Effect.Effect<void, ReactiveError>;
+  validate: (value: A) => Result.Result<unknown, ReactiveError>;
+  write: (value: A) => Result.Result<void, ReactiveError>;
   activate?: () => () => void;
-  initialize?: (write: Effect.Effect<void, ReactiveError>) => void;
-}) {
-  yield* accessible({
-    consumer: options.runtime.lifetime,
-    producer: signalData(options.signal).participant.lifetime,
-  });
-  const initial = yield* options.signal.get;
-  yield* options.validate(initial);
-  const resource: DomResource = { element: options.node, kind: options.kind, name: options.name };
-  const binding: Binding = {
-    issuer: options.runtime,
-    report: Option.none(),
-    signal: options.signal,
-    validate: (transaction) =>
-      Effect.suspend(() =>
-        options.validate(signalData(options.signal).candidate(transaction)),
-      ).pipe(Effect.asVoid),
-    flush: () =>
-      assignOwned({
-        runtime: options.runtime,
-        resource,
-        report: binding.report,
-        write: Effect.suspend(() =>
-          options.write(signalData(options.signal).candidate(Option.none())),
+  initialize?: (write: () => Result.Result<void, ReactiveError>) => void;
+}) =>
+  Result.gen(function* () {
+    yield* accessibleSync({
+      consumer: options.runtime.lifetime,
+      producer: signalData(options.signal).participant.lifetime,
+    });
+    const initial = yield* readSync({ runtime: options.runtime, signal: options.signal });
+    yield* options.validate(initial);
+    const resource: DomResource = { element: options.node, kind: options.kind, name: options.name };
+    const binding: Binding = {
+      issuer: options.runtime,
+      report: Option.none(),
+      signal: options.signal,
+      validate: (transaction) =>
+        options
+          .validate(signalData(options.signal).candidate(transaction))
+          .pipe(Result.map(() => undefined)),
+      flush: () =>
+        lazy(() =>
+          assignSync({
+            runtime: Option.some(options.runtime),
+            resource,
+            write: options.write(signalData(options.signal).candidate(Option.none())),
+            report: binding.report,
+          }),
+        ).pipe(
+          Effect.catch((error) => reportAssignment({ runtime: options.runtime, resource, error })),
         ),
-      }),
-    start: () => options.activate?.() ?? (() => {}),
-  };
-  const initialize = assign({
-    runtime: Option.some(options.runtime),
-    resource,
-    write: options.write(initial),
-  });
-  yield* Option.match(Option.fromUndefinedOr(options.initialize), {
-    onNone: () => initialize,
-    onSome: (schedule) => Effect.sync(() => schedule(initialize)),
-  });
-  bindings.set(options.node, [...(bindings.get(options.node) ?? []), binding]);
-});
+      start: () => options.activate?.() ?? (() => {}),
+    };
 
-export const bindEntry = Effect.fn("Budgerigar.bindEntry")(function* (options: {
+    const initialize = () =>
+      assignSync({
+        runtime: Option.some(options.runtime),
+        resource,
+        write: options.write(initial),
+      });
+
+    yield* Option.match(Option.fromUndefinedOr(options.initialize), {
+      onNone: () => initialize(),
+      onSome: (schedule) => Result.succeed(schedule(initialize)),
+    });
+
+    bindings.set(options.node, [...(bindings.get(options.node) ?? []), binding]);
+  });
+
+export const bindEntrySync = (options: {
   runtime: Option.Option<ReactiveRuntime>;
   element: HTMLElement;
   kind: "attribute" | "property";
   name: string;
   value: unknown;
-  validate: (value: unknown) => Effect.Effect<unknown, ReactiveError>;
-  write: (value: unknown) => Effect.Effect<void, ReactiveError>;
-  initialize?: (write: Effect.Effect<void, ReactiveError>) => void;
-}) {
-  const { value, element, name, kind } = options;
-  yield* claimDestination({ element, kind, name, reactive: isSignal(value) });
-  yield* Match.value(value).pipe(
-    Match.when(isSignal, (signal) =>
-      Option.match(options.runtime, {
-        onNone: () =>
-          Effect.fail(new ReactiveError({ message: "Reactive DOM requires a component owner" })),
-        onSome: (runtime) => registerBinding({ ...options, runtime, node: element, signal }),
-      }),
-    ),
-    Match.orElse((value) =>
-      Effect.gen(function* () {
-        yield* options.validate(value);
-        const initialize = assign({
-          runtime: options.runtime,
-          resource: { element, kind, name },
-          write: options.write(value),
-        });
-        yield* Option.match(Option.fromUndefinedOr(options.initialize), {
-          onNone: () => initialize,
-          onSome: (schedule) => Effect.sync(() => schedule(initialize)),
-        });
-      }),
-    ),
-  );
-});
+  validate: (value: unknown) => Result.Result<unknown, ReactiveError>;
+  write: (value: unknown) => Result.Result<void, ReactiveError>;
+  initialize?: (write: () => Result.Result<void, ReactiveError>) => void;
+}) =>
+  Result.gen(function* () {
+    const { value, element, name, kind } = options;
+    yield* claimDestinationSync({ element, kind, name, reactive: isSignal(value) });
+    yield* Match.value(value).pipe(
+      Match.when(isSignal, (signal) =>
+        Option.match(options.runtime, {
+          onNone: () =>
+            Result.fail(new ReactiveError({ message: "Reactive DOM requires a component owner" })),
+          onSome: (runtime) => registerBindingSync({ ...options, runtime, node: element, signal }),
+        }),
+      ),
+      Match.orElse((value) =>
+        Result.gen(function* () {
+          yield* options.validate(value);
+          const initialize = () =>
+            assignSync({
+              runtime: options.runtime,
+              resource: { element, kind, name },
+              write: options.write(value),
+            });
+          yield* Option.match(Option.fromUndefinedOr(options.initialize), {
+            onNone: () => initialize(),
+            onSome: (schedule) => Result.succeed(schedule(initialize)),
+          });
+        }),
+      ),
+    );
+  });
 
-export const validateReactiveNode = (options: {
+export const validateReactiveNodeSync = (options: {
   node: Node;
   runtime: Option.Option<ReactiveRuntime>;
-}): Effect.Effect<void, ReactiveError> =>
-  Effect.gen(function* () {
+}): Result.Result<void, ReactiveError> =>
+  Result.gen(function* () {
     for (const binding of bindings.get(options.node) ?? []) {
       yield* Option.match(options.runtime, {
         onNone: () =>
-          Effect.fail(new ReactiveError({ message: "Reactive DOM requires its issuing runtime" })),
+          Result.fail(new ReactiveError({ message: "Reactive DOM requires its issuing runtime" })),
         onSome: (runtime) =>
-          requireValid(
+          requireValidSync(
             runtime === binding.issuer &&
               runtime.lifetime.active() &&
               signalData(binding.signal).participant.lifetime.active(),
@@ -264,29 +279,57 @@ export const activateReactiveNode = Effect.fn("Budgerigar.activateReactiveNode")
   },
 );
 
-export const writeAttribute = Effect.fn("Budgerigar.writeAttribute")(function* (options: {
+export const writeAttributeSync = (options: {
   element: HTMLElement;
   name: string;
   value: unknown;
-}) {
-  const value = yield* validateAttribute(options.value);
-  yield* calculate(() =>
-    Option.match(value, {
-      onNone: () =>
-        Match.value(options.element.hasAttribute(options.name)).pipe(
-          Match.when(true, () => options.element.removeAttribute(options.name)),
-          Match.orElse(() => {}),
-        ),
-      onSome: (value) => {
-        const text = Match.value(value).pipe(
-          Match.when(true, () => ""),
-          Match.orElse((text) => text),
-        );
-        Match.value(options.element.getAttribute(options.name) !== text).pipe(
-          Match.when(true, () => options.element.setAttribute(options.name, text)),
-          Match.orElse(() => {}),
-        );
-      },
-    }),
-  );
-});
+}) =>
+  Result.gen(function* () {
+    const value = yield* validateAttributeSync(options.value);
+    yield* calculateSync(() =>
+      Option.match(value, {
+        onNone: () =>
+          Match.value(options.element.hasAttribute(options.name)).pipe(
+            Match.when(true, () => options.element.removeAttribute(options.name)),
+            Match.orElse(() => {}),
+          ),
+        onSome: (value) => {
+          const text = Match.value(value).pipe(
+            Match.when(true, () => ""),
+            Match.orElse((text) => text),
+          );
+          Match.value(options.element.getAttribute(options.name) !== text).pipe(
+            Match.when(true, () => options.element.setAttribute(options.name, text)),
+            Match.orElse(() => {}),
+          );
+        },
+      }),
+    );
+  });
+
+export const assignSync = (options: {
+  runtime: Option.Option<ReactiveRuntime>;
+  resource: DomResource;
+  write: Result.Result<void, ReactiveError>;
+  report?: Option.Option<ComponentLifetime["report"]>;
+}): Result.Result<void, ReactiveError> =>
+  Option.match(options.runtime, {
+    onNone: () => options.write,
+    onSome: (runtime) =>
+      options.write.pipe(
+        Result.orElse((error) => {
+          Effect.runSync(reportAssignment({ ...options, runtime, error }));
+          return Result.succeed(undefined);
+        }),
+      ),
+  });
+
+export const validateElementOwner = (options: Parameters<typeof validateElementOwnerSync>[0]) =>
+  lazy(() => validateElementOwnerSync(options));
+export const validateAttribute = (value: unknown) => lazy(() => validateAttributeSync(value));
+export const claimDestination = (options: Parameters<typeof claimDestinationSync>[0]) =>
+  lazy(() => claimDestinationSync(options));
+export const validateReactiveNode = (options: Parameters<typeof validateReactiveNodeSync>[0]) =>
+  lazy(() => validateReactiveNodeSync(options));
+export const writeAttribute = (options: Parameters<typeof writeAttributeSync>[0]) =>
+  lazy(() => writeAttributeSync(options));

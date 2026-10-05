@@ -4,9 +4,21 @@ An experiment in scoped DOM composition and functional reactive state using
 Effect 4. Run `pnpm dev:budgerigar` from the repository root, or `pnpm --filter
 @charismaticalli/budgerigar test` for its tests.
 
-`component({ setup })` defines a reusable component. Setup runs once per
-occurrence and returns a fresh native node or a readonly array of roots (including
-an empty array). Setup can await Effect work.
+`component(factory)` defines an inert, reusable description. Each committed
+occurrence invokes its synchronous factory once. The factory returns
+`Result.succeed({ setup, fallback? })`, or composes typed helpers with `Result.gen`.
+Factory closures, signals, and scopes are independent across mounts. Construction,
+invalid requests, aborted batches, and coalesced-away selections invoke no factories.
+Stable selected definitions preserve factory state, pending DOM, and outstanding setup.
+
+Factory and fallback use `SynchronousContext`: fallible helpers return typed Results.
+Setup and the application use Effect helpers, which stay lazy until evaluated.
+Setup can suspend and runs once, after the commit, unless the occurrence has retired.
+Both fallback and setup return a native node, component, `Signal<Option<Component>>`,
+or a readonly mixed array of those items. `[]` is empty output. Strings and text
+signals remain children of `he`; nested root arrays are unsupported.
+
+Import `Result` alongside `Effect` for the examples below.
 
 The context provides:
 
@@ -26,28 +38,33 @@ The context provides:
 - `scope` to register asynchronous resource finalizers with `Scope.addFinalizer`.
   Setup also receives this scope as an Effect service, so `Effect.addFinalizer`
   works. These finalizers run after DOM detachment.
-- `fork(work)` to start background Effect work owned by the component. Use this
+- `fork(work)` to register background Effect work owned by the component. It starts
+  after the commit with a fresh transaction context and checks live ownership. Use this
   binding for work whose cancellation must be requested before synchronous DOM
   finalizers and completed before asynchronous descendant resource cleanup. It
   shares the component scope for resource acquisition and reports failures to
   the application's error handler.
 
 ```ts
-const Child = component({
-  setup: ({ he }) => he("p", { children: ["Hello"] }),
-});
+const Child = component(() =>
+  Result.succeed({
+    setup: ({ he }) => he("p", { children: ["Hello"] }),
+  }),
+);
 
-const Parent = component({
-  setup: ({ he }) =>
-    Effect.gen(function* () {
-      return yield* he("main", {
-        children: [yield* he("h1", { children: ["Title"] }), Child, "After the child"],
-      });
-    }),
-});
+const Parent = component(() =>
+  Result.succeed({
+    setup: ({ he }) =>
+      Effect.gen(function* () {
+        return yield* he("main", {
+          children: [yield* he("h1", { children: ["Title"] }), Child, "After the child"],
+        });
+      }),
+  }),
+);
 ```
 
-`he` is lazy: evaluation creates fresh native nodes, and component setup is
+Effect-based `he` is lazy; synchronous `he` constructs immediately. Component setup is
 deferred until the constructed tree is adopted. Each occurrence
 occupies an independent region between comment anchors, without visible wrappers.
 Children can finish in any order while retaining their positions. Their completion
@@ -66,7 +83,7 @@ installation, run synchronous finalizers while its DOM is attached, remove it,
 install the incoming fallback (if provided), and start setup. Asynchronous resource
 cleanup runs in tracked background fibers and can overlap incoming setup. It does
 not hold the replacement queue. Every valid imperative request is processed in
-order; signal selections skip superseded setup attempts.
+order; superseded occurrences skip setup if it has not started.
 
 A failed component immediately removes its fallback or partial output and leaves
 an empty region, preserving siblings. Disposal cancels pending requests and owned
@@ -123,17 +140,19 @@ helpers:
   caught. External side effects cannot be rolled back.
 
 ```ts
-const Label = component({
-  setup: ({ signal, derive, he }) =>
-    Effect.gen(function* () {
-      const count = yield* signal({ initial: 0 });
-      const text = yield* derive({
-        sources: { count },
-        compute: ({ count }) => `Count: ${count}`,
-      });
-      return yield* he("p", { children: [text] });
-    }),
-});
+const Label = component(() =>
+  Result.succeed({
+    setup: ({ signal, derive, he }) =>
+      Effect.gen(function* () {
+        const count = yield* signal({ initial: 0 });
+        const text = yield* derive({
+          sources: { count },
+          compute: ({ count }) => `Count: ${count}`,
+        });
+        return yield* he("p", { children: [text] });
+      }),
+  }),
+);
 ```
 
 Signals use `Object.is` equality by default and retain the old value when an
@@ -202,27 +221,29 @@ remain excluded. `Option` does not delete properties. Native undefined is only
 accepted for a native property whose domain includes it.
 
 ```ts
-const Input = component({
-  setup: ({ he, signal, derive, bindValue }) =>
-    Effect.gen(function* () {
-      const text = yield* signal({ initial: "" });
-      const hint = yield* derive({
-        sources: { text },
-        compute: ({ text }) =>
-          Match.value(text.length > 0).pipe(
-            Match.when(true, () => Option.some("Clear to reset")),
-            Match.when(false, () => Option.none<string>()),
-            Match.exhaustive,
-          ),
-      });
-      const input = yield* he("input", {
-        attrs: { "aria-label": Option.some("Your text"), title: hint },
-        props: { type: "text" },
-      });
-      yield* bindValue({ element: input, signal: text });
-      return yield* he("section", { children: [input, text] });
-    }),
-});
+const Input = component(() =>
+  Result.succeed({
+    setup: ({ he, signal, derive, bindValue }) =>
+      Effect.gen(function* () {
+        const text = yield* signal({ initial: "" });
+        const hint = yield* derive({
+          sources: { text },
+          compute: ({ text }) =>
+            Match.value(text.length > 0).pipe(
+              Match.when(true, () => Option.some("Clear to reset")),
+              Match.when(false, () => Option.none<string>()),
+              Match.exhaustive,
+            ),
+        });
+        const input = yield* he("input", {
+          attrs: { "aria-label": Option.some("Your text"), title: hint },
+          props: { type: "text" },
+        });
+        yield* bindValue({ element: input, signal: text });
+        return yield* he("section", { children: [input, text] });
+      }),
+  }),
+);
 ```
 
 Construction initializes detached nodes without subscriptions. Adoption validates
@@ -292,21 +313,89 @@ is empty. Observers see that pending view; successful setup later replaces it wi
 its output. This makes the transition to pending content visually atomic, while
 setup completion remains asynchronous.
 
-A component can declare `fallback: () => Node | ReadonlyArray<Node>`. The factory
-runs synchronously once per occurrence and must return fresh, detached native
-nodes, including an empty array. It receives no reactive context and does not
-start subscriptions or component descendants. Fallbacks are single-use, just like
-ordinary native output. A fresh `Some` of the same definition preserves its
-fallback and pending setup. If there is no fallback, an empty region during setup
-is the intended pending view. The access demo's page has a loading fallback.
+A factory can return an optional fallback. It runs synchronously under a separate
+pending-view owner and returns a Result. Before activating the selected component,
+the commit installs all signal changes from the transaction. Its fallback therefore
+renders those new values immediately. Child factories and fallbacks mount
+recursively in that same commit; their setups and owned asynchronous work start
+afterward. Bare values, Effects, and Promises are invalid factory or fallback
+returns, including for infallible callbacks.
+
+Factory and setup share occurrence ownership. Their signals and work survive
+fallback replacement. Fallback-local resources belong to a descendant lifetime:
+its children can consume them, but enclosing setup and ready bindings cannot.
+Passing a reference through a closure does not bypass lifetime validation.
 
 ```ts
-const Page = component({
-  fallback: () => document.createTextNode("Loading…"),
-  setup: ({ he }) =>
-    loadPage.pipe(Effect.flatMap((page) => he("article", { children: [page.title] }))),
-});
+import { Effect, Result } from "effect";
+
+const Page = component(({ signal }) =>
+  Result.gen(function* () {
+    const progress = yield* signal({ initial: "Loading…" });
+    return {
+      fallback: ({ he }) => he("p", { children: [progress] }),
+      setup: ({ he }) =>
+        Effect.gen(function* () {
+          yield* progress.set("Preparing content…");
+          const page = yield* loadPage;
+          return yield* he("article", { children: [page.title] });
+        }),
+    };
+  }),
+);
 ```
+
+Synchronous contexts expose `signal`, `derive`, `combine`, `he`, queued `h`,
+`source`, `events`, `fold`, `toStream`, `subscribe`, `subscribeStream`, `foldStream`,
+`bindValue`, `fork`, and `addSyncFinalizer` as Result helpers. `read(signal)` validates
+ancestor access and returns its committed value. `scope` remains a plain scope.
+The same signal object retains Effect-based `get`, `set`, `update`, and `changes`.
+`fork` reports registration failure synchronously; eventual background failure
+uses the application reporter. Stream consumers, event handlers, and queued mounts
+never run user work inline during commit.
+
+`batch(() => Result.gen(...))` accepts a lazy thunk and rejects entry during commit
+before invoking it. A failed Result aborts staged signal writes and emissions.
+Signal writes, even manually run Effect methods, cannot reenter a commit. Allocate
+new signals with initial values during construction and use `fork` for later work.
+`Result.gen` short-circuits without rolling back earlier registrations; lifecycle
+failure retires those resources. Expected Result failures retain typed Effect
+failures; throws retain defect causes.
+
+Successful setup validates and binds its candidate first, then synchronously
+retires pending ingress, interrupts pending work, runs descendant-first finalizers
+while DOM remains attached, removes fallback, and inserts ready content. Pending
+asynchronous cleanup does not delay ready output; shutdown still awaits it. Factory
+finalizers run on occurrence disposal, while fallback finalizers run on pending-view
+retirement. Retired work cannot repopulate the region or clear newer content.
+
+To pass parent state, create a stable child description once within the parent
+factory or setup using a named options object:
+
+```ts
+const child = (options: { label: Signal<string> }) =>
+  component(() =>
+    Result.succeed({
+      fallback: ({ he }) => he("p", { children: [options.label] }),
+      setup: ({ he }) => he("article", { children: [options.label] }),
+    }),
+  );
+
+const Parent = component(({ signal }) =>
+  Result.gen(function* () {
+    const label = yield* signal({ initial: "Parent label" });
+    const stableChild = child({ label });
+    return { setup: () => Effect.succeed(stableChild) };
+  }),
+);
+```
+
+Creating a description does not allocate occurrence state. Updating signals changes
+bindings without rerunning callbacks or restarting requests. Explicit setup reads
+are snapshots. Creating a new definition inside every derivation changes identity
+and remounts; no props, keyed reconciliation, memoization, or automatic request
+restart is provided. The home page's gated loading demo shows parent title updates
+and shared progress while awaiting a button, without depending on a live network.
 
 Use `yield* addSyncFinalizer(() => { ... })` in setup for DOM-dependent work such
 as checking `panel.contains(document.activeElement)` and focusing a surviving
@@ -318,21 +407,23 @@ that support overlapping lifetimes. Avoid restoring focus in delayed cleanup,
 which could override a newer user interaction.
 
 Synchronous finalizer exceptions report as `cleanup` failures and do not stop
-removal, other finalizers, or fallback insertion. Fallback failures report as
-`fallback` failures, remove any partial fallback, and continue setup in an empty
-region. Successful setup installs its output normally. Setup/adoption failures
-also leave an empty region, removing pending content immediately while cleanup
-continues. These failures do not reject an already committed write. Repeating the
-failed definition does not retry it; changing the selection re-arms it for a later
-attempt. Reporter exceptions remain isolated. Signal writes reentered from a
-synchronous callback during a commit fail with `ReactiveError`; schedule subsequent
-writes after that commit instead.
+removal, other finalizers, or fallback insertion. Factory failures report as
+`factory`, clean partial occurrence resources, and skip fallback and setup.
+Fallback failures report as `fallback` failures, remove any partial fallback,
+and continue setup in an empty region. Successful setup installs its output
+normally. Setup/adoption failures also leave an empty region, removing pending
+content immediately while cleanup continues. These failures do not reject an
+already committed write. Repeating the failed definition does not retry it;
+changing the selection re-arms it for a later attempt. Reporter exceptions
+remain isolated. Signal writes reentered from a synchronous callback during a
+commit fail with `ReactiveError`; schedule subsequent writes after that
+commit instead.
 
 Different regions and targets progress independently. Aborted batches and
-transient selections inside a batch perform no finalization, fallback construction,
-or setup. Superseded setup cannot adopt output, and its eventual cleanup cannot
-remove another occurrence's nodes. External structural DOM changes remain
-unsupported and do not automatically dispose resources.
+transient selections inside a batch perform no factory invocation, finalization,
+fallback construction, or setup. Superseded setup cannot adopt output, and its
+eventual cleanup cannot remove another occurrence's nodes. External structural
+DOM changes remain unsupported and do not automatically dispose resources.
 
 Root signals can select components directly, and descendants can consume root
 signals across multiple targets. Each application context has its own lifetime,

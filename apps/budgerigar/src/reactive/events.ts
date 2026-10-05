@@ -1,10 +1,11 @@
-import { Effect, Match, Option, Queue, Stream, type Scope } from "effect";
+import { Effect, Match, Option, Queue, Result, Stream, type Scope } from "effect";
+import { lazy } from "~/synchronous";
 import {
-  accessible,
+  accessibleSync,
   calculate,
   poison,
   reportFailure,
-  requireValid,
+  requireValidSync,
   runBatch,
   transactionFor,
   ReactiveError,
@@ -107,25 +108,26 @@ export const createSource = <A>(
   };
 };
 
-export const checkEvents = (options: { runtime: ReactiveRuntime; events: EventStream<unknown> }) =>
-  requireValid(options.runtime.lifetime.active(), "Reactive runtime has been disposed").pipe(
-    Effect.andThen(
-      Effect.forEach(
-        eventData(options.events).runtimes,
-        (producer) =>
-          accessible({ consumer: options.runtime.lifetime, producer: producer.lifetime }),
-        { discard: true },
-      ),
-    ),
-  );
+export const checkEventsSync = (options: {
+  runtime: ReactiveRuntime;
+  events: EventStream<unknown>;
+}) =>
+  Result.gen(function* () {
+    yield* requireValidSync(
+      options.runtime.lifetime.active(),
+      "Reactive runtime has been disposed",
+    );
+    for (const producer of eventData(options.events).runtimes)
+      yield* accessibleSync({ consumer: options.runtime.lifetime, producer: producer.lifetime });
+  });
 
-export const eventStream = <A>(options: {
+export const eventStreamSync = <A>(options: {
   runtime: ReactiveRuntime;
   events: EventStream<A>;
-}): Effect.Effect<Stream.Stream<A>, ReactiveError> =>
-  Effect.gen(function* () {
-    yield* checkEvents(options);
-    const queue = yield* Queue.unbounded<A>();
+}): Result.Result<Stream.Stream<A>, ReactiveError> =>
+  Result.gen(function* () {
+    yield* checkEventsSync(options);
+    const queue = Effect.runSync(Queue.unbounded<A>());
     const disconnect = eventData(options.events).connect((value, transaction) =>
       Effect.sync(() => {
         transaction.publications.push(() => {
@@ -165,15 +167,15 @@ export const subscribeStream = <A, E>(options: {
     ),
   );
 
-export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
+export const domEventsSync = <K extends keyof HTMLElementEventMap>(options: {
   runtime: ReactiveRuntime;
   element: HTMLElement;
   name: K;
   synchronous?: (event: HTMLElementEventMap[K]) => void;
-}): Effect.Effect<EventStream<HTMLElementEventMap[K]>, ReactiveError> =>
-  Effect.gen(function* () {
+}): Result.Result<EventStream<HTMLElementEventMap[K]>, ReactiveError> =>
+  Result.gen(function* () {
     const { runtime, element, name } = options;
-    yield* requireValid(runtime.lifetime.active(), "Reactive runtime has been disposed");
+    yield* requireValidSync(runtime.lifetime.active(), "Reactive runtime has been disposed");
     const source = createSource<HTMLElementEventMap[K]>(runtime);
     let references = 0;
     const listener = (event: HTMLElementEventMap[K]) => {
@@ -208,3 +210,14 @@ export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
       },
     };
   });
+
+export const checkEvents = (options: Parameters<typeof checkEventsSync>[0]) =>
+  lazy(() => checkEventsSync(options));
+export const eventStream = <A>(options: { runtime: ReactiveRuntime; events: EventStream<A> }) =>
+  lazy(() => eventStreamSync(options));
+export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
+  runtime: ReactiveRuntime;
+  element: HTMLElement;
+  name: K;
+  synchronous?: (event: HTMLElementEventMap[K]) => void;
+}) => lazy(() => domEventsSync(options));

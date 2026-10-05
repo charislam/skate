@@ -1,19 +1,20 @@
-import { Predicate, type Effect, type Scope } from "effect";
-import type { ComponentContext, Output } from "./framework";
+import { Predicate, type Effect, type Result, type Scope } from "effect";
+import type { ComponentContext, SynchronousContext, Output } from "./framework";
 
 const TypeId = "~budgerigar/Component";
-
-export interface Component {
-  readonly [TypeId]: typeof TypeId;
-  /** Fresh native pending content, constructed synchronously before setup starts. */
-  readonly fallback?: () => Output;
-  readonly setup: (context: ComponentContext) => Effect.Effect<Output, unknown, Scope.Scope>;
+export interface Lifecycle<ESetup = unknown, EFallback = unknown> {
+  readonly fallback?: (context: SynchronousContext) => Result.Result<Output, EFallback>;
+  readonly setup: (context: ComponentContext) => Effect.Effect<Output, ESetup, Scope.Scope>;
 }
-
-export const component = (definition: Omit<Component, typeof TypeId>): Component => ({
-  ...definition,
-  [TypeId]: TypeId,
-});
-
+export interface Component<EFactory = unknown, ESetup = unknown, EFallback = unknown> {
+  readonly [TypeId]: typeof TypeId;
+  readonly factory: (
+    context: SynchronousContext,
+  ) => Result.Result<Lifecycle<ESetup, EFallback>, EFactory>;
+}
+/** Descriptions are inert; each committed mount creates its own closure. */
+export const component = <EFactory = never, ESetup = never, EFallback = never>(
+  factory: (context: SynchronousContext) => Result.Result<Lifecycle<ESetup, EFallback>, EFactory>,
+): Component<EFactory, ESetup, EFallback> => ({ factory, [TypeId]: TypeId });
 export const isComponent = (value: unknown): value is Component =>
   Predicate.hasProperty(value, TypeId);

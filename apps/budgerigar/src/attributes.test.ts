@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Match, Option, Queue } from "effect";
+import { Cause, Effect, Exit, Match, Option, Queue, Result } from "effect";
 import { describe, expect, it } from "vitest";
 import { construct, type ConstructionError } from "./construction";
 import { component } from "./framework";
@@ -281,9 +281,12 @@ describe("reactive attributes and properties", () => {
     const optional = await run(ctx.signal({ initial: Option.some("ancestor") }));
     ctx.h(
       target,
-      component({
-        setup: (child) => child.he("input", { attrs: { title: optional }, props: { value: text } }),
-      }),
+      component(() =>
+        Result.succeed({
+          setup: (child) =>
+            child.he("input", { attrs: { title: optional }, props: { value: text } }),
+        }),
+      ),
     );
     await rendered({ parent, check: () => parent.querySelector("input") !== null });
     const node = parent.querySelector("input");

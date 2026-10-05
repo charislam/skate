@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Match, Scope } from "effect";
+import { Result, Deferred, Effect, Exit, Match, Scope } from "effect";
 import { afterEach } from "vitest";
 import { component, mounting, type ComponentContext, type MountFailure } from "./framework";
 
@@ -42,9 +42,11 @@ export const harness = async (options: { onError?: (failure: MountFailure) => vo
   const ready = Deferred.makeUnsafe<ComponentContext>();
   h(
     parent,
-    component({
-      setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("main"))),
-    }),
+    component(() =>
+      Result.succeed({
+        setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("main"))),
+      }),
+    ),
   );
   const ctx = await run(Deferred.await(ready));
   await rendered({ parent, check: () => parent.querySelector("main") !== null });

@@ -6,6 +6,7 @@ import {
   Match,
   Option,
   Queue,
+  Result,
   Schema,
   Stream,
   type Fiber,
@@ -26,6 +27,18 @@ export const requireValid = (valid: boolean, message: string) =>
 
 export const calculate = <A>(work: () => A): Effect.Effect<A, ReactiveError> =>
   Effect.try({ try: work, catch: (cause) => new ReactiveError({ message: String(cause), cause }) });
+
+export const requireValidSync = (
+  valid: boolean,
+  message: string,
+): Result.Result<void, ReactiveError> =>
+  Match.value(valid).pipe(
+    Match.when(true, () => Result.succeed(undefined)),
+    Match.when(false, () => Result.fail(new ReactiveError({ message }))),
+    Match.exhaustive,
+  );
+export const calculateSync = <A>(work: () => A): Result.Result<A, ReactiveError> =>
+  Result.try({ try: work, catch: (cause) => new ReactiveError({ message: String(cause), cause }) });
 
 /** State used only while evaluating writes, preparing candidates, or after closure. */
 export type TransactionPhase = Data.TaggedEnum<{
@@ -85,6 +98,9 @@ export interface ComponentLifetime {
   readonly active: () => boolean;
   readonly parent: Option.Option<ComponentLifetime>;
   readonly fork: (work: Effect.Effect<unknown, unknown, Scope.Scope>) => Effect.Effect<void>;
+  readonly registerWork: (
+    work: Effect.Effect<unknown, unknown, Scope.Scope>,
+  ) => Result.Result<void, ReactiveError>;
   readonly report: (failure: ReactiveFailure) => Effect.Effect<void>;
   readonly cleanups: Set<() => void>;
   readonly batchFibers: Set<Fiber.Fiber<unknown, unknown>>;
@@ -106,6 +122,7 @@ export const makeReactiveRuntime = Effect.fn("Budgerigar.makeReactiveRuntime")(f
   readonly active: () => boolean;
   readonly parent: Option.Option<ReactiveRuntime>;
   readonly fork: ComponentLifetime["fork"];
+  readonly registerWork?: ComponentLifetime["registerWork"];
   readonly report: ComponentLifetime["report"];
 }) {
   const eventQueue = yield* Queue.unbounded<EventWork>();
@@ -113,10 +130,19 @@ export const makeReactiveRuntime = Effect.fn("Budgerigar.makeReactiveRuntime")(f
     onNone: (): CommitCoordinator => ({ signals: new Set(), committing: false }),
     onSome: (parent) => parent.coordinator,
   });
+  const registerWork: ComponentLifetime["registerWork"] =
+    options.registerWork ??
+    ((work) =>
+      requireValidSync(options.active(), "Reactive runtime has been disposed").pipe(
+        Result.map(() => {
+          Effect.runSync(options.fork(Effect.yieldNow.pipe(Effect.andThen(work))));
+        }),
+      ));
   const lifetime: ComponentLifetime = {
     active: options.active,
     parent: Option.map(options.parent, (parent) => parent.lifetime),
     fork: options.fork,
+    registerWork,
     report: options.report,
     cleanups: new Set(),
     batchFibers: new Set(),
@@ -163,16 +189,30 @@ const canConsume = (options: {
     onSome: (parent) => canConsume({ consumer: parent, producer: options.producer }),
   });
 
-export const accessible = (options: { consumer: ComponentLifetime; producer: ComponentLifetime }) =>
-  requireValid(
+export const accessibleSync = (options: {
+  consumer: ComponentLifetime;
+  producer: ComponentLifetime;
+}) =>
+  requireValidSync(
     options.consumer.active() && options.producer.active() && canConsume(options),
     "Reactive resource is disposed or belongs to an unrelated component lifetime",
   );
+export const accessible = (options: { consumer: ComponentLifetime; producer: ComponentLifetime }) =>
+  Effect.suspend(() => Effect.fromResult(accessibleSync(options)));
+
+/**
+ * Only populated during an eager Result batch; nested synchronous signal Effects share staging.
+ * While populated, the coordinator grants transaction access across fibers, bypassing the usual
+ * owning-fiber check so manually run signal Effects participate in the batch.
+ */
+export const synchronousTransactions = new WeakMap<CommitCoordinator, Transaction>();
 
 export const transactionFor = Effect.fn("Budgerigar.transactionFor")(function* (
   runtime: ReactiveRuntime,
 ) {
-  const context = yield* CurrentTransaction;
+  const inherited = yield* CurrentTransaction;
+  const synchronous = Option.fromUndefinedOr(synchronousTransactions.get(runtime.coordinator));
+  const context = Option.orElse(inherited, () => synchronous);
   const fiberId = yield* Effect.fiberId;
   return yield* Option.match(context, {
     onNone: () => Effect.succeed(Option.none<Transaction>()),
@@ -181,7 +221,7 @@ export const transactionFor = Effect.fn("Budgerigar.transactionFor")(function* (
         transaction,
         work: requireValid(
           transaction.phase._tag === "Staging" &&
-            transaction.fiberId === fiberId &&
+            (transaction.fiberId === fiberId || Option.contains(synchronous, transaction)) &&
             transaction.coordinator === runtime.coordinator,
           "Batch writes require the owning fiber and a live transaction in the same coordinator",
         ).pipe(Effect.as(Option.some(transaction))),
@@ -340,6 +380,10 @@ export const runBatch = <A, E, R>(options: {
 }): Effect.Effect<A, E | ReactiveError, R> =>
   Effect.gen(function* () {
     yield* requireValid(options.runtime.lifetime.active(), "Reactive runtime has been disposed");
+    yield* requireValid(
+      !options.runtime.coordinator.committing,
+      "Reentrant commits during DOM flushing are not allowed",
+    );
     const inherited = yield* transactionFor(options.runtime);
     return yield* Option.match(inherited, {
       onSome: (transaction) => poison({ transaction, work: options.work }),

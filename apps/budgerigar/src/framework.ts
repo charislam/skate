@@ -1,13 +1,18 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Match, Option, Scope } from "effect";
-import { isComponent, type Component } from "./component";
+import { Cause, Deferred, Effect, Exit, Fiber, Match, Option, Result, Scope } from "effect";
+import { isComponent, type Component, type Lifecycle } from "./component";
 import {
   checkStructure,
   construct,
+  constructSync,
+  inspectSync,
+  selectedRegionSync,
+  validateSync,
+  type SyncConstruct,
+  ConstructionError,
   inspect,
   isNode,
   makeRegion,
   reserve,
-  selectedRegion,
   validate,
   type Construct,
   type MountItem,
@@ -22,11 +27,13 @@ import {
   type ReactiveError,
   type ReactiveRuntime,
 } from "./reactive";
+import { synchronousReactive, type SynchronousReactiveContext } from "./reactive/context";
 import { activateReactiveNode } from "./reactive/dom";
-import { requireValid } from "./reactive/runtime";
+import { CurrentTransaction, requireValidSync } from "./reactive/runtime";
 import { isSignal } from "./reactive/signal";
+import { lazy } from "./synchronous";
 
-export { component, type Component } from "./component";
+export { component, type Component, type Lifecycle } from "./component";
 export { ConstructionError } from "./construction";
 export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
 export type {
@@ -41,12 +48,25 @@ export type {
 export type {
   Child,
   Construct,
+  SyncConstruct,
   ElementOptions,
   ElementProperties,
   MountItem,
 } from "./construction";
 
-export type Output = Node | ReadonlyArray<Node>;
+export type Output = MountItem | ReadonlyArray<MountItem>;
+export interface SynchronousContext extends SynchronousReactiveContext {
+  readonly h: (
+    parent: Element,
+    content: Output,
+  ) => Result.Result<void, ConstructionError | ReactiveError>;
+  readonly he: SyncConstruct;
+  readonly scope: Scope.Scope;
+  readonly addSyncFinalizer: (finalizer: () => undefined) => Result.Result<void, ReactiveError>;
+  readonly fork: (
+    work: Effect.Effect<unknown, unknown, Scope.Scope>,
+  ) => Result.Result<void, ReactiveError>;
+}
 
 export interface OwnerContext extends ReactiveContext {
   readonly h: Mount;
@@ -74,6 +94,7 @@ type DomSubject =
 
 interface FailureDetails {
   readonly operation:
+    | "factory"
     | "fallback"
     | "setup"
     | "cleanup"
@@ -115,6 +136,7 @@ interface Owner {
   readonly syncFinalizers: Array<() => undefined>;
   syncFinalized: boolean;
   cleanup: Option.Option<Fiber.Fiber<void, never>>;
+  pending: Option.Option<Owner>;
 }
 
 interface Request {
@@ -160,10 +182,37 @@ const makeOwner = (options: {
   syncFinalizers: [],
   syncFinalized: false,
   cleanup: Option.none(),
+  pending: Option.none(),
 });
 
 const reactiveParent = (owner: Owner) =>
   Option.orElse(owner.reactiveRuntime, () => owner.parentRuntime);
+
+/** Internal DOM work is finite and runs under the same guard as signal flushes. */
+const domCommit = <A, E>(options: {
+  owner: Owner;
+  work: Effect.Effect<A, E>;
+}): Effect.Effect<A, E> =>
+  Effect.sync(() => {
+    const coordinator = Option.map(reactiveParent(options.owner), (runtime) => runtime.coordinator);
+    const previous = Option.map(coordinator, (coordinator) => coordinator.committing);
+    Option.match(coordinator, {
+      onNone: () => {},
+      onSome: (coordinator) => {
+        coordinator.committing = true;
+      },
+    });
+    try {
+      return Effect.runSyncExit(options.work);
+    } finally {
+      Option.match(coordinator, {
+        onNone: () => {},
+        onSome: (coordinator) => {
+          coordinator.committing = Option.getOrElse(previous, () => false);
+        },
+      });
+    }
+  }).pipe(Effect.flatMap((exit) => exit));
 
 const report = (owner: Owner, failure: MountFailure) =>
   Effect.sync(() => owner.report(failure)).pipe(Effect.catchCause(() => Effect.void));
@@ -291,12 +340,72 @@ const detachOwner = (owner: Owner): void => {
 
 /** Finish DOM-dependent work before any node in the outgoing subtree detaches. */
 const retireOwner = (owner: Owner): void => {
-  deactivate(owner);
-  for (const fiber of ownedFibers(owner)) fiber.interruptUnsafe();
-  finalizeSync(owner);
-  detachOwner(owner);
+  const coordinator = Option.map(reactiveParent(owner), (runtime) => runtime.coordinator);
+  const previous = Option.map(coordinator, (coordinator) => coordinator.committing);
+  Option.match(coordinator, {
+    onNone: () => {},
+    onSome: (coordinator) => {
+      coordinator.committing = true;
+    },
+  });
+  try {
+    deactivate(owner);
+    for (const fiber of ownedFibers(owner)) fiber.interruptUnsafe();
+    finalizeSync(owner);
+    detachOwner(owner);
+  } finally {
+    Option.match(coordinator, {
+      onNone: () => {},
+      onSome: (coordinator) => {
+        coordinator.committing = Option.getOrElse(previous, () => false);
+      },
+    });
+  }
 };
 
+const registerBackground =
+  (options: { owner: Owner; scope: Scope.Scope; failureContext: FailureContext }) =>
+  (work: Effect.Effect<unknown, unknown, Scope.Scope>): Result.Result<void, ReactiveError> =>
+    requireValidSync(options.owner.active, "Reactive runtime has been disposed").pipe(
+      Result.map(() => {
+        const task = Effect.uninterruptibleMask((restore) =>
+          restore(
+            Effect.yieldNow.pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  Match.value(options.owner.active).pipe(
+                    Match.when(false, () => Effect.void),
+                    Match.when(true, () => work.pipe(Scope.provide(options.scope))),
+                    Match.exhaustive,
+                  ),
+                ),
+              ),
+              Effect.provideService(CurrentTransaction, Option.none()),
+            ),
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Match.value(Cause.hasInterruptsOnly(cause)).pipe(
+                Match.when(true, () => Effect.void),
+                Match.when(false, () =>
+                  report(options.owner, {
+                    ...options.failureContext,
+                    operation: Match.value(options.owner.active).pipe(
+                      Match.when(true, () => "background" as const),
+                      Match.orElse(() => "cleanup" as const),
+                    ),
+                    cause,
+                  }),
+                ),
+                Match.exhaustive,
+              ),
+            ),
+          ),
+        );
+        const fiber = Effect.runFork(task);
+        options.owner.background.add(fiber);
+        fiber.addObserver(() => options.owner.background.delete(fiber));
+      }),
+    );
 const background =
   (options: {
     owner: Owner;
@@ -304,35 +413,31 @@ const background =
     failureContext: FailureContext;
   }): OwnerContext["fork"] =>
   (work) =>
-    Effect.gen(function* () {
-      yield* Match.value(options.owner.active).pipe(
-        Match.when(false, () => Effect.interrupt),
-        Match.orElse(() => Effect.void),
-      );
-      const task = Effect.uninterruptibleMask((restore) =>
-        restore(work.pipe(Scope.provide(options.scope))).pipe(
-          Effect.catchCause((cause) =>
-            Match.value(Cause.hasInterruptsOnly(cause)).pipe(
-              Match.when(true, () => Effect.void),
-              Match.when(false, () =>
-                report(options.owner, {
-                  ...options.failureContext,
-                  operation: Match.value(options.owner.active).pipe(
-                    Match.when(true, () => "background" as const),
-                    Match.orElse(() => "cleanup" as const),
-                  ),
-                  cause,
-                }),
-              ),
-              Match.exhaustive,
-            ),
-          ),
-        ),
-      );
-      const fiber = yield* Effect.forkIn(task, options.scope);
-      options.owner.background.add(fiber);
-      fiber.addObserver(() => options.owner.background.delete(fiber));
-    });
+    lazy(() => registerBackground(options)(work)).pipe(Effect.orDie);
+
+const registerSyncFinalizer = (options: {
+  owner: Owner;
+  finalizer: () => undefined;
+}): Result.Result<void, ReactiveError> =>
+  requireValidSync(options.owner.active, "Reactive runtime has been disposed").pipe(
+    Result.map(() => {
+      options.owner.syncFinalizers.push(options.finalizer);
+    }),
+  );
+
+const synchronousContext = (options: {
+  owner: Owner;
+  scope: Scope.Scope;
+  runtime: ReactiveRuntime;
+  failureContext: FailureContext;
+}): SynchronousContext => ({
+  ...synchronousReactive(options.runtime),
+  h: bindSync(options.owner),
+  he: constructSync(options.owner),
+  scope: options.scope,
+  fork: registerBackground(options),
+  addSyncFinalizer: (finalizer) => registerSyncFinalizer({ owner: options.owner, finalizer }),
+});
 
 const ownerContext = (options: {
   owner: Owner;
@@ -344,15 +449,7 @@ const ownerContext = (options: {
   he: construct(options.owner),
   scope: options.scope,
   addSyncFinalizer: (finalizer) =>
-    Effect.suspend(() =>
-      requireValid(options.owner.active, "Reactive runtime has been disposed").pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            options.owner.syncFinalizers.push(finalizer);
-          }),
-        ),
-      ),
-    ),
+    lazy(() => registerSyncFinalizer({ owner: options.owner, finalizer })),
   fork: options.fork,
   ...reactive(options.runtime),
 });
@@ -391,44 +488,133 @@ const prepareComponent = Effect.fn("Budgerigar.prepareComponent")(function* (opt
 
   owner.active = lifetime.active;
   lifetime.children.add(owner);
-  return { owner, scope, subject, parent, region, definition };
+  const failureContext = { parent, subject };
+  const runtime = yield* makeReactiveRuntime({
+    active: () => owner.active,
+    parent: owner.parentRuntime,
+    fork: background({ owner, scope, failureContext }),
+    registerWork: registerBackground({ owner, scope, failureContext }),
+    report: (failure) => report(owner, { ...failureContext, ...failure }),
+  });
+  owner.reactiveRuntime = Option.some(runtime);
+  return { owner, scope, subject, parent, region, definition, runtime };
 });
 
 type Occurrence = Effect.Success<ReturnType<typeof prepareComponent>>;
 
-const installFallback = Effect.fn("Budgerigar.installFallback")(function* (options: {
-  owner: Owner;
-  definition: Component;
-  region: Region;
-}) {
-  const { owner, region } = options;
-  yield* Option.match(Option.fromUndefinedOr(options.definition.fallback), {
+/** One finite normalization path for imperative mounts, fallback, and setup. */
+const describeOutput = (options: { output: Output; owner: Owner }) =>
+  Result.gen(function* () {
+    const items = Match.value(options.output).pipe(
+      Match.when(
+        (value: Output): value is ReadonlyArray<MountItem> => Array.isArray(value),
+        (values) => [...values],
+      ),
+      Match.orElse((value) => [value]),
+    );
+    const roots: Node[] = [];
+    const direct: Region[] = [];
+    for (const item of items) {
+      const nodes = yield* Match.value(item).pipe(
+        Match.when(isNode, (node) => Result.succeed([node])),
+        Match.when(isComponent, (definition) => {
+          const region = makeRegion({ definition, issuer: options.owner });
+          direct.push(region);
+          return Result.succeed([region.start, region.end]);
+        }),
+        Match.when(isSignal, (signal) =>
+          selectedRegionSync({ signal, issuer: options.owner }).pipe(
+            Result.map((region) => {
+              direct.push(region);
+              return [region.start, region.end];
+            }),
+          ),
+        ),
+        Match.orElse(() => Result.fail(new ConstructionError({ message: "invalid mount item" }))),
+      );
+      roots.push(...nodes);
+    }
+    const tree = yield* inspectSync({
+      roots,
+      owner: options.owner,
+      direct,
+      ownedTarget: (node) => options.owner.ownsTarget(node),
+    });
+    return { tree, direct, items };
+  });
+const outputTree = (options: { output: Output; owner: Owner }) =>
+  lazy(() =>
+    describeOutput(options).pipe(
+      Result.map(({ tree }) => {
+        reserve(tree, {});
+        return tree;
+      }),
+    ),
+  );
+
+const callbackResult = <A, E>(
+  work: () => Result.Result<A, E>,
+): Effect.Effect<A, E | ConstructionError> =>
+  Effect.suspend(() => {
+    const result = work();
+    return Match.value(Result.isResult(result)).pipe(
+      Match.when(true, () => Effect.fromResult(result)),
+      Match.when(false, () =>
+        Effect.fail(
+          new ConstructionError({
+            message: "Lifecycle callbacks must return a synchronous Result",
+          }),
+        ),
+      ),
+      Match.exhaustive,
+    );
+  });
+
+const installFallback = Effect.fn("Budgerigar.installFallback")(function* (
+  options: Occurrence & { lifecycle: Lifecycle },
+) {
+  const { owner, region, lifecycle, parent, subject, runtime } = options;
+  yield* Option.match(Option.fromUndefinedOr(lifecycle.fallback), {
     onNone: () => Effect.void,
     onSome: (fallback) =>
       Effect.gen(function* () {
-        const output = yield* Effect.sync(fallback);
-        yield* Match.value(owner.active).pipe(
-          Match.when(true, () => Effect.void),
-          Match.when(false, () => Effect.interrupt),
-          Match.exhaustive,
+        const scope = yield* Scope.make();
+        const failureContext = { parent, subject };
+        const pending = makeOwner({
+          report: owner.report,
+          scope,
+          parentOwner: owner,
+          parentRuntime: Option.some(runtime),
+          failureContext,
+        });
+        owner.children.add(pending);
+        owner.pending = Option.some(pending);
+        const pendingRuntime = yield* makeReactiveRuntime({
+          active: () => pending.active,
+          parent: Option.some(runtime),
+          fork: background({ owner: pending, scope, failureContext }),
+          registerWork: registerBackground({ owner: pending, scope, failureContext }),
+          report: (failure) => report(pending, { ...failureContext, ...failure }),
+        });
+        pending.reactiveRuntime = Option.some(pendingRuntime);
+        const output = yield* callbackResult(() =>
+          fallback(
+            synchronousContext({ owner: pending, scope, runtime: pendingRuntime, failureContext }),
+          ),
         );
-        const roots = Match.value(output).pipe(
-          Match.when(isNode, (node) => [node]),
-          Match.orElse((nodes) => [...nodes]),
-        );
-        const tree = yield* inspectOwned({ roots, owner });
-        yield* validate(tree.regions.length === 0, "fallbacks must contain only native nodes");
-        reserve(tree, {});
-        for (const node of roots) {
-          owner.dom.add(node);
+        const tree = yield* outputTree({ output, owner: pending });
+        yield* bindTree({ tree, lifetime: pending });
+        for (const node of tree.roots) {
+          pending.dom.add(node);
           region.end.parentNode?.insertBefore(node, region.end);
         }
+        yield* activateTree({ tree, lifetime: pending, parent });
       }),
   });
 });
 
-const startComponent = (options: Occurrence & { deferSetup: boolean }): void => {
-  const { owner, definition, region, scope, parent, subject } = options;
+const startComponent = (options: Occurrence & { lifecycle: Lifecycle }): void => {
+  const { owner, lifecycle, region, scope, parent, subject, runtime } = options;
   const task = Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       yield* Match.value(owner.active).pipe(
@@ -437,17 +623,10 @@ const startComponent = (options: Occurrence & { deferSetup: boolean }): void => 
         Match.exhaustive,
       );
       const fork = background({ owner, scope, failureContext: { parent, subject } });
-      const stateOwner = yield* makeReactiveRuntime({
-        active: () => owner.active,
-        parent: owner.parentRuntime,
-        fork,
-        report: (failure) => report(owner, { parent, subject, ...failure }),
-      });
-      owner.reactiveRuntime = Option.some(stateOwner);
       const exit = yield* restore(
-        Effect.suspend(() =>
-          definition.setup(ownerContext({ owner, scope, fork, runtime: stateOwner })),
-        ).pipe(Scope.provide(scope)),
+        Effect.suspend(() => lifecycle.setup(ownerContext({ owner, scope, fork, runtime }))).pipe(
+          Scope.provide(scope),
+        ),
       ).pipe(Effect.exit);
 
       owner.setup = Option.none();
@@ -473,13 +652,8 @@ const startComponent = (options: Occurrence & { deferSetup: boolean }): void => 
             onSuccess: (output) =>
               Effect.gen(function* () {
                 const adoption = yield* Effect.gen(function* () {
-                  const roots = Match.value(output).pipe(
-                    Match.when(isNode, (node) => [node]),
-                    Match.orElse((nodes) => [...nodes]),
-                  );
-                  const tree = yield* inspectOwned({ roots, owner });
-                  reserve(tree, {});
-
+                  const tree = yield* outputTree({ output, owner });
+                  const roots = tree.roots;
                   yield* validate(
                     region.start.parentNode === region.end.parentNode &&
                       region.end.parentNode !== null,
@@ -492,18 +666,27 @@ const startComponent = (options: Occurrence & { deferSetup: boolean }): void => 
                     Match.when(false, () => Effect.interrupt),
                     Match.exhaustive,
                   );
+                  Option.match(owner.pending, {
+                    onNone: () => {},
+                    onSome: (pending) => {
+                      retireOwner(pending);
+                      beginCleanup(pending);
+                    },
+                  });
+                  owner.pending = Option.none();
                   for (const node of owner.dom) node.parentNode?.removeChild(node);
                   owner.dom.clear();
                   for (const node of roots) {
                     owner.dom.add(node);
                     region.end.parentNode?.insertBefore(node, region.end);
                   }
+                  yield* activateTree({ tree, lifetime: owner, parent });
                   return tree;
-                }).pipe(Effect.exit);
+                }).pipe((work) => domCommit({ owner, work }), Effect.exit);
                 yield* Exit.match(adoption, {
                   onFailure: (cause) =>
                     failAttempt({ owner, parent, subject, cause, operation: "validation" }),
-                  onSuccess: (tree) => activateTree({ tree, lifetime: owner, parent }),
+                  onSuccess: () => Effect.void,
                 });
               }),
           }),
@@ -513,47 +696,89 @@ const startComponent = (options: Occurrence & { deferSetup: boolean }): void => 
     }),
   );
 
-  // Selected setup is deferred past the commit; superseded attempts never run user setup.
-  const work = Match.value(options.deferSetup).pipe(
-    Match.when(true, () => Effect.yieldNow.pipe(Effect.andThen(task))),
-    Match.when(false, () => task),
-    Match.exhaustive,
+  owner.setup = Option.some(
+    Effect.runFork(
+      Effect.yieldNow.pipe(
+        Effect.andThen(task),
+        Effect.provideService(CurrentTransaction, Option.none()),
+      ),
+    ),
   );
-  owner.setup = Option.some(Effect.runFork(work));
 };
 
-const activateComponent = Effect.fn("Budgerigar.activateComponent")(function* (options: {
-  region: Region;
-  definition: Component;
-  lifetime: Owner;
-  parent: Element;
-  onOwner?: (owner: Owner) => void;
-  deferSetup?: boolean;
-}) {
-  const occurrence = yield* prepareComponent(options);
-  const { owner, parent, subject } = occurrence;
-  Option.match(Option.fromUndefinedOr(options.onOwner), {
-    onNone: () => {},
-    onSome: (ready) => ready(owner),
-  });
-  const fallback = yield* installFallback(occurrence).pipe(Effect.exit);
-  yield* Exit.match(fallback, {
-    onSuccess: () => Effect.void,
-    onFailure: (cause) =>
-      Match.value(Cause.hasInterruptsOnly(cause)).pipe(
-        Match.when(true, () => Effect.void),
-        Match.when(false, () =>
-          Effect.sync(() => {
-            for (const node of owner.dom) node.parentNode?.removeChild(node);
-            owner.dom.clear();
-          }).pipe(Effect.andThen(report(owner, { parent, subject, cause, operation: "fallback" }))),
-        ),
-        Match.exhaustive,
+const activateComponent = Effect.fn("Budgerigar.activateComponent")(
+  function* (options: {
+    region: Region;
+    definition: Component;
+    lifetime: Owner;
+    parent: Element;
+    onOwner?: (owner: Owner) => void;
+  }) {
+    const occurrence = yield* prepareComponent(options);
+    const { owner, parent, subject } = occurrence;
+    Option.match(Option.fromUndefinedOr(options.onOwner), {
+      onNone: () => {},
+      onSome: (ready) => ready(owner),
+    });
+    const factory = yield* callbackResult(() =>
+      options.definition.factory(
+        synchronousContext({ ...occurrence, failureContext: { parent, subject } }),
       ),
-  });
-  startComponent({ ...occurrence, deferSetup: options.deferSetup ?? false });
-  return owner;
-});
+    ).pipe(
+      Effect.flatMap((lifecycle) =>
+        validate(
+          typeof lifecycle === "object" &&
+            lifecycle !== null &&
+            typeof lifecycle.setup === "function" &&
+            (lifecycle.fallback === undefined || typeof lifecycle.fallback === "function"),
+          "invalid component lifecycle",
+        ).pipe(Effect.as(lifecycle)),
+      ),
+      Effect.exit,
+    );
+    const lifecycle = yield* Exit.match(factory, {
+      onSuccess: (value) => Effect.succeed(Option.some(value)),
+      onFailure: (cause) =>
+        failAttempt({ owner, parent, subject, cause, operation: "factory" }).pipe(
+          Effect.as(Option.none<Lifecycle>()),
+        ),
+    });
+    yield* Option.match(lifecycle, {
+      onNone: () => Effect.void,
+      onSome: (lifecycle) =>
+        Effect.gen(function* () {
+          const fallback = yield* installFallback({ ...occurrence, lifecycle }).pipe(Effect.exit);
+          yield* Exit.match(fallback, {
+            onSuccess: () => Effect.void,
+            onFailure: (cause) =>
+              Match.value(Cause.hasInterruptsOnly(cause)).pipe(
+                Match.when(true, () => Effect.void),
+                Match.when(false, () =>
+                  Effect.sync(() => {
+                    Option.match(owner.pending, {
+                      onNone: () => {},
+                      onSome: (pending) => {
+                        retireOwner(pending);
+                        beginCleanup(pending);
+                      },
+                    });
+                    owner.pending = Option.none();
+                  }).pipe(
+                    Effect.andThen(
+                      report(owner, { parent, subject, cause, operation: "fallback" }),
+                    ),
+                  ),
+                ),
+                Match.exhaustive,
+              ),
+          });
+          startComponent({ ...occurrence, lifecycle });
+        }),
+    });
+    return owner;
+  },
+  (work, options) => domCommit({ owner: options.lifetime, work }),
+);
 
 const sameSelection = (options: {
   left: Option.Option<Component>;
@@ -599,7 +824,6 @@ const activateSelection = Effect.fn("Budgerigar.activateSelection")(
                     definition,
                     lifetime: controller,
                     parent,
-                    deferSetup: true,
                     onOwner: (owner) => {
                       current = Option.some(owner);
                     },
@@ -637,7 +861,7 @@ const failAttempt = Effect.fn("Budgerigar.failAttempt")(
     parent: Element;
     subject: Extract<DomSubject, { kind: "component" }>;
     cause: Cause.Cause<unknown>;
-    operation: "fallback" | "setup" | "validation";
+    operation: "factory" | "fallback" | "setup" | "validation";
   }) =>
     Effect.sync(() => {
       retireOwner(options.owner);
@@ -690,67 +914,71 @@ const activateTree: (options: {
     yield* activate({ region, lifetime: options.lifetime, parent: options.parent });
 });
 
-const install = Effect.fn("Budgerigar.install")(function* (queue: ParentQueue, request: Request) {
-  const validation = yield* Effect.gen(function* () {
-    yield* checkStructure(request.tree);
-    yield* validate(
-      !request.tree.nodes.includes(queue.parent),
-      "mount content contains its target",
-    );
-    return yield* inspectOwned({
-      roots: request.tree.roots,
-      owner: queue.owner,
-      reservation: request.subject.id,
-      direct: request.direct,
+const install = Effect.fn("Budgerigar.install")(
+  function* (queue: ParentQueue, request: Request) {
+    const validation = yield* Effect.gen(function* () {
+      yield* checkStructure(request.tree);
+      yield* validate(
+        !request.tree.nodes.includes(queue.parent),
+        "mount content contains its target",
+      );
+      return yield* inspectOwned({
+        roots: request.tree.roots,
+        owner: queue.owner,
+        reservation: request.subject.id,
+        direct: request.direct,
+      });
+    }).pipe(Effect.exit);
+
+    yield* Exit.match(validation, {
+      onFailure: (cause) =>
+        report(queue.owner, {
+          parent: queue.parent,
+          subject: request.subject,
+          operation: "validation",
+          cause,
+        }),
+      onSuccess: (tree) =>
+        Effect.gen(function* () {
+          Option.match(queue.current, {
+            onNone: () => {},
+            onSome: (current) => {
+              retireOwner(current);
+              beginCleanup(current);
+            },
+          });
+          queue.current = Option.none();
+          queue.parent.replaceChildren();
+
+          yield* Match.value(queue.owner.active).pipe(
+            Match.when(false, () => Effect.void),
+            Match.when(true, () =>
+              Effect.gen(function* () {
+                const lifetime = makeOwner({
+                  report: queue.owner.report,
+                  parentOwner: queue.owner,
+                  failureContext: { parent: queue.parent, subject: request.subject },
+                  parentRuntime: reactiveParent(queue.owner),
+                });
+                queue.owner.children.add(lifetime);
+                queue.current = Option.some(lifetime);
+
+                yield* bindTree({ tree, lifetime });
+                for (const node of tree.roots) {
+                  lifetime.dom.add(node);
+                  queue.parent.append(node);
+                }
+                yield* activateTree({ tree, lifetime, parent: queue.parent });
+              }),
+            ),
+            Match.exhaustive,
+          );
+        }),
     });
-  }).pipe(Effect.exit);
-
-  yield* Exit.match(validation, {
-    onFailure: (cause) =>
-      report(queue.owner, {
-        parent: queue.parent,
-        subject: request.subject,
-        operation: "validation",
-        cause,
-      }),
-    onSuccess: (tree) =>
-      Effect.gen(function* () {
-        Option.match(queue.current, {
-          onNone: () => {},
-          onSome: (current) => {
-            retireOwner(current);
-            beginCleanup(current);
-          },
-        });
-        queue.current = Option.none();
-        queue.parent.replaceChildren();
-
-        yield* Match.value(queue.owner.active).pipe(
-          Match.when(false, () => Effect.void),
-          Match.when(true, () =>
-            Effect.gen(function* () {
-              const lifetime = makeOwner({
-                report: queue.owner.report,
-                parentOwner: queue.owner,
-                failureContext: { parent: queue.parent, subject: request.subject },
-                parentRuntime: reactiveParent(queue.owner),
-              });
-              queue.owner.children.add(lifetime);
-              queue.current = Option.some(lifetime);
-
-              yield* bindTree({ tree, lifetime });
-              for (const node of tree.roots) {
-                lifetime.dom.add(node);
-                queue.parent.append(node);
-              }
-              yield* activateTree({ tree, lifetime, parent: queue.parent });
-            }),
-          ),
-          Match.exhaustive,
-        );
-      }),
-  });
-}, Effect.uninterruptible);
+  },
+  (work, queue) => domCommit({ owner: queue.owner, work }),
+  Effect.uninterruptible,
+);
 
 const drain = (queue: ParentQueue): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -778,104 +1006,80 @@ const drain = (queue: ParentQueue): Effect.Effect<void> =>
     ),
   );
 
+const bindSync =
+  (owner: Owner): SynchronousContext["h"] =>
+  (parent, content) =>
+    Result.gen(function* () {
+      yield* requireValidSync(owner.active, "Reactive runtime has been disposed");
+      const { tree, direct, items } = yield* describeOutput({ owner, output: content });
+      yield* validateSync(!tree.nodes.includes(parent), "mount content contains its target");
+      const existing = Option.fromUndefinedOr(parents.get(parent));
+      yield* validateSync(
+        Option.match(existing, { onNone: () => true, onSome: (queue) => queue.owner === owner }),
+        "Mount target already belongs to another live owner",
+      );
+      const subject: Request["subject"] = { kind: "replacement", id: {}, items };
+      reserve(tree, subject.id);
+      const queue = Option.getOrElse(existing, () => {
+        const created: ParentQueue = {
+          parent,
+          owner,
+          pending: [],
+          current: Option.none(),
+          worker: Option.none(),
+        };
+        parents.set(parent, created);
+        owner.queues.add(created);
+        return created;
+      });
+      queue.pending.push({ subject, tree, direct });
+      Option.match(queue.worker, {
+        onSome: () => {},
+        onNone: () => {
+          queue.worker = Option.some(
+            Effect.runFork(
+              Effect.yieldNow.pipe(
+                Effect.andThen(drain(queue)),
+                Effect.provideService(CurrentTransaction, Option.none()),
+              ),
+            ),
+          );
+        },
+      });
+    });
 const bind =
   (owner: Owner): Mount =>
   (parent, content) => {
     Match.value(owner.active).pipe(
       Match.when(false, () => {}),
-      Match.when(true, () => {
-        const items = Match.value(content).pipe(
-          Match.when(
-            (value: MountItem | ReadonlyArray<MountItem>): value is ReadonlyArray<MountItem> =>
-              Array.isArray(value),
-            (values) => [...values],
-          ),
-          Match.orElse((value) => [value]),
-        );
-
-        const subject: Request["subject"] = { kind: "replacement", id: {}, items };
-
-        const submitted = Effect.gen(function* () {
-          const roots: Node[] = [];
-          const direct: Region[] = [];
-          for (const item of items) {
-            yield* Match.value(item).pipe(
-              Match.when(isNode, (node) =>
-                Effect.sync(() => {
-                  roots.push(node);
-                }),
-              ),
-              Match.when(isComponent, (definition) =>
-                Effect.sync(() => {
-                  const region = makeRegion({ definition, issuer: owner });
-                  direct.push(region);
-                  roots.push(region.start, region.end);
-                }),
-              ),
-              Match.when(isSignal, (signal) =>
-                selectedRegion({ signal, issuer: owner }).pipe(
-                  Effect.map((region) => {
-                    direct.push(region);
-                    roots.push(region.start, region.end);
-                  }),
-                ),
-              ),
-              Match.orElse(() => validate(false, "invalid mount item")),
-            );
-          }
-          const tree = yield* inspectOwned({ roots, owner, direct });
-          yield* validate(!tree.nodes.includes(parent), "mount content contains its target");
-          reserve(tree, subject.id);
-          return { tree, direct };
-        });
-
-        const exit = Effect.runSyncExit(submitted);
-        Exit.match(exit, {
-          onFailure: (cause) => {
-            Effect.runFork(report(owner, { parent, subject, operation: "validation", cause }));
-          },
-          onSuccess: ({ tree, direct }) => {
-            const queue = Option.getOrElse(Option.fromUndefinedOr(parents.get(parent)), () => {
-              const created: ParentQueue = {
+      Match.when(true, () =>
+        Result.match(bindSync(owner)(parent, content), {
+          onSuccess: () => {},
+          onFailure: (error) => {
+            Effect.runFork(
+              report(owner, {
                 parent,
-                owner,
-                pending: [],
-                current: Option.none(),
-                worker: Option.none(),
-              };
-              parents.set(parent, created);
-              owner.queues.add(created);
-              return created;
-            });
-            Match.value(queue.owner === owner).pipe(
-              Match.when(false, () => {
-                Effect.runFork(
-                  report(owner, {
-                    parent,
-                    subject,
-                    operation: "ownership",
-                    cause: Cause.die(
-                      new Error("Mount target already belongs to another live owner"),
+                subject: {
+                  kind: "replacement",
+                  id: {},
+                  items: Match.value(content).pipe(
+                    Match.when(
+                      (value: Output): value is ReadonlyArray<MountItem> => Array.isArray(value),
+                      (items) => [...items],
                     ),
-                  }),
-                );
+                    Match.orElse((item) => [item]),
+                  ),
+                },
+                operation: Match.value(error.message.includes("already belongs")).pipe(
+                  Match.when(true, () => "ownership" as const),
+                  Match.orElse(() => "validation" as const),
+                ),
+                cause: Cause.fail(error),
               }),
-              Match.when(true, () => {
-                queue.pending.push({ subject, tree, direct });
-                Option.match(queue.worker, {
-                  onSome: () => {},
-                  onNone: () => {
-                    queue.worker = Option.some(
-                      Effect.runFork(Effect.yieldNow.pipe(Effect.andThen(drain(queue)))),
-                    );
-                  },
-                });
-              }),
-              Match.exhaustive,
             );
           },
-        });
-      }),
+        }),
+      ),
       Match.exhaustive,
     );
   };
@@ -899,6 +1103,7 @@ export const mounting = Effect.fn("Budgerigar.mounting")(function* (options: {
     active: () => owner.active,
     parent: Option.none(),
     fork,
+    registerWork: registerBackground({ owner, scope, failureContext }),
     report: (failure) => report(owner, { ...failureContext, ...failure }),
   });
   owner.reactiveRuntime = Option.some(runtime);
