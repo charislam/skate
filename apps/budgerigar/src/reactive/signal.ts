@@ -1,11 +1,15 @@
-import { Effect, Match, Option, Queue, Stream } from "effect";
+import { Effect, Match, Option, Result, Queue, Stream } from "effect";
+import { lazy } from "~/synchronous";
 import {
-  accessible,
+  accessibleSync,
   calculate,
+  calculateSync,
   CurrentTransaction,
   poison,
   requireValid,
+  requireValidSync,
   runBatch,
+  synchronousTransactions,
   transactionFor,
   type ReactiveRuntime,
   type SignalCommit,
@@ -17,7 +21,7 @@ import {
 export interface DomSink {
   readonly validate: (
     transaction: Option.Option<Transaction>,
-  ) => Effect.Effect<void, ReactiveError>;
+  ) => Result.Result<void, ReactiveError>;
   readonly flush: () => Effect.Effect<void>;
 }
 
@@ -183,7 +187,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
       participant.version += 1;
     },
     validateDom: (transaction) =>
-      Effect.forEach(bindings, (sink) => sink.validate(Option.some(transaction)), {
+      Effect.forEach(bindings, (sink) => lazy(() => sink.validate(Option.some(transaction))), {
         discard: true,
       }),
     flushDom: () => Effect.forEach(bindings, (sink) => sink.flush(), { discard: true }),
@@ -260,13 +264,17 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
     },
     get: Effect.gen(function* () {
       yield* requireValid(options.runtime.lifetime.active(), "Signal runtime has been disposed");
-      const transaction = yield* CurrentTransaction;
+      const inherited = yield* CurrentTransaction;
+      const synchronous = Option.fromUndefinedOr(
+        synchronousTransactions.get(options.runtime.coordinator),
+      );
+      const transaction = Option.orElse(inherited, () => synchronous);
       const id = yield* Effect.fiberId;
       const visible = Option.filter(
         transaction,
         (tx) =>
           tx.phase._tag === "Staging" &&
-          tx.fiberId === id &&
+          (tx.fiberId === id || Option.contains(synchronous, tx)) &&
           tx.coordinator === options.runtime.coordinator,
       );
       const work = calculate(() => candidate(visible));
@@ -313,23 +321,26 @@ export const sourceValues = <S extends Sources>(
     ]),
   ) as Values<S>;
 
-export const derive = <S extends Sources, A>(options: {
+export const deriveSync = <S extends Sources, A>(options: {
   readonly runtime: ReactiveRuntime;
   readonly sources: S;
   readonly compute: (values: Values<S>) => A;
   readonly equals?: Equality<A>;
-}): Effect.Effect<Signal<A>, ReactiveError> =>
-  Effect.gen(function* () {
-    yield* requireValid(options.runtime.lifetime.active(), "Reactive runtime has been disposed");
+}): Result.Result<Signal<A>, ReactiveError> =>
+  Result.gen(function* () {
+    yield* requireValidSync(
+      options.runtime.lifetime.active(),
+      "Reactive runtime has been disposed",
+    );
     const sources = { ...options.sources };
     for (const signal of Object.values(sources))
-      yield* accessible({
+      yield* accessibleSync({
         consumer: options.runtime.lifetime,
         producer: signalData(signal).participant.lifetime,
       });
     const calculateValue = options.compute;
     const compute = (tx: Option.Option<Transaction>) => calculateValue(sourceValues(sources, tx));
-    const initial = yield* calculate(() => compute(Option.none()));
+    const initial = yield* calculateSync(() => compute(Option.none()));
     const cell = makeCell({
       ...options,
       initial,
@@ -340,3 +351,22 @@ export const derive = <S extends Sources, A>(options: {
     const { set: _set, update: _update, ...signal } = cell;
     return signal;
   });
+
+export const readSync = <A>(options: {
+  runtime: ReactiveRuntime;
+  signal: Signal<A>;
+}): Result.Result<A, ReactiveError> =>
+  Result.gen(function* () {
+    yield* accessibleSync({
+      consumer: options.runtime.lifetime,
+      producer: signalData(options.signal).participant.lifetime,
+    });
+    return signalData(options.signal).candidate(Option.none());
+  });
+
+export const derive = <S extends Sources, A>(options: {
+  readonly runtime: ReactiveRuntime;
+  readonly sources: S;
+  readonly compute: (values: Values<S>) => A;
+  readonly equals?: Equality<A>;
+}) => lazy(() => deriveSync(options));

@@ -1,4 +1,4 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, Match, Option, Result } from "effect";
 import { expectTypeOf, it } from "vitest";
 import type { ConstructionError } from "./construction";
 import { component } from "./framework";
@@ -12,6 +12,7 @@ import type {
   ReactiveError,
   Signal,
   WritableSignal,
+  SynchronousContext,
 } from "./framework";
 
 it("retains native tag and property types and restricts static construction", () => {
@@ -21,7 +22,7 @@ it("retains native tag and property types and restricts static construction", ()
 
     // @ts-expect-error A setup method alone does not carry the component type id.
     const unbranded: Component = {
-      setup: () => Effect.succeed([]),
+      factory: () => Result.succeed({ setup: () => Effect.succeed([]) }),
     };
     void unbranded;
 
@@ -249,33 +250,66 @@ it("accepts covariant Option component signals at both construction boundaries",
   expectTypeOf(describe).toBeFunction();
 });
 
-it("requires synchronous native fallbacks and synchronous finalizer callbacks", () => {
-  const author = (ctx: ComponentContext) => {
-    component({
-      fallback: () => document.createTextNode("loading"),
-      setup: () => Effect.succeed([]),
+it("requires Result factories and fallbacks and preserves helper errors", () => {
+  const author = (ctx: SynchronousContext, yieldSignal: Signal<string>) => {
+    expectTypeOf(
+      component(() => Result.succeed({ setup: () => Effect.succeed([]) })),
+    ).toEqualTypeOf<Component<never, never, never>>();
+    const valid = component(({ signal }) =>
+      Result.gen(function* () {
+        const label = yield* signal({ initial: "loading" });
+        return {
+          fallback: ({ he }) => he("p", { children: [label] }),
+          setup: ({ he }) => he("article"),
+        };
+      }),
+    );
+    expectTypeOf(valid).toEqualTypeOf<
+      Component<ReactiveError, ConstructionError, ConstructionError>
+    >();
+    ctx.he("div", { children: [valid] });
+    expectTypeOf(ctx.signal({ initial: 0 })).toEqualTypeOf<
+      Result.Result<WritableSignal<number>, ReactiveError>
+    >();
+    expectTypeOf(ctx.he("input")).toEqualTypeOf<
+      Result.Result<HTMLInputElement, ConstructionError>
+    >();
+    expectTypeOf(ctx.read(yieldSignal)).toEqualTypeOf<Result.Result<string, ReactiveError>>();
+    const composed = Result.gen(function* () {
+      yield* ctx.signal({ initial: 0 });
+      return yield* ctx.he("div");
     });
-    component({
-      fallback: () => [document.createElement("span"), document.createTextNode("loading")],
-      setup: () => Effect.succeed([]),
-    });
+    expectTypeOf(composed).toEqualTypeOf<
+      Result.Result<HTMLDivElement, ReactiveError | ConstructionError>
+    >();
     ctx.addSyncFinalizer(() => {});
     // @ts-expect-error Synchronous finalizers cannot return a Promise.
     ctx.addSyncFinalizer(async () => {});
-    // @ts-expect-error Synchronous finalizers cannot return an Effect.
-    ctx.addSyncFinalizer(() => Effect.void);
-    component({
-      // @ts-expect-error Fallback factories cannot await work.
-      fallback: async () => document.createElement("div"),
-      setup: () => Effect.succeed([]),
-    });
-    // @ts-expect-error Fallback factories return native output, not Effects.
-    component({ fallback: () => ctx.he("div"), setup: () => Effect.succeed([]) });
-    component({
-      // @ts-expect-error Deferred components are not native fallback output.
-      fallback: () => component({ setup: () => Effect.succeed([]) }),
-      setup: () => Effect.succeed([]),
-    });
+    // @ts-expect-error Factories require Result wrappers.
+    component(() => ({ setup: () => Effect.succeed([]) }));
+    // @ts-expect-error Factories cannot return Effects.
+    component(() => Effect.succeed({ setup: () => Effect.succeed([]) }));
+    // @ts-expect-error Factories cannot suspend.
+    component(async () => ({ setup: () => Effect.succeed([]) }));
+    component(() =>
+      // @ts-expect-error Fallbacks require Result wrappers.
+      Result.succeed({
+        fallback: () => document.createElement("div"),
+        setup: () => Effect.succeed([]),
+      }),
+    );
+    component(() =>
+      // @ts-expect-error Fallbacks cannot return Effects.
+      Result.succeed({ fallback: () => Effect.succeed([]), setup: () => Effect.succeed([]) }),
+    );
+    // @ts-expect-error Fallbacks cannot return promises.
+    component(() => Result.succeed({ fallback: async () => [], setup: () => Effect.succeed([]) }));
+    // @ts-expect-error Batches accept thunks only.
+    ctx.batch(Result.succeed(undefined));
+    // @ts-expect-error Strings remain children, not root output.
+    component(() => Result.succeed({ setup: () => Effect.succeed("text") }));
+    // @ts-expect-error Root arrays cannot be nested.
+    component(() => Result.succeed({ setup: () => Effect.succeed([[]]) }));
   };
   expectTypeOf(author).toBeFunction();
 });

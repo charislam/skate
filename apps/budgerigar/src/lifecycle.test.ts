@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Scope, Result } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { component, mounting, type Component, type MountFailure } from "./framework";
 import { rendered } from "./test-helpers";
@@ -40,7 +40,7 @@ const harness = async (onError: (failure: MountFailure) => void = () => {}) => {
 const shows = (parent: Node, value: string) =>
   rendered({ parent, check: () => parent.textContent === value });
 const text = (value: string) =>
-  component({ setup: () => Effect.succeed(document.createTextNode(value)) });
+  component(() => Result.succeed({ setup: () => Effect.succeed(document.createTextNode(value)) }));
 
 describe("synchronous finalizers and setup fallbacks", () => {
   it("captures outgoing focus while attached and transfers it to surviving controls", async () => {
@@ -48,27 +48,29 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const trigger = await run(app.he("button", { children: ["open"], props: { type: "button" } }));
     let synchronous = 0;
     const asyncCleaned = gate();
-    const dialog = component({
-      setup: ({ he, signal, addSyncFinalizer }) =>
-        Effect.gen(function* () {
-          const local = yield* signal({ initial: "local" });
-          const input = yield* he("input");
-          yield* addSyncFinalizer(() => {
-            synchronous += 1;
-            expect(input.isConnected).toBe(true);
-            expect(document.activeElement).toBe(input);
-            expect(Exit.isFailure(Effect.runSync(local.get.pipe(Effect.exit)))).toBe(true);
-            trigger.focus();
-          });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              expect(input.isConnected).toBe(false);
-              expect(document.activeElement).toBe(trigger);
-            }).pipe(Effect.andThen(Deferred.succeed(asyncCleaned, undefined))),
-          );
-          return input;
-        }),
-    });
+    const dialog = component(() =>
+      Result.succeed({
+        setup: ({ he, signal, addSyncFinalizer }) =>
+          Effect.gen(function* () {
+            const local = yield* signal({ initial: "local" });
+            const input = yield* he("input");
+            yield* addSyncFinalizer(() => {
+              synchronous += 1;
+              expect(input.isConnected).toBe(true);
+              expect(document.activeElement).toBe(input);
+              expect(Exit.isFailure(Effect.runSync(local.get.pipe(Effect.exit)))).toBe(true);
+              trigger.focus();
+            });
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                expect(input.isConnected).toBe(false);
+                expect(document.activeElement).toBe(trigger);
+              }).pipe(Effect.andThen(Deferred.succeed(asyncCleaned, undefined))),
+            );
+            return input;
+          }),
+      }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(dialog) }),
     );
@@ -85,42 +87,46 @@ describe("synchronous finalizers and setup fallbacks", () => {
   it("runs descendants and last-registered synchronous finalizers first before detaching any outgoing DOM", async () => {
     const { app, parent, close } = await harness();
     const order: string[] = [];
-    const child = component({
-      setup: ({ he, addSyncFinalizer }) =>
-        Effect.gen(function* () {
-          yield* addSyncFinalizer(() => {
-            expect(parent.textContent).toBe("child");
-            order.push("child-first");
-          });
-          yield* addSyncFinalizer(() => {
-            expect(parent.textContent).toBe("child");
-            order.push("child-last");
-          });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              expect(parent.textContent).toBe("");
-              order.push("child-async");
-            }),
-          );
-          return yield* he("span", { children: ["child"] });
-        }),
-    });
-    const owner = component({
-      setup: ({ he, addSyncFinalizer }) =>
-        Effect.gen(function* () {
-          yield* addSyncFinalizer(() => {
-            expect(parent.textContent).toBe("child");
-            order.push("owner-sync");
-          });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              expect(parent.textContent).toBe("");
-              order.push("owner-async");
-            }),
-          );
-          return yield* he("div", { children: [child] });
-        }),
-    });
+    const child = component(() =>
+      Result.succeed({
+        setup: ({ he, addSyncFinalizer }) =>
+          Effect.gen(function* () {
+            yield* addSyncFinalizer(() => {
+              expect(parent.textContent).toBe("child");
+              order.push("child-first");
+            });
+            yield* addSyncFinalizer(() => {
+              expect(parent.textContent).toBe("child");
+              order.push("child-last");
+            });
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                expect(parent.textContent).toBe("");
+                order.push("child-async");
+              }),
+            );
+            return yield* he("span", { children: ["child"] });
+          }),
+      }),
+    );
+    const owner = component(() =>
+      Result.succeed({
+        setup: ({ he, addSyncFinalizer }) =>
+          Effect.gen(function* () {
+            yield* addSyncFinalizer(() => {
+              expect(parent.textContent).toBe("child");
+              order.push("owner-sync");
+            });
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                expect(parent.textContent).toBe("");
+                order.push("owner-async");
+              }),
+            );
+            return yield* he("div", { children: [child] });
+          }),
+      }),
+    );
     await run(
       app.addSyncFinalizer(() => {
         expect(parent.textContent).toBe("child");
@@ -162,29 +168,33 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const setupStarted = gate();
     const releaseSetup = gate();
     const observed = gate();
-    const old = component({
-      setup: () =>
-        Effect.gen(function* () {
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(cleaning, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseCleanup)),
-            ),
-          );
-          return document.createTextNode("outgoing");
-        }),
-    });
+    const old = component(() =>
+      Result.succeed({
+        setup: () =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(cleaning, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCleanup)),
+              ),
+            );
+            return document.createTextNode("outgoing");
+          }),
+      }),
+    );
     let factories = 0;
-    const incoming = component({
-      fallback: () => {
-        factories += 1;
-        return document.createTextNode("pending");
-      },
-      setup: () =>
-        Deferred.succeed(setupStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseSetup)),
-          Effect.as(document.createTextNode("ready")),
-        ),
-    });
+    const incoming = component(() =>
+      Result.succeed({
+        fallback: () => {
+          factories += 1;
+          return Result.succeed(document.createTextNode("pending"));
+        },
+        setup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSetup)),
+            Effect.as(document.createTextNode("ready")),
+          ),
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.some(old) }));
     const label = await run(app.signal({ initial: "old" }));
     app.h(parent, await run(app.he("div", { children: [label, selected] })));
@@ -224,13 +234,15 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const { app, parent } = await harness();
     const release = gate();
     const started = gate();
-    const incoming = component({
-      setup: () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Deferred.await(release)),
-          Effect.as(document.createTextNode("ready")),
-        ),
-    });
+    const incoming = component(() =>
+      Result.succeed({
+        setup: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(document.createTextNode("ready")),
+          ),
+      }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(text("outgoing")) }),
     );
@@ -248,16 +260,18 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const release = gate();
     let factories = 0;
     let setups = 0;
-    const branch = component({
-      fallback: () => {
-        factories += 1;
-        return [document.createTextNode("one"), document.createTextNode("two")];
-      },
-      setup: () =>
-        Effect.sync(() => {
-          setups += 1;
-        }).pipe(Effect.andThen(Deferred.await(release)), Effect.as([])),
-    });
+    const branch = component(() =>
+      Result.succeed({
+        fallback: () => {
+          factories += 1;
+          return Result.succeed([document.createTextNode("one"), document.createTextNode("two")]);
+        },
+        setup: () =>
+          Effect.sync(() => {
+            setups += 1;
+          }).pipe(Effect.andThen(Deferred.await(release)), Effect.as([])),
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
     app.h(parent, [selected, selected]);
     await rendered({ parent, check: () => parent.childNodes.length === 4 });
@@ -276,33 +290,40 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const cleaning = gate();
     const releaseCleanup = gate();
     let intermediateStarts = 0;
-    const first = component({
-      fallback: () => document.createTextNode("first pending"),
-      setup: () =>
-        Effect.gen(function* () {
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(cleaning, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseCleanup)),
-            ),
-          );
-          yield* Deferred.succeed(firstStarted, undefined);
-          yield* Deferred.await(firstRelease).pipe(Effect.uninterruptible);
-          return document.createTextNode("obsolete");
-        }),
-    });
-    const middle = component({
-      fallback: () => document.createTextNode("middle pending"),
-      setup: () =>
-        Effect.sync(() => {
-          intermediateStarts += 1;
-          return document.createTextNode("middle");
-        }),
-    });
+    const first = component(() =>
+      Result.succeed({
+        fallback: () => Result.succeed(document.createTextNode("first pending")),
+        setup: () =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(cleaning, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCleanup)),
+              ),
+            );
+            yield* Deferred.succeed(firstStarted, undefined);
+            yield* Deferred.await(firstRelease).pipe(Effect.uninterruptible);
+            return document.createTextNode("obsolete");
+          }),
+      }),
+    );
+    const middle = component(() =>
+      Result.succeed({
+        fallback: () => Result.succeed(document.createTextNode("middle pending")),
+        setup: () =>
+          Effect.sync(() => {
+            intermediateStarts += 1;
+            return document.createTextNode("middle");
+          }),
+      }),
+    );
     const finalRelease = gate();
-    const latest = component({
-      fallback: () => document.createTextNode("latest pending"),
-      setup: () => Deferred.await(finalRelease).pipe(Effect.as(document.createTextNode("latest"))),
-    });
+    const latest = component(() =>
+      Result.succeed({
+        fallback: () => Result.succeed(document.createTextNode("latest pending")),
+        setup: () =>
+          Deferred.await(finalRelease).pipe(Effect.as(document.createTextNode("latest"))),
+      }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(first) }),
     );
@@ -330,24 +351,28 @@ describe("synchronous finalizers and setup fallbacks", () => {
     });
     const order: string[] = [];
     const release = gate();
-    const old = component({
-      setup: ({ addSyncFinalizer }) =>
-        Effect.gen(function* () {
-          yield* addSyncFinalizer(() => {
-            order.push("first");
-          });
-          yield* addSyncFinalizer(() => {
-            order.push("throw");
-            throw new Error("synchronous cleanup");
-          });
-          yield* Effect.addFinalizer(() => Deferred.await(release));
-          return document.createTextNode("old");
-        }),
-    });
-    const next = component({
-      fallback: () => document.createTextNode("pending"),
-      setup: () => Effect.never,
-    });
+    const old = component(() =>
+      Result.succeed({
+        setup: ({ addSyncFinalizer }) =>
+          Effect.gen(function* () {
+            yield* addSyncFinalizer(() => {
+              order.push("first");
+            });
+            yield* addSyncFinalizer(() => {
+              order.push("throw");
+              throw new Error("synchronous cleanup");
+            });
+            yield* Effect.addFinalizer(() => Deferred.await(release));
+            return document.createTextNode("old");
+          }),
+      }),
+    );
+    const next = component(() =>
+      Result.succeed({
+        fallback: () => Result.succeed(document.createTextNode("pending")),
+        setup: () => Effect.never,
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.some(old) }));
     app.h(parent, selected);
     await shows(parent, "old");
@@ -369,18 +394,20 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const release = gate();
     let factories = 0;
     let setups = 0;
-    const broken = component({
-      fallback: () => {
-        factories += 1;
-        throw new Error("fallback failed");
-      },
-      setup: () =>
-        Effect.gen(function* () {
-          setups += 1;
-          yield* Deferred.await(release);
-          return document.createTextNode("ready");
-        }),
-    });
+    const broken = component(() =>
+      Result.succeed({
+        fallback: () => {
+          factories += 1;
+          throw new Error("fallback failed");
+        },
+        setup: () =>
+          Effect.gen(function* () {
+            setups += 1;
+            yield* Deferred.await(release);
+            return document.createTextNode("ready");
+          }),
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
     app.h(parent, [document.createTextNode("sibling"), selected]);
     await shows(parent, "sibling");
@@ -407,12 +434,14 @@ describe("synchronous finalizers and setup fallbacks", () => {
 
   it("reports both fallback and setup failures and recovers after changing definitions", async () => {
     const { app, parent, errors } = await harness();
-    const broken = component({
-      fallback: () => {
-        throw new Error("fallback failed");
-      },
-      setup: () => Effect.fail("setup failed"),
-    });
+    const broken = component(() =>
+      Result.succeed({
+        fallback: () => {
+          throw new Error("fallback failed");
+        },
+        setup: () => Effect.fail("setup failed"),
+      }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(broken) }),
     );
@@ -432,7 +461,9 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const { app, parent, errors } = await harness();
     const node = document.createElement("span");
     node.textContent = "pending";
-    const branch = component({ fallback: () => node, setup: () => Effect.never });
+    const branch = component(() =>
+      Result.succeed({ fallback: () => Result.succeed(node), setup: () => Effect.never }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
     );
@@ -446,7 +477,12 @@ describe("synchronous finalizers and setup fallbacks", () => {
     await run(
       selected.set(
         Option.some(
-          component({ fallback: () => [duplicate, duplicate], setup: () => Effect.never }),
+          component(() =>
+            Result.succeed({
+              fallback: () => Result.succeed([duplicate, duplicate]),
+              setup: () => Effect.never,
+            }),
+          ),
         ),
       ),
     );
@@ -456,7 +492,14 @@ describe("synchronous finalizers and setup fallbacks", () => {
     parent.append(connected);
     await run(
       selected.set(
-        Option.some(component({ fallback: () => connected, setup: () => Effect.never })),
+        Option.some(
+          component(() =>
+            Result.succeed({
+              fallback: () => Result.succeed(connected),
+              setup: () => Effect.never,
+            }),
+          ),
+        ),
       ),
     );
     await run(Queue.take(errors));
@@ -467,16 +510,18 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const { app, parent, errors } = await harness();
     const cleanup = gate();
     const release = gate();
-    const broken = component({
-      fallback: () => document.createTextNode("pending"),
-      setup: () =>
-        Effect.gen(function* () {
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(cleanup, undefined).pipe(Effect.andThen(Deferred.await(release))),
-          );
-          return yield* Effect.fail("setup failed");
-        }),
-    });
+    const broken = component(() =>
+      Result.succeed({
+        fallback: () => Result.succeed(document.createTextNode("pending")),
+        setup: () =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(cleanup, undefined).pipe(Effect.andThen(Deferred.await(release))),
+            );
+            return yield* Effect.fail("setup failed");
+          }),
+      }),
+    );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(broken) }),
     );
@@ -494,19 +539,23 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const { app, parent } = await harness();
     let finalizers = 0;
     let factories = 0;
-    const old = component({
-      setup: ({ addSyncFinalizer }) =>
-        addSyncFinalizer(() => {
-          finalizers += 1;
-        }).pipe(Effect.as(document.createTextNode("old"))),
-    });
-    const next = component({
-      fallback: () => {
-        factories += 1;
-        return document.createTextNode("pending");
-      },
-      setup: () => Effect.never,
-    });
+    const old = component(() =>
+      Result.succeed({
+        setup: ({ addSyncFinalizer }) =>
+          addSyncFinalizer(() => {
+            finalizers += 1;
+          }).pipe(Effect.as(document.createTextNode("old"))),
+      }),
+    );
+    const next = component(() =>
+      Result.succeed({
+        fallback: () => {
+          factories += 1;
+          return Result.succeed(document.createTextNode("pending"));
+        },
+        setup: () => Effect.never,
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.some(old) }));
     app.h(parent, selected);
     await shows(parent, "old");
@@ -538,23 +587,25 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const cleanings = await run(Queue.unbounded<number>());
     let finalizers = 0;
     const make = (index: number) =>
-      component({
-        fallback: () => document.createTextNode(`pending${index}`),
-        setup: () =>
-          Effect.gen(function* () {
-            yield* Effect.addFinalizer(() =>
-              Queue.offer(cleanings, index).pipe(
-                Effect.andThen(Deferred.await(release)),
-                Effect.andThen(
-                  Effect.sync(() => {
-                    finalizers += 1;
-                  }),
+      component(() =>
+        Result.succeed({
+          fallback: () => Result.succeed(document.createTextNode(`pending${index}`)),
+          setup: () =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() =>
+                Queue.offer(cleanings, index).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      finalizers += 1;
+                    }),
+                  ),
                 ),
-              ),
-            );
-            return document.createTextNode(`ready${index}`);
-          }),
-      });
+              );
+              return document.createTextNode(`ready${index}`);
+            }),
+        }),
+      );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(make(0)) }),
     );
@@ -581,12 +632,14 @@ describe("synchronous finalizers and setup fallbacks", () => {
     const { app, parent } = await harness();
     const label = await run(app.signal({ initial: "old" }));
     let reentrant = false;
-    const old = component({
-      setup: ({ addSyncFinalizer }) =>
-        addSyncFinalizer(() => {
-          reentrant = Exit.isFailure(Effect.runSync(label.set("reentrant").pipe(Effect.exit)));
-        }).pipe(Effect.as(document.createTextNode("outgoing"))),
-    });
+    const old = component(() =>
+      Result.succeed({
+        setup: ({ addSyncFinalizer }) =>
+          addSyncFinalizer(() => {
+            reentrant = Exit.isFailure(Effect.runSync(label.set("reentrant").pipe(Effect.exit)));
+          }).pipe(Effect.as(document.createTextNode("outgoing"))),
+      }),
+    );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.some(old) }));
     app.h(parent, await run(app.he("div", { children: [label, selected] })));
     await shows(parent, "oldoutgoing");
