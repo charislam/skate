@@ -74,14 +74,14 @@ describe("scoped component mounting", () => {
       waitFor({
         parent: left,
         check: () =>
-          left.querySelectorAll(".counter output").length === 2 &&
+          left.querySelectorAll(".counter output").length === 1 &&
           left.querySelector(".tabs") !== null &&
           left.querySelector(".text-input") !== null,
       }),
       waitFor({
         parent: right,
         check: () =>
-          right.querySelectorAll(".counter output").length === 2 &&
+          right.querySelectorAll(".counter output").length === 1 &&
           right.querySelector(".tabs") !== null &&
           right.querySelector(".text-input") !== null,
       }),

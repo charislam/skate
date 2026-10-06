@@ -1,5 +1,6 @@
 import { Deferred, Effect, Exit, Fiber, Match, Result, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { Counter } from "./counter";
 import {
   component,
   mounting,
@@ -70,7 +71,7 @@ describe("reactive DOM and ownership", () => {
   it("renders independent counters, negative values, reset, and stable DOM identities", async () => {
     const { h, close } = await harness();
     const parent = document.createElement("div");
-    h(parent, Home);
+    h(parent, [Home, Counter]);
     await rendered({
       parent,
       check: () => parent.querySelectorAll(".counter output").length === 2,
@@ -96,7 +97,7 @@ describe("reactive DOM and ownership", () => {
       Array.from(counter.querySelectorAll("button")).every((button) => button.type === "button"),
     ).toBe(true);
     expect(parent.querySelector("h1")?.textContent).toBe("Budgerigar");
-    expect(parent.querySelector("p")?.textContent).toBe("Welcome home.");
+    expect(parent.querySelector("p")?.textContent).toBe("Effect-based FRP for the frontend");
     await close();
     increment?.click();
     expect(parent.childNodes.length).toBe(0);
