@@ -14,8 +14,7 @@ export const Home = component(() =>
         return yield* he("main", {
           children: [
             yield* he("h1", { children: ["Budgerigar"] }),
-            yield* he("p", { children: ["Welcome home."] }),
-            Counter,
+            yield* he("p", { children: ["Effect-based FRP for the frontend"] }),
             Counter,
             TextInput,
             Tabs,

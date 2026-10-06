@@ -127,14 +127,23 @@ export const Todos = component((context) =>
               return yield* ctx.he("li", {
                 attrs: { "data-todo-id": Option.some(String(inputs.key)) },
                 children: [
-                  position,
-                  yield* ctx.he("span", { children: [saved] }),
-                  input,
-                  save,
-                  toggle,
-                  up,
-                  down,
-                  remove,
+                  yield* ctx.he("div", {
+                    attrs: { class: Option.some("todo-title") },
+                    children: [position, yield* ctx.he("span", { children: [saved] })],
+                  }),
+                  yield* ctx.he("div", {
+                    attrs: { class: Option.some("todo-editor") },
+                    children: [input, save],
+                  }),
+                  yield* ctx.he("div", {
+                    attrs: { class: Option.some("todo-actions") },
+                    children: [
+                      yield* ctx.he("label", { children: [toggle, "Completed"] }),
+                      up,
+                      down,
+                      remove,
+                    ],
+                  }),
                 ],
               });
             }),
@@ -177,7 +186,7 @@ export const Todos = component((context) =>
             ),
           );
           return yield* ctx.he("section", {
-            attrs: { "aria-label": Option.some("Reorderable todos") },
+            attrs: { class: Option.some("todos"), "aria-label": Option.some("Reorderable todos") },
             children: [
               yield* ctx.he("h2", { children: ["Todos"] }),
               input,
