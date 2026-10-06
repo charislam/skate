@@ -190,18 +190,22 @@ The runtime separates component lifetime from transaction coordination:
   dependency links and dependency depth identify and order affected signals;
   committed versions detect conflicting batches.
 - `Transaction` records the coordinator, owning fiber, touched signals, deferred
-  event publications, captured source versions, and failures. Its phase is
-  `Staging` (with a read-cache revision), `Preparing` (with the set of prepared
-  signals), or `Closed`.
+  event publications, captured source versions, retired owners, and failures.
+  Its phase is `Staging` (with a read-cache revision), `Preparing` (with the
+  set of prepared signals), or `Closed`.
 
 A batch stages writes privately without blocking other batches. On success it
-validates captured source versions and prepares affected signals in dependency
-order, validates affected DOM sinks, installs every changed value, flushes DOM,
-and then publishes signal changes and events. This entire commit is synchronous and cannot interleave with
-another fiber's commit. It never scans unrelated signals. Failure discards the
-staged work, preserving other batches' successful commits. Either
-outcome closes the transaction. Component disposal cancels its batch fibers and
-runs its cleanup callbacks, which unregister its signals from the coordinator.
+validates captured source versions and prepares structural selection and
+keyed-list plans in owner order, then ordinary affected signals in dependency
+order. Plans mark outgoing owners as retired within the transaction; their
+descendants skip preparation, validation, DOM updates, and publication. It
+validates affected DOM sinks, installs every changed value, flushes DOM, and
+then publishes signal changes and events. This entire commit is synchronous and
+cannot interleave with another fiber's commit. It never scans unrelated
+signals. Failure discards the staged work, preserving other batches' successful
+commits. Either outcome closes the transaction. Component disposal cancels its
+batch fibers and runs its cleanup callbacks, which unregister its signals from
+the coordinator.
 
 ## Reactive DOM values and editing
 
@@ -390,12 +394,13 @@ const Parent = component(({ signal }) =>
 );
 ```
 
-Creating a description does not allocate occurrence state. Updating signals changes
-bindings without rerunning callbacks or restarting requests. Explicit setup reads
-are snapshots. Creating a new definition inside every derivation changes identity
-and remounts; no props, keyed reconciliation, memoization, or automatic request
-restart is provided. The home page's gated loading demo shows parent title updates
-and shared progress while awaiting a button, without depending on a live network.
+Creating a description does not allocate occurrence state. Updating signals
+changes bindings without rerunning callbacks or restarting requests. Explicit
+setup reads are snapshots. Creating a new definition inside every derivation
+changes identity and remounts; no props, memoization, or automatic request
+restart is provided. The home page's gated loading demo shows parent title
+updates and shared progress while awaiting a button, without depending on a
+live network.
 
 Use `yield* addSyncFinalizer(() => { ... })` in setup for DOM-dependent work such
 as checking `panel.contains(document.activeElement)` and focusing a surviving
@@ -464,3 +469,59 @@ const program = Effect.gen(function* () {
   yield* Effect.never; // Keep the application lifetime open.
 }).pipe(Effect.scoped);
 ```
+
+## Keyed dynamic lists
+
+Use `keyed({ items, key, row })` to render a signal of immutable array snapshots.
+Define a stable row descriptor once; its factory runs independently for each
+mounted `(key, descriptor)` identity. Lists work in `he` children and directly
+in mounts, setup, and fallback output, including mixed arrays and nested lists.
+
+```ts
+const TodoRow = row<Todo>()(({ context, inputs }) =>
+  Result.gen(function* () {
+    const label = yield* context.derive({
+      sources: { item: inputs.item, index: inputs.index },
+      compute: ({ item, index }) => `${index + 1}. ${item.text}`,
+    });
+    return { setup: ({ he }) => he("li", { children: [label] }) };
+  }),
+);
+
+const list = keyed({ items: todos, key: (todo) => todo.id, row: () => TodoRow });
+const element = yield * he("ol", { children: [list] });
+```
+
+The only row constructor signature is `row<Todo>()(factory)`. It preserves
+inferred factory, setup, and fallback error types while specifying the item
+type. Import `keyed` and `row` from the framework with the existing
+Effect/Result helpers.
+
+Each row receives a stable key, a read-only item signal, and a read-only zero-based
+index signal. Retained row inputs and parent dependencies update in one source
+transaction, before observations. New item objects update bindings while local
+state and pending setup remain alive. Reordering moves existing anchored native
+nodes, including multi-root output and pending fallback; it runs no lifecycle
+callbacks. The move implementation restores focused controls and input/textarea
+selection with `preventScroll` if native movement loses focus.
+
+Keys are strings or finite numbers, unique across a list even with different row
+types. `1` and `"1"` differ; `0` and `-0` collide. Invalid keys, duplicate keys,
+throwing selectors, and invalid retained-row bindings reject the entire update.
+Selectors must be pure, and row descriptors must be stable. Creating a new
+descriptor in the selector deliberately replaces the occurrence.
+
+Removal, including filtering, finalizes a row; returning its key creates fresh
+state. Identity is local to each mounted list. Factory/setup failure empties only
+the failed row's slot and retires its signals/resources. A later committed item
+change under `Object.is` creates one fresh attempt; index-only changes do not.
+Sorting that recreates every item object can retry failed rows even when their
+fields are equal. Healthy/pending rows never restart merely because data changes;
+if pending setup fails, it waits for the next item change. Descriptor replacement
+and removal/reinsertion also rearm failure. Old asynchronous cleanup cannot affect
+new occurrences, and application shutdown awaits all retired cleanup.
+
+Row actions should update parent state by key. Compose empty views through the
+existing selection helpers. The home page's todo example demonstrates add, save,
+completion, deletion, and Move up/Move down buttons, with unsaved row-local drafts
+preserved across reordering.

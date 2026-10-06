@@ -3,6 +3,7 @@ import { lazy } from "~/synchronous";
 import { destination } from "./destinations";
 import {
   accessibleSync,
+  activeInTransaction,
   calculateSync,
   ReactiveError,
   requireValidSync,
@@ -12,7 +13,7 @@ import {
 import { isSignal, readSync, signalData, type DomSink, type Signal } from "./signal";
 
 export type AttributeValue = Option.Option<true | string>;
-export type BindingKind = "text" | "attribute" | "property" | "selection";
+export type BindingKind = "text" | "attribute" | "property" | "selection" | "list";
 export interface DomResource {
   readonly element: Node;
   readonly kind: BindingKind;
@@ -163,15 +164,30 @@ export const registerBindingSync = <A>(options: {
       report: Option.none(),
       signal: options.signal,
       validate: (transaction) =>
-        options
-          .validate(signalData(options.signal).candidate(transaction))
-          .pipe(Result.map(() => undefined)),
+        Match.value(
+          Option.match(transaction, {
+            onNone: () => true,
+            onSome: (transaction) =>
+              activeInTransaction({ lifetime: options.runtime.lifetime, transaction }),
+          }),
+        ).pipe(
+          Match.when(true, () =>
+            signalData(options.signal)
+              .candidate(transaction)
+              .pipe(Result.flatMap(options.validate))
+              .pipe(Result.map(() => undefined)),
+          ),
+          Match.when(false, () => Result.succeed(undefined)),
+          Match.exhaustive,
+        ),
       flush: () =>
         lazy(() =>
           assignSync({
             runtime: Option.some(options.runtime),
             resource,
-            write: options.write(signalData(options.signal).candidate(Option.none())),
+            write: signalData(options.signal)
+              .candidate(Option.none())
+              .pipe(Result.flatMap(options.write)),
             report: binding.report,
           }),
         ).pipe(

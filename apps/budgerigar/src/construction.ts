@@ -1,5 +1,6 @@
 import { Effect, Result, Match, Option, Schema } from "effect";
 import { isComponent, type Component } from "./component";
+import { isKeyedList, planKeyed, type KeyedList } from "./keyed";
 import { isSignal, type Signal, type ReactiveRuntime, ReactiveError } from "./reactive";
 import { readSync } from "./reactive/signal";
 import { reactiveTextSync as reactiveText } from "./reactive/text";
@@ -16,7 +17,7 @@ import {
 } from "./reactive/dom";
 import { propertyValidatorSync, writePropertySync } from "./reactive/properties";
 
-export type MountItem = Component | Node | Signal<Option.Option<Component>>;
+export type MountItem = Component | Node | Signal<Option.Option<Component>> | KeyedList;
 export type Child = string | MountItem | Signal<string>;
 
 type Equal<X, Y> =
@@ -68,9 +69,7 @@ export interface ConstructionOwner {
 export interface Region {
   readonly start: Comment;
   readonly end: Comment;
-  readonly definition: Component | Signal<unknown>;
-  desired: Option.Option<Component>;
-  request: Option.Option<(selection: Option.Option<Component>) => void>;
+  readonly definition: Component | Signal<unknown> | KeyedList;
   readonly issuer: ConstructionOwner;
   activated: boolean;
 }
@@ -108,7 +107,7 @@ export const validateSync = (
 export const isNode = (value: unknown): value is Node => value instanceof Node;
 
 export const makeRegion = (options: {
-  definition: Component | Signal<unknown>;
+  definition: Component | Signal<unknown> | KeyedList;
   issuer: ConstructionOwner;
 }): Region => {
   const region: Region = {
@@ -116,8 +115,6 @@ export const makeRegion = (options: {
     start: document.createComment("budgerigar:start"),
     end: document.createComment("budgerigar:end"),
     activated: false,
-    desired: Option.none(),
-    request: Option.none(),
   };
   anchors.set(region.start, region);
   anchors.set(region.end, region);
@@ -126,6 +123,33 @@ export const makeRegion = (options: {
 
 const isSelection = (value: unknown): value is Option.Option<Component> =>
   Option.isOption(value) && (Option.isNone(value) || isComponent(value.value));
+
+export const keyedRegionSync = (options: { description: KeyedList; issuer: ConstructionOwner }) =>
+  Result.gen(function* () {
+    const runtime = yield* Option.match(options.issuer.reactiveRuntime, {
+      onNone: () =>
+        Result.fail(
+          new ConstructionError({ message: "Keyed lists require a live issuing context" }),
+        ),
+      onSome: Result.succeed,
+    });
+    yield* validateSync(
+      options.issuer.active && isSignal(options.description.items),
+      "Keyed lists require a live issuing context and an items signal",
+    );
+    const region = makeRegion({ definition: options.description, issuer: options.issuer });
+    yield* registerBindingSync({
+      runtime,
+      node: region.start,
+      signal: options.description.items,
+      kind: "list",
+      name: "list",
+      validate: (value) => planKeyed({ description: options.description, value }),
+      initialize: () => {},
+      write: () => Result.succeed(undefined),
+    }).pipe(Result.mapError((error) => new ConstructionError({ message: error.message })));
+    return region;
+  });
 
 export const validateSelectionSync = (
   value: unknown,
@@ -158,16 +182,7 @@ export const selectedRegionSync = (options: {
       name: "selection",
       validate: validateSelectionSync,
       initialize: () => {},
-      write: (value) =>
-        validateSelectionSync(value).pipe(
-          Result.map((selection) => {
-            region.desired = selection;
-            Option.match(region.request, {
-              onNone: () => {},
-              onSome: (request) => request(selection),
-            });
-          }),
-        ),
+      write: () => Result.succeed(undefined),
     }).pipe(Result.mapError((error) => new ConstructionError({ message: error.message })));
     return region;
   });
@@ -335,7 +350,11 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
     const children = [...(options.children ?? [])];
     for (const child of children) {
       yield* validateSync(
-        typeof child === "string" || isNode(child) || isComponent(child) || isSignal(child),
+        typeof child === "string" ||
+          isNode(child) ||
+          isComponent(child) ||
+          isSignal(child) ||
+          isKeyedList(child),
         "unsupported child",
       );
     }
@@ -392,6 +411,14 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
           (v) => Result.succeed(element.append(document.createTextNode(v))),
         ),
         Match.when(isNode, (node) => Result.succeed(element.append(node))),
+        Match.when(isKeyedList, (description) =>
+          keyedRegionSync({ description, issuer: owner }).pipe(
+            Result.map((region) => {
+              element.append(region.start, region.end);
+              regions.push(region);
+            }),
+          ),
+        ),
         Match.when(isSignal, (signal) =>
           Option.match(owner.reactiveRuntime, {
             onNone: () =>

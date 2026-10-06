@@ -54,6 +54,7 @@ export interface Transaction {
   readonly touched: Set<SignalCommit>;
   readonly reads: Map<SignalCommit, number>;
   readonly publications: Array<() => void>;
+  readonly retired: Set<ComponentLifetime>;
   failure: Option.Option<Cause.Cause<unknown>>;
   phase: TransactionPhase;
 }
@@ -72,6 +73,7 @@ export interface SignalCommit {
   readonly dependencies: ReadonlyArray<SignalCommit>;
   readonly dependents: Set<SignalCommit>;
   readonly depth: number;
+  readonly structural: boolean;
   version: number;
   readonly prepare: (transaction: Transaction) => Effect.Effect<void, ReactiveError>;
   readonly apply: (transaction: Transaction) => void;
@@ -110,6 +112,24 @@ interface EventWork {
   readonly resource: object;
   readonly work: Effect.Effect<void, ReactiveError>;
 }
+
+/** Candidate structural removal suppresses descendant work before DOM retirement. */
+export const activeInTransaction = (options: {
+  lifetime: ComponentLifetime;
+  transaction: Transaction;
+}): boolean =>
+  options.lifetime.active() &&
+  !options.transaction.retired.has(options.lifetime) &&
+  Option.match(options.lifetime.parent, {
+    onNone: () => true,
+    onSome: (lifetime) => activeInTransaction({ ...options, lifetime }),
+  });
+
+const ownershipDepth = (lifetime: ComponentLifetime): number =>
+  Option.match(lifetime.parent, {
+    onNone: () => 0,
+    onSome: (parent) => ownershipDepth(parent) + 1,
+  });
 
 /** Connects component lifetime, shared commits, and ordered DOM event ingress. */
 export interface ReactiveRuntime {
@@ -279,25 +299,65 @@ const commit = (transaction: Transaction): Effect.Effect<void, ReactiveError> =>
               for (const dependent of participant.dependents) affected.add(dependent);
             const ordered = Array.from(affected).sort((a, b) => a.depth - b.depth);
             transaction.phase = TransactionPhase.Preparing({ prepared: new Set() });
-            for (const participant of ordered) {
-              yield* Match.value(
-                participant.lifetime.active() &&
-                  (transaction.touched.has(participant) ||
-                    participant.dependencies.some((dependency) =>
-                      transaction.touched.has(dependency),
-                    )),
-              ).pipe(
-                Match.when(true, () => participant.prepare(transaction)),
-                Match.orElse(() => Effect.void),
+            const visited = new Set<SignalCommit>();
+            const prepare = (participant: SignalCommit): Effect.Effect<void, ReactiveError> =>
+              Effect.gen(function* () {
+                yield* Match.value(visited.has(participant)).pipe(
+                  Match.when(true, () => Effect.void),
+                  Match.when(false, () =>
+                    Effect.gen(function* () {
+                      visited.add(participant);
+                      for (const dependency of participant.dependencies)
+                        yield* Match.value(affected.has(dependency)).pipe(
+                          Match.when(true, () => prepare(dependency)),
+                          Match.orElse(() => Effect.void),
+                        );
+                      yield* Match.value(
+                        activeInTransaction({ lifetime: participant.lifetime, transaction }) &&
+                          (transaction.touched.has(participant) ||
+                            participant.dependencies.some((dependency) =>
+                              transaction.touched.has(dependency),
+                            )),
+                      ).pipe(
+                        Match.when(true, () => participant.prepare(transaction)),
+                        Match.orElse(() => Effect.void),
+                      );
+                    }),
+                  ),
+                  Match.exhaustive,
+                );
+              });
+            // Resolve structural removals and their prerequisites before evaluating
+            // unrelated descendant bindings that will disappear in this commit.
+            const structural = ordered
+              .filter((participant) => participant.structural)
+              .sort(
+                (a, b) =>
+                  ownershipDepth(a.lifetime) - ownershipDepth(b.lifetime) || a.depth - b.depth,
               );
-            }
-            const changed = Array.from(transaction.touched).filter((participant) =>
-              participant.hasChange(transaction),
+            for (const participant of structural) yield* prepare(participant);
+            for (const participant of ordered) yield* prepare(participant);
+            const changed = Array.from(transaction.touched).filter(
+              (participant) =>
+                activeInTransaction({ lifetime: participant.lifetime, transaction }) &&
+                participant.hasChange(transaction),
             );
             for (const participant of changed) yield* participant.validateDom(transaction);
             for (const participant of changed) participant.apply(transaction);
-            for (const participant of changed) yield* participant.flushDom();
-            for (const participant of changed) participant.publishChanges();
+            for (const participant of changed)
+              yield* Match.value(
+                activeInTransaction({ lifetime: participant.lifetime, transaction }),
+              ).pipe(
+                Match.when(true, () => participant.flushDom()),
+                Match.orElse(() => Effect.void),
+              );
+            for (const participant of changed)
+              Match.value(
+                activeInTransaction({ lifetime: participant.lifetime, transaction }),
+              ).pipe(
+                Match.when(true, () => participant.publishChanges()),
+                Match.orElse(() => {}),
+              );
             for (const publish of transaction.publications) publish();
           }),
         () =>
@@ -321,6 +381,7 @@ const evaluateBatch = <A, E, R>(options: {
         touched: new Set(),
         reads: new Map(),
         publications: [],
+        retired: new Set(),
         failure: Option.none(),
         phase: TransactionPhase.Staging({ revision: 0 }),
       };
@@ -368,6 +429,7 @@ const evaluateBatch = <A, E, R>(options: {
             transaction.publications.length = 0;
             transaction.touched.clear();
             transaction.reads.clear();
+            transaction.retired.clear();
           }),
         ),
       );

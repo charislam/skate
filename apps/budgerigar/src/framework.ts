@@ -5,7 +5,9 @@ import {
   construct,
   constructSync,
   inspectSync,
+  keyedRegionSync,
   selectedRegionSync,
+  validateSelectionSync,
   validateSync,
   type SyncConstruct,
   ConstructionError,
@@ -19,6 +21,8 @@ import {
   type Region,
   type Tree,
 } from "./construction";
+import { isKeyedList } from "./keyed";
+import { activateKeyed, type RowContext } from "./keyed-runtime";
 import {
   makeReactiveRuntime,
   reactive,
@@ -30,11 +34,12 @@ import {
 import { synchronousReactive, type SynchronousReactiveContext } from "./reactive/context";
 import { activateReactiveNode } from "./reactive/dom";
 import { CurrentTransaction, requireValidSync } from "./reactive/runtime";
-import { isSignal } from "./reactive/signal";
+import { isSignal, makeCell, readonlySignal, signalData, type Signal } from "./reactive/signal";
 import { lazy } from "./synchronous";
 
 export { component, type Component, type Lifecycle } from "./component";
 export { ConstructionError } from "./construction";
+export { keyed, row, type Key, type KeyedList, type Row, type RowInputs } from "./keyed";
 export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
 export type {
   Signal,
@@ -90,6 +95,7 @@ type DomSubject =
       readonly id: object;
       readonly component: Component;
       readonly region: Region;
+      readonly row: Option.Option<RowContext>;
     };
 
 interface FailureDetails {
@@ -137,6 +143,8 @@ interface Owner {
   syncFinalized: boolean;
   cleanup: Option.Option<Fiber.Fiber<void, never>>;
   pending: Option.Option<Owner>;
+  readonly rowContext: Option.Option<RowContext>;
+  onKeyedRowOccurrenceFailure: Option.Option<() => void>;
 }
 
 interface Request {
@@ -160,6 +168,7 @@ const makeOwner = (options: {
   readonly parentOwner?: Owner;
   readonly failureContext?: FailureContext;
   readonly parentRuntime: Option.Option<ReactiveRuntime>;
+  readonly rowContext?: RowContext;
 }): Owner => ({
   active: true,
   ownsTarget(node) {
@@ -183,6 +192,10 @@ const makeOwner = (options: {
   syncFinalized: false,
   cleanup: Option.none(),
   pending: Option.none(),
+  rowContext: Option.orElse(Option.fromUndefinedOr(options.rowContext), () =>
+    Option.flatMap(Option.fromUndefinedOr(options.parentOwner), (owner) => owner.rowContext),
+  ),
+  onKeyedRowOccurrenceFailure: Option.none(),
 });
 
 const reactiveParent = (owner: Owner) =>
@@ -477,7 +490,13 @@ const prepareComponent = Effect.fn("Budgerigar.prepareComponent")(function* (opt
 
   const scope = yield* Scope.make();
 
-  const subject: DomSubject = { kind: "component", id: {}, component: definition, region };
+  const subject: DomSubject = {
+    kind: "component",
+    id: {},
+    component: definition,
+    region,
+    row: lifetime.rowContext,
+  };
   const owner = makeOwner({
     report: lifetime.report,
     parentOwner: lifetime,
@@ -522,6 +541,14 @@ const describeOutput = (options: { output: Output; owner: Owner }) =>
           direct.push(region);
           return Result.succeed([region.start, region.end]);
         }),
+        Match.when(isKeyedList, (description) =>
+          keyedRegionSync({ description, issuer: options.owner }).pipe(
+            Result.map((region) => {
+              direct.push(region);
+              return [region.start, region.end];
+            }),
+          ),
+        ),
         Match.when(isSignal, (signal) =>
           selectedRegionSync({ signal, issuer: options.owner }).pipe(
             Result.map((region) => {
@@ -713,9 +740,11 @@ const activateComponent = Effect.fn("Budgerigar.activateComponent")(
     lifetime: Owner;
     parent: Element;
     onOwner?: (owner: Owner) => void;
+    onKeyedRowOccurrenceFailure?: () => void;
   }) {
     const occurrence = yield* prepareComponent(options);
     const { owner, parent, subject } = occurrence;
+    owner.onKeyedRowOccurrenceFailure = Option.fromUndefinedOr(options.onKeyedRowOccurrenceFailure);
     Option.match(Option.fromUndefinedOr(options.onOwner), {
       onNone: () => {},
       onSome: (ready) => ready(owner),
@@ -789,70 +818,151 @@ const sameSelection = (options: {
     onSome: (definition) => Option.exists(options.right, (other) => definition === other),
   });
 
+/** Structural controllers and row inputs share the existing owned cleanup tree. */
+const createStructuralOwner = Effect.fn("Budgerigar.createStructuralOwner")(function* (options: {
+  lifetime: Owner;
+  row: Option.Option<RowContext>;
+}) {
+  const { lifetime, row } = options;
+  const failureContext = yield* Option.match(lifetime.failureContext, {
+    onSome: Effect.succeed,
+    onNone: () => Effect.die("Adopted structural owners require a failure context"),
+  });
+  const scope = yield* Scope.make();
+  const owner = makeOwner({
+    report: lifetime.report,
+    scope,
+    parentOwner: lifetime,
+    parentRuntime: reactiveParent(lifetime),
+    failureContext,
+    ...Option.match(row, {
+      onNone: () => ({}),
+      onSome: (rowContext) => ({ rowContext }),
+    }),
+  });
+  lifetime.children.add(owner);
+  const runtime = yield* makeReactiveRuntime({
+    active: () => owner.active,
+    parent: owner.parentRuntime,
+    fork: background({ owner, scope, failureContext }),
+    registerWork: registerBackground({ owner, scope, failureContext }),
+    report: (failure) => report(owner, { ...failureContext, ...failure }),
+  });
+  owner.reactiveRuntime = Option.some(runtime);
+  return { owner, runtime };
+});
+
 /** The pending view changes in the commit; setup and resource cleanup run afterward. */
-const activateSelection = Effect.fn("Budgerigar.activateSelection")(
-  (options: { region: Region; lifetime: Owner; parent: Element }) =>
-    Effect.sync(() => {
-      const { region, lifetime, parent } = options;
-      region.activated = true;
-      const controller = makeOwner({
-        report: lifetime.report,
-        parentOwner: lifetime,
-        parentRuntime: reactiveParent(lifetime),
-      });
-      lifetime.children.add(controller);
-      let desired = Option.none<Component>();
-      let current = Option.none<Owner>();
-      const request = (selection: Option.Option<Component>) => {
-        Match.value(controller.active && !sameSelection({ left: desired, right: selection })).pipe(
-          Match.when(true, () => {
-            desired = selection;
+const activateSelection = Effect.fn("Budgerigar.activateSelection")(function* (options: {
+  region: Region;
+  lifetime: Owner;
+  parent: Element;
+  signal: Signal<unknown>;
+}) {
+  const { region, lifetime, parent, signal } = options;
+  region.activated = true;
+  const { owner: controller, runtime } = yield* createStructuralOwner({
+    lifetime,
+    row: Option.none(),
+  });
+  let desired = Option.none<Component>();
+  let current = Option.none<Owner>();
+  const source = signalData(signal);
+  const initial = yield* lazy(() => validateSelectionSync(source.committed()));
+  const plan = readonlySignal(
+    makeCell({
+      runtime,
+      initial,
+      dependencies: [source.participant],
+      structural: true,
+      compute: Option.some((transaction) =>
+        source.candidate(transaction).pipe(Result.flatMap(validateSelectionSync)),
+      ),
+      equals: ({ previous, proposed }) => sameSelection({ left: previous, right: proposed }),
+      onPrepare: ({ transaction, proposed }) =>
+        Match.value(!sameSelection({ left: desired, right: proposed })).pipe(
+          Match.when(true, () =>
             Option.match(current, {
               onNone: () => {},
-              onSome: (owner) => {
-                retireOwner(owner);
-                beginCleanup(owner);
-              },
-            });
-            current = Option.none();
-            Option.match(selection, {
-              onNone: () => {},
-              onSome: (definition) => {
-                Effect.runSync(
-                  activateComponent({
-                    region,
-                    definition,
-                    lifetime: controller,
-                    parent,
-                    onOwner: (owner) => {
-                      current = Option.some(owner);
-                    },
-                  }),
-                );
-              },
-            });
-          }),
+              onSome: (owner) =>
+                Option.match(owner.reactiveRuntime, {
+                  onNone: () => {},
+                  onSome: (runtime) => transaction.retired.add(runtime.lifetime),
+                }),
+            }),
+          ),
           Match.orElse(() => {}),
-        );
-      };
-      region.request = Option.some(request);
-      controller.bindingCleanups.add(() => {
-        region.request = Option.none();
-      });
-      request(region.desired);
+        ),
     }),
-);
+  );
+  const request = (selection: Option.Option<Component>) => {
+    Match.value(controller.active && !sameSelection({ left: desired, right: selection })).pipe(
+      Match.when(true, () => {
+        desired = selection;
+        Option.match(current, {
+          onNone: () => {},
+          onSome: (owner) => {
+            retireOwner(owner);
+            beginCleanup(owner);
+          },
+        });
+        current = Option.none();
+        Option.match(selection, {
+          onNone: () => {},
+          onSome: (definition) => {
+            Effect.runSync(
+              activateComponent({
+                region,
+                definition,
+                lifetime: controller,
+                parent,
+                onOwner: (owner) => {
+                  current = Option.some(owner);
+                },
+              }),
+            );
+          },
+        });
+      }),
+      Match.orElse(() => {}),
+    );
+  };
+  controller.bindingCleanups.add(
+    signalData(plan).bind({
+      validate: () => Result.succeed(undefined),
+      flush: () => Effect.sync(() => request(signalData(plan).committed())),
+    }),
+  );
+  controller.bindingCleanups.add(() => {
+    current = Option.none();
+  });
+  request(initial);
+});
 
 const activate = (options: {
   region: Region;
   lifetime: Owner;
   parent: Element;
-}): Effect.Effect<void> =>
+}): Effect.Effect<void, ReactiveError> =>
   Match.value(options.region.definition).pipe(
     Match.when(isComponent, (definition) =>
       activateComponent({ ...options, definition }).pipe(Effect.asVoid),
     ),
-    Match.orElse(() => activateSelection(options)),
+    Match.when(isKeyedList, (description) =>
+      activateKeyed({
+        ...options,
+        description,
+        hooks: {
+          createOwner: createStructuralOwner,
+          retire: (owner) => {
+            retireOwner(owner);
+            beginCleanup(owner);
+          },
+          activate: (row) => activateComponent({ ...row, parent: options.parent }),
+        },
+      }),
+    ),
+    Match.orElse((signal) => activateSelection({ ...options, signal })),
   );
 
 const failAttempt = Effect.fn("Budgerigar.failAttempt")(
@@ -866,6 +976,9 @@ const failAttempt = Effect.fn("Budgerigar.failAttempt")(
     Effect.sync(() => {
       retireOwner(options.owner);
       beginCleanup(options.owner);
+      const onKeyedRowOccurrenceFailure = options.owner.onKeyedRowOccurrenceFailure;
+      options.owner.onKeyedRowOccurrenceFailure = Option.none();
+      Option.match(onKeyedRowOccurrenceFailure, { onNone: () => {}, onSome: (notify) => notify() });
     }).pipe(
       Effect.andThen(
         Match.value(Cause.hasInterruptsOnly(options.cause)).pipe(
@@ -909,10 +1022,12 @@ const activateTree: (options: {
   tree: Tree;
   lifetime: Owner;
   parent: Element;
-}) => Effect.Effect<void> = Effect.fn("Budgerigar.activateTree")(function* (options) {
-  for (const region of options.tree.regions)
-    yield* activate({ region, lifetime: options.lifetime, parent: options.parent });
-});
+}) => Effect.Effect<void, ReactiveError> = Effect.fn("Budgerigar.activateTree")(
+  function* (options) {
+    for (const region of options.tree.regions)
+      yield* activate({ region, lifetime: options.lifetime, parent: options.parent });
+  },
+);
 
 const install = Effect.fn("Budgerigar.install")(
   function* (queue: ParentQueue, request: Request) {

@@ -29,7 +29,8 @@ const SignalTypeId = "~budgerigar/Signal";
 const SignalState = Symbol("Budgerigar/SignalState");
 interface SignalData<A> {
   readonly participant: SignalCommit;
-  readonly candidate: (transaction: Option.Option<Transaction>) => A;
+  readonly committed: () => A;
+  readonly candidate: (transaction: Option.Option<Transaction>) => Result.Result<A, ReactiveError>;
   readonly bind: (sink: DomSink) => () => void;
 }
 export interface Signal<A> {
@@ -47,6 +48,11 @@ export interface WritableSignal<A> extends Signal<A> {
   readonly update: (f: (value: A) => A) => Effect.Effect<void, ReactiveError>;
 }
 
+export const readonlySignal = <A>(cell: WritableSignal<A>): Signal<A> => {
+  const { set: _set, update: _update, ...signal } = cell;
+  return signal;
+};
+
 export const isSignal = (value: unknown): value is Signal<unknown> =>
   typeof value === "object" && value !== null && SignalTypeId in value && SignalState in value;
 
@@ -60,7 +66,11 @@ export type Equality<A> = (options: { readonly previous: A; readonly proposed: A
 interface CellOptions<A> extends SignalOptions<A> {
   readonly runtime: ReactiveRuntime;
   readonly dependencies: ReadonlyArray<SignalCommit>;
-  readonly compute: Option.Option<(transaction: Option.Option<Transaction>) => A>;
+  readonly compute: Option.Option<
+    (transaction: Option.Option<Transaction>) => Result.Result<A, ReactiveError>
+  >;
+  readonly structural?: boolean;
+  readonly onPrepare?: (options: { transaction: Transaction; proposed: A }) => void;
 }
 
 export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
@@ -93,53 +103,55 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
     ).value;
   const derivedCandidate = (options: {
     transaction: Transaction;
-    compute: (transaction: Option.Option<Transaction>) => A;
-  }): A => {
+    compute: (transaction: Option.Option<Transaction>) => Result.Result<A, ReactiveError>;
+  }): Result.Result<A, ReactiveError> => {
     const { transaction, compute } = options;
     return Match.value(transaction.phase).pipe(
-      Match.tag("Staging", ({ revision }) => ({
-        value: Option.match(
+      Match.tag("Staging", ({ revision }) =>
+        Option.match(
           Option.filter(
             Option.fromUndefinedOr(readCache.get(transaction)),
             (entry) => entry.revision === revision,
           ),
           {
-            onSome: (entry) => entry.value,
-            onNone: () => {
-              const proposed = compute(Option.some(transaction));
-              const previous = Option.getOrElse(
-                Option.fromUndefinedOr(readCache.get(transaction)),
-                () => ({ value }),
-              ).value;
-              const entry = {
-                value: Match.value(equals({ previous, proposed })).pipe(
-                  Match.when(true, () => ({ value: previous })),
-                  Match.orElse(() => ({ value: proposed })),
-                ).value,
-                revision,
-              };
-              readCache.set(transaction, entry);
-              return entry.value;
-            },
+            onSome: (entry) => Result.succeed(entry.value),
+            onNone: () =>
+              Result.gen(function* () {
+                const proposed = yield* compute(Option.some(transaction));
+                const previous = Option.getOrElse(
+                  Option.fromUndefinedOr(readCache.get(transaction)),
+                  () => ({ value }),
+                ).value;
+                const equal = yield* calculateSync(() => equals({ previous, proposed }));
+                const entry = {
+                  value: Match.value(equal).pipe(
+                    Match.when(true, () => ({ value: previous })),
+                    Match.orElse(() => ({ value: proposed })),
+                  ).value,
+                  revision,
+                };
+                readCache.set(transaction, entry);
+                return entry.value;
+              }),
           },
         ),
-      })),
+      ),
       Match.tag("Preparing", ({ prepared }) =>
         Match.value(prepared.has(participant)).pipe(
-          Match.when(true, () => ({ value: stagedValue(transaction) })),
-          Match.orElse(() => ({ value })),
+          Match.when(true, () => Result.succeed(stagedValue(transaction))),
+          Match.orElse(() => Result.succeed(value)),
         ),
       ),
-      Match.tag("Closed", () => ({ value })),
+      Match.tag("Closed", () => Result.succeed(value)),
       Match.exhaustive,
-    ).value;
+    );
   };
-  const candidate = (transaction: Option.Option<Transaction>): A =>
+  const candidate = (transaction: Option.Option<Transaction>): Result.Result<A, ReactiveError> =>
     Option.match(transaction, {
-      onNone: () => value,
+      onNone: () => Result.succeed(value),
       onSome: (tx) =>
         Option.match(options.compute, {
-          onNone: () => readSource(tx),
+          onNone: () => Result.succeed(readSource(tx)),
           onSome: (compute) => derivedCandidate({ transaction: tx, compute }),
         }),
     });
@@ -152,6 +164,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
       0,
     ),
     version: 0,
+    structural: options.structural ?? false,
     prepare: (transaction) =>
       Effect.gen(function* () {
         const prepared = yield* Match.value(transaction.phase).pipe(
@@ -162,11 +175,14 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
             ),
           ),
         );
-        yield* calculate(() => {
-          const proposed = Option.match(options.compute, {
-            onNone: () => stagedValue(transaction),
+        const proposed = yield* lazy(() =>
+          Option.match(options.compute, {
+            onNone: () => Result.succeed(stagedValue(transaction)),
             onSome: (compute) => compute(Option.some(transaction)),
-          });
+          }),
+        );
+        yield* calculate(() => {
+          options.onPrepare?.({ transaction, proposed });
           Match.value(equals({ previous: value, proposed })).pipe(
             Match.when(true, () => {
               staged.set(transaction, { value });
@@ -254,6 +270,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
     [SignalTypeId]: SignalTypeId,
     [SignalState]: {
       participant,
+      committed: () => value,
       candidate,
       bind: (sink) => {
         bindings.add(sink);
@@ -277,7 +294,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
           (tx.fiberId === id || Option.contains(synchronous, tx)) &&
           tx.coordinator === options.runtime.coordinator,
       );
-      const work = calculate(() => candidate(visible));
+      const work = lazy(() => candidate(visible));
       return yield* Option.match(visible, {
         onNone: () => work,
         onSome: (transaction) => poison({ transaction, work }),
@@ -313,13 +330,15 @@ export type Values<S extends Sources> = {
 export const sourceValues = <S extends Sources>(
   sources: S,
   transaction: Option.Option<Transaction>,
-): Values<S> =>
-  Object.fromEntries(
-    Object.entries(sources).map(([key, signal]) => [
-      key,
-      signalData(signal).candidate(transaction),
-    ]),
-  ) as Values<S>;
+): Result.Result<Values<S>, ReactiveError> =>
+  Result.gen(function* () {
+    const entries: Array<readonly [string, unknown]> = [];
+    for (const [key, signal] of Object.entries(sources)) {
+      const value = yield* signalData(signal).candidate(transaction);
+      entries.push([key, value]);
+    }
+    return Object.fromEntries(entries) as Values<S>;
+  });
 
 export const deriveSync = <S extends Sources, A>(options: {
   readonly runtime: ReactiveRuntime;
@@ -339,8 +358,11 @@ export const deriveSync = <S extends Sources, A>(options: {
         producer: signalData(signal).participant.lifetime,
       });
     const calculateValue = options.compute;
-    const compute = (tx: Option.Option<Transaction>) => calculateValue(sourceValues(sources, tx));
-    const initial = yield* calculateSync(() => compute(Option.none()));
+    const compute = (tx: Option.Option<Transaction>) =>
+      sourceValues(sources, tx).pipe(
+        Result.flatMap((values) => calculateSync(() => calculateValue(values))),
+      );
+    const initial = yield* compute(Option.none());
     const cell = makeCell({
       ...options,
       initial,
@@ -361,7 +383,7 @@ export const readSync = <A>(options: {
       consumer: options.runtime.lifetime,
       producer: signalData(options.signal).participant.lifetime,
     });
-    return signalData(options.signal).candidate(Option.none());
+    return yield* signalData(options.signal).candidate(Option.none());
   });
 
 export const derive = <S extends Sources, A>(options: {
