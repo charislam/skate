@@ -5,6 +5,7 @@ import { component } from "./framework";
 import { LoadingExample } from "./loading";
 import { Tabs } from "./tabs";
 import { TextInput } from "./text-input";
+import { Todos } from "./todos";
 
 export const Home = component(() =>
   Result.succeed({
@@ -20,6 +21,7 @@ export const Home = component(() =>
             Tabs,
             AccessExample,
             LoadingExample,
+            Todos,
           ],
         });
       }),

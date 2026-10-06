@@ -510,8 +510,11 @@ describe("application reactive ownership", () => {
       await run(selected.set(Option.none()));
       await shows(parent, "");
       expect(childSignals.every((signal) => !signal.lifetime.active())).toBe(true);
-      expect(coordinator.dependents.size).toBe(0);
+      expect(coordinator.dependents.size).toBe(1);
     }
+    app.h(parent, []);
+    await rendered({ parent, check: () => parent.childNodes.length === 0 });
+    expect(coordinator.dependents.size).toBe(0);
   });
 
   it("reports root work before mounting, supplies its scope, and stops root handles before descendant cleanup", async () => {
@@ -667,6 +670,44 @@ it("prevents late uninterruptible setup from adopting while replacement setup pr
   await open(release);
   await run(Deferred.await(finished));
   expect(parent.textContent).toBe("latest");
+});
+
+it("skips outgoing derivations when selection retires their owner in the same batch", async () => {
+  const { app, parent } = await harness();
+  const trigger = await run(app.signal({ initial: false }));
+  let computations = 0;
+  const branch = component(() =>
+    Result.succeed({
+      setup: ({ derive, he }) =>
+        Effect.gen(function* () {
+          const value = yield* derive({
+            sources: { trigger },
+            compute: ({ trigger }) => {
+              computations += 1;
+              return Match.value(trigger).pipe(
+                Match.when(true, () => {
+                  throw new Error("outgoing computation");
+                }),
+                Match.orElse(() => "outgoing"),
+              );
+            },
+          });
+          return yield* he("span", { children: [value] });
+        }),
+    }),
+  );
+  const selected = await run(
+    app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
+  );
+  app.h(parent, selected);
+  await shows(parent, "outgoing");
+  const before = computations;
+  expect(Exit.isFailure(await run(trigger.set(true).pipe(Effect.exit)))).toBe(true);
+  expect(parent.textContent).toBe("outgoing");
+  expect(computations).toBe(before + 1);
+  await run(app.batch(trigger.set(true).pipe(Effect.andThen(selected.set(Option.none())))));
+  expect(parent.textContent).toBe("");
+  expect(computations).toBe(before + 1);
 });
 
 it("publishes observations and ordinary DOM while selection cleanup is awaiting", async () => {
