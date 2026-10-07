@@ -1,16 +1,6 @@
-import {
-  Cause,
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  Match,
-  Option,
-  Queue,
-  Scope,
-  Stream,
-} from "effect";
+import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Scope, Stream } from "effect";
 import { afterEach, expect, expectTypeOf, it } from "vitest";
+import * as BudgerigarContext from "./context";
 import {
   component,
   keyed,
@@ -33,11 +23,13 @@ import { CurrentTransaction } from "./reactive/runtime";
 import { toEffect } from "./sync";
 import { rendered } from "./test-helpers";
 
-class CurrentUser extends Context.Service<CurrentUser, Signal<Option.Option<string>>>()(
+class CurrentUser extends BudgerigarContext.Service<CurrentUser, Signal<Option.Option<string>>>()(
   "Budgerigar/test/CurrentUser",
 ) {}
-class Label extends Context.Service<Label, string>()("Budgerigar/test/Label") {}
-class OtherLabel extends Context.Service<OtherLabel, string>()("Budgerigar/test/OtherLabel") {}
+class Label extends BudgerigarContext.Service<Label, string>()("Budgerigar/test/Label") {}
+class OtherLabel extends BudgerigarContext.Service<OtherLabel, string>()(
+  "Budgerigar/test/OtherLabel",
+) {}
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -469,11 +461,12 @@ it("starts applications without the mounting caller's services and reserves fram
   expect(Cause.hasDies(failure.cause)).toBe(true);
   expect(() =>
     provideContext({
+      // @ts-expect-error Framework capabilities are not context tokens.
       key: Scope.Scope,
       value: scope,
       child: component(() => Sync.succeed({ setup: () => Effect.succeed([]) })),
     }),
-  ).toThrow("user service token");
+  ).toThrow("Budgerigar context token");
 });
 
 it("replaces captured Scope and staging authority while cleanup retains the registration environment", async () => {

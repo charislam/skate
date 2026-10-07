@@ -1,5 +1,6 @@
-import { Deferred, Effect, Exit, Fiber, Match, Scope } from "effect";
+import { Deferred, Effect, Exit, Layer, Fiber, Match, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { AuthLive } from "./auth";
 import { Counter } from "./counter";
 import {
   component,
@@ -10,6 +11,7 @@ import {
   type WritableSignal,
 } from "./framework";
 import { Home } from "./home";
+import { LocalStorageMemory } from "./local-storage";
 import { nativeNode } from "./output";
 import * as Sync from "./sync-public";
 
@@ -26,6 +28,7 @@ const harness = async () => {
   const { h } = await run(
     mounting({
       scope,
+      resources: Layer.mergeAll(AuthLive, LocalStorageMemory),
       onError: (failure) => {
         failures.push(failure);
         Effect.runSync(Deferred.succeed(errors, failure));

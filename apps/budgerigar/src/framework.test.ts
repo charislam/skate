@@ -1,9 +1,11 @@
-import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Layer, Match, Option, Queue, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrap } from "./bootstrap";
 import type { ConstructionError } from "./construction";
 import { component, mounting, type MountFailure } from "./framework";
+import { AuthLive } from "./auth";
 import { Home } from "./home";
+import { LocalStorageMemory } from "./local-storage";
 import { nativeNode } from "./output";
 import type { ElementOutput } from "./output";
 import { importTestNode, untypedOutput, testText } from "./output-test-helpers";
@@ -33,6 +35,7 @@ const harness = async () => {
   const { h } = await run(
     mounting({
       scope,
+      resources: Layer.mergeAll(AuthLive, LocalStorageMemory),
       onError: (failure) => {
         errors.push(failure);
         Queue.offerUnsafe(reports, failure);

@@ -1,7 +1,7 @@
-import { Context, Effect, Match, Predicate, Scope } from "effect";
+import { Context as EffectContext, Effect, Match, Predicate, Scope } from "effect";
+import { isToken, type Token, type Identifier as ContextIdentifier } from "./context";
 import type { ComponentContext, SynchronousContext, Output } from "./framework";
 import type { Normalize, OutputRequirements } from "./requirements";
-import { CurrentTransaction } from "./reactive/runtime";
 import { succeed, type Sync } from "./sync";
 
 const TypeId = "~budgerigar/Component";
@@ -64,22 +64,23 @@ export const component = <
 export const isComponent = (value: unknown): value is Component<unknown> =>
   Predicate.hasProperty(value, TypeId);
 
-const providers = new WeakMap<object, (parent: Context.Context<never>) => Context.Context<never>>();
+const providers = new WeakMap<
+  object,
+  (parent: EffectContext.Context<never>) => EffectContext.Context<never>
+>();
 
 /** Providers are descriptions; their binding is installed separately for each occurrence. */
-export const provideContext = <I, S, R>(options: {
-  readonly key: Context.Key<I, S>;
+export const provideContext = <I extends ContextIdentifier, S, R>(options: {
+  readonly key: Token<I, S>;
   readonly value: NoInfer<S>;
   readonly child: Component<R>;
 }): Component<Exclude<R, I>, never, never, never> => {
-  Match.value(
-    isComponent(options.child) &&
-      options.key.key !== Scope.Scope.key &&
-      options.key.key !== CurrentTransaction.key,
-  ).pipe(
+  Match.value(isComponent(options.child) && isToken(options.key)).pipe(
     Match.when(true, () => {}),
     Match.when(false, () => {
-      throw new TypeError("Budgerigar providers require a component and a user service token");
+      throw new TypeError(
+        "Budgerigar providers require a component and a Budgerigar context token",
+      );
     }),
     Match.exhaustive,
   );
@@ -87,12 +88,13 @@ export const provideContext = <I, S, R>(options: {
     [TypeId]: TypeId,
     factory: () => succeed({ setup: () => Effect.succeed(options.child) }),
   };
-  providers.set(definition, (parent) => Context.add(parent, options.key, options.value));
+  providers.set(definition, (parent) => EffectContext.add(parent, options.key, options.value));
   return definition;
 };
 
 /** Internal owner-tree provision, independent of local computation environments. */
 export const subtreeContext = (options: {
   readonly definition: Component<unknown>;
-  readonly parent: Context.Context<never>;
-}): Context.Context<never> => providers.get(options.definition)?.(options.parent) ?? options.parent;
+  readonly parent: EffectContext.Context<never>;
+}): EffectContext.Context<never> =>
+  providers.get(options.definition)?.(options.parent) ?? options.parent;
