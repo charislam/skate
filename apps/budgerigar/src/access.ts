@@ -1,8 +1,9 @@
-import { Result, Effect, Match, Option } from "effect";
-import { component, type Component } from "./framework";
+import { Effect, Match, Option } from "effect";
+import { component, type Component, type ElementOutput } from "./framework";
+import * as Sync from "./sync-public";
 
 export const AccessWarning = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he }) =>
       he("p", {
         attrs: { role: Option.some("alert") },
@@ -12,8 +13,9 @@ export const AccessWarning = component(() =>
 );
 
 export const AccessiblePage = component(() =>
-  Result.succeed({
-    fallback: () => Result.succeed(document.createTextNode("Loading accessible page…")),
+  Sync.succeed({
+    fallback: ({ importNative }) =>
+      importNative(document.createTextNode("Loading accessible page…")),
     setup: ({ signal, derive, he, events, subscribe }) =>
       Effect.gen(function* () {
         const count = yield* signal({ initial: 0 });
@@ -37,7 +39,7 @@ export const AccessiblePage = component(() =>
 );
 
 export const AccessExample = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ signal, derive, he, events, subscribe }) =>
       Effect.gen(function* () {
         const access = yield* signal<Option.Option<boolean>>({ initial: Option.none() });
@@ -54,7 +56,7 @@ export const AccessExample = component(() =>
                 ),
             }),
         });
-        const controls: Node[] = [];
+        const controls: ElementOutput<HTMLButtonElement>[] = [];
         for (const choice of [
           { label: "Unknown", value: Option.none<boolean>() },
           { label: "Denied", value: Option.some(false) },

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 import { Tabs } from "./tabs";
 import { harness, rendered } from "./test-helpers";
 
 const tabsHarness = async () => {
   const h = await harness();
   document.body.append(h.parent);
-  h.ctx.h(h.target, [Tabs, Tabs]);
+  Effect.runSync(h.ctx.h(h.target, [Tabs, Tabs]));
   await rendered({
     parent: h.parent,
     check: () => h.parent.querySelectorAll(".tabs").length === 2,

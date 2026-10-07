@@ -1,5 +1,6 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Match, Option, Queue, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { importTestNode } from "./output-test-helpers";
 import {
   makeReactiveRuntime,
   mapEvents,
@@ -614,8 +615,8 @@ describe("event sources", () => {
     const r = await harness();
     const increment = document.createElement("button");
     const reset = document.createElement("button");
-    const a = await run(r.events(increment, "click"));
-    const b = await run(r.events(reset, "click"));
+    const a = await run(r.events(await run(importTestNode(increment)), "click"));
+    const b = await run(r.events(await run(importTestNode(reset)), "click"));
     const count = await run(
       r.fold({
         events: mergeEvents([mapEvents(a, () => "increment"), mapEvents(b, () => "reset")]),
@@ -664,7 +665,7 @@ describe("event sources", () => {
   it("does not replay queued DOM occurrences to subscribers acquired after dispatch", async () => {
     const r = await harness();
     const button = document.createElement("button");
-    const events = await run(r.events(button, "click"));
+    const events = await run(r.events(await run(importTestNode(button)), "click"));
     const early = await run(r.fold({ events, initial: 0, reducer: ({ state: n }) => n + 1 }));
     const started = Deferred.makeUnsafe<void>();
     const release = Deferred.makeUnsafe<void>();

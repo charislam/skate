@@ -13,6 +13,6 @@ export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
   });
   const scope = yield* Effect.scope;
   const { h } = yield* mounting({ scope, onError });
-  h(root, Home);
+  yield* h(root, Home);
   yield* Effect.never;
 }, Effect.scoped);

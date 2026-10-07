@@ -1,6 +1,8 @@
-import { Result, Deferred, Effect, Exit, Match, Scope } from "effect";
+import { Deferred, Effect, Exit, Match, Scope } from "effect";
 import { afterEach } from "vitest";
 import { component, mounting, type ComponentContext, type MountFailure } from "./framework";
+import { nativeNode, type ElementOutput } from "./output";
+import * as Sync from "./sync-public";
 
 const run = Effect.runPromise;
 const cleanups: Array<() => Promise<void>> = [];
@@ -40,12 +42,14 @@ export const harness = async (options: { onError?: (failure: MountFailure) => vo
   );
   const parent = document.createElement("div");
   const ready = Deferred.makeUnsafe<ComponentContext>();
-  h(
-    parent,
-    component(() =>
-      Result.succeed({
-        setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("main"))),
-      }),
+  Effect.runSync(
+    h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("main"))),
+        }),
+      ),
     ),
   );
   const ctx = await run(Deferred.await(ready));
@@ -53,9 +57,9 @@ export const harness = async (options: { onError?: (failure: MountFailure) => vo
   const target = parent.querySelector("main") ?? parent;
   const close = () => run(Scope.close(scope, Exit.void));
   cleanups.push(close);
-  const adopt = async (node: Node) => {
-    ctx.h(target, node);
-    await rendered({ parent, check: () => target.contains(node) });
+  const adopt = async (node: ElementOutput<Node>) => {
+    Effect.runSync(ctx.h(target, node));
+    await rendered({ parent, check: () => target.contains(nativeNode(node)) });
   };
   return { ctx, parent, target, failures, close, adopt, h };
 };

@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Result } from "effect";
+import { Effect, Match, Option } from "effect";
 import { expectTypeOf, it } from "vitest";
 import type { ConstructionError } from "./construction";
 import { component } from "./framework";
@@ -14,6 +14,9 @@ import type {
   WritableSignal,
   SynchronousContext,
 } from "./framework";
+import type { ElementOutput } from "./output";
+import { testText } from "./output-test-helpers";
+import * as Sync from "./sync-public";
 
 it("retains native tag and property types and restricts static construction", () => {
   // This function is checked by TypeScript but deliberately never executed.
@@ -22,12 +25,16 @@ it("retains native tag and property types and restricts static construction", ()
 
     // @ts-expect-error A setup method alone does not carry the component type id.
     const unbranded: Component = {
-      factory: () => Result.succeed({ setup: () => Effect.succeed([]) }),
+      factory: () => Sync.succeed({ setup: () => Effect.succeed([]) }),
     };
     void unbranded;
 
-    expectTypeOf(he("input")).toEqualTypeOf<Effect.Effect<HTMLInputElement, ConstructionError>>();
-    expectTypeOf(he("select")).toEqualTypeOf<Effect.Effect<HTMLSelectElement, ConstructionError>>();
+    expectTypeOf(he("input")).toEqualTypeOf<
+      Effect.Effect<ElementOutput<HTMLInputElement>, ConstructionError>
+    >();
+    expectTypeOf(he("select")).toEqualTypeOf<
+      Effect.Effect<ElementOutput<HTMLSelectElement>, ConstructionError>
+    >();
 
     he("input", { props: { value: "current", checked: true, disabled: false } });
     he("div", {
@@ -214,7 +221,7 @@ it("accepts covariant Option component signals at both construction boundaries",
     },
   ) => {
     ctx.h(parent, signals.empty);
-    ctx.h(parent, [signals.specific, document.createTextNode("sibling")]);
+    ctx.h(parent, [signals.specific, testText("sibling")]);
     ctx.he("div", { children: [signals.empty, signals.specific] });
     // @ts-expect-error Selection requires an Option of a component definition.
     ctx.h(parent, signals.boolean);
@@ -250,13 +257,13 @@ it("accepts covariant Option component signals at both construction boundaries",
   expectTypeOf(describe).toBeFunction();
 });
 
-it("requires Result factories and fallbacks and preserves helper errors", () => {
+it("requires Sync factories and fallbacks and preserves helper errors", () => {
   const author = (ctx: SynchronousContext, yieldSignal: Signal<string>) => {
-    expectTypeOf(
-      component(() => Result.succeed({ setup: () => Effect.succeed([]) })),
-    ).toEqualTypeOf<Component<never, never, never>>();
+    expectTypeOf(component(() => Sync.succeed({ setup: () => Effect.succeed([]) }))).toEqualTypeOf<
+      Component<never, never, never, never>
+    >();
     const valid = component(({ signal }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const label = yield* signal({ initial: "loading" });
         return {
           fallback: ({ he }) => he("p", { children: [label] }),
@@ -265,51 +272,51 @@ it("requires Result factories and fallbacks and preserves helper errors", () => 
       }),
     );
     expectTypeOf(valid).toEqualTypeOf<
-      Component<ReactiveError, ConstructionError, ConstructionError>
+      Component<never, ReactiveError, ConstructionError, ConstructionError>
     >();
     ctx.he("div", { children: [valid] });
     expectTypeOf(ctx.signal({ initial: 0 })).toEqualTypeOf<
-      Result.Result<WritableSignal<number>, ReactiveError>
+      Sync.Sync<WritableSignal<number>, ReactiveError>
     >();
     expectTypeOf(ctx.he("input")).toEqualTypeOf<
-      Result.Result<HTMLInputElement, ConstructionError>
+      Sync.Sync<ElementOutput<HTMLInputElement>, ConstructionError>
     >();
-    expectTypeOf(ctx.read(yieldSignal)).toEqualTypeOf<Result.Result<string, ReactiveError>>();
-    const composed = Result.gen(function* () {
+    expectTypeOf(ctx.read(yieldSignal)).toEqualTypeOf<Sync.Sync<string, ReactiveError>>();
+    const composed = Sync.gen(function* () {
       yield* ctx.signal({ initial: 0 });
       return yield* ctx.he("div");
     });
     expectTypeOf(composed).toEqualTypeOf<
-      Result.Result<HTMLDivElement, ReactiveError | ConstructionError>
+      Sync.Sync<ElementOutput<HTMLDivElement>, ReactiveError | ConstructionError>
     >();
     ctx.addSyncFinalizer(() => {});
     // @ts-expect-error Synchronous finalizers cannot return a Promise.
     ctx.addSyncFinalizer(async () => {});
-    // @ts-expect-error Factories require Result wrappers.
+    // @ts-expect-error Factories require Sync wrappers.
     component(() => ({ setup: () => Effect.succeed([]) }));
     // @ts-expect-error Factories cannot return Effects.
     component(() => Effect.succeed({ setup: () => Effect.succeed([]) }));
     // @ts-expect-error Factories cannot suspend.
     component(async () => ({ setup: () => Effect.succeed([]) }));
     component(() =>
-      // @ts-expect-error Fallbacks require Result wrappers.
-      Result.succeed({
+      // @ts-expect-error Fallbacks require Sync wrappers.
+      Sync.succeed({
         fallback: () => document.createElement("div"),
         setup: () => Effect.succeed([]),
       }),
     );
     component(() =>
       // @ts-expect-error Fallbacks cannot return Effects.
-      Result.succeed({ fallback: () => Effect.succeed([]), setup: () => Effect.succeed([]) }),
+      Sync.succeed({ fallback: () => Effect.succeed([]), setup: () => Effect.succeed([]) }),
     );
     // @ts-expect-error Fallbacks cannot return promises.
-    component(() => Result.succeed({ fallback: async () => [], setup: () => Effect.succeed([]) }));
+    component(() => Sync.succeed({ fallback: async () => [], setup: () => Effect.succeed([]) }));
     // @ts-expect-error Batches accept thunks only.
-    ctx.batch(Result.succeed(undefined));
+    ctx.batch(Sync.succeed(undefined));
     // @ts-expect-error Strings remain children, not root output.
-    component(() => Result.succeed({ setup: () => Effect.succeed("text") }));
+    component(() => Sync.succeed({ setup: () => Effect.succeed("text") }));
     // @ts-expect-error Root arrays cannot be nested.
-    component(() => Result.succeed({ setup: () => Effect.succeed([[]]) }));
+    component(() => Sync.succeed({ setup: () => Effect.succeed([[]]) }));
   };
   expectTypeOf(author).toBeFunction();
 });

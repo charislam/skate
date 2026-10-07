@@ -12,7 +12,10 @@ import {
   type Signal,
 } from "./framework";
 import { planKeyed } from "./keyed";
+import { nativeNode } from "./output";
+import { testText } from "./output-test-helpers";
 import { signalData } from "./reactive/signal";
+import * as Sync from "./sync-public";
 import { rendered } from "./test-helpers";
 
 const run = Effect.runPromise;
@@ -63,7 +66,7 @@ const shows = (options: { parent: Node; text: string }) =>
   rendered({ parent: options.parent, check: () => options.parent.textContent === options.text });
 
 const labelRow = row<Item>()(({ context, inputs }) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     const label = yield* context.derive({
       sources: { item: inputs.item, index: inputs.index },
       compute: ({ item, index }) => `${index}:${item.label};`,
@@ -82,7 +85,7 @@ describe("keyed lists", () => {
     let finalized = 0;
     const inputsByKey = new Map<Key, RowInputs<Item>>();
     const editable = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         factories++;
         inputsByKey.set(inputs.key, inputs);
         const draft = yield* context.signal({ initial: "draft" });
@@ -113,7 +116,7 @@ describe("keyed lists", () => {
       }),
     );
     expect(factories).toBe(0);
-    app.h(parent, tree);
+    Effect.runSync(app.h(parent, tree));
     await shows({ parent, text: "before0:A;1:B;after" });
     const original = Array.from(parent.querySelectorAll("input"));
     const first = original[0];
@@ -164,7 +167,7 @@ describe("keyed lists", () => {
         ),
       row: () => labelRow,
     });
-    app.h(parent, list);
+    Effect.runSync(app.h(parent, list));
     await shows({ parent, text: "0:number;1:string;" });
     const nodes = Array.from(parent.childNodes);
     for (const candidate of [
@@ -205,7 +208,7 @@ describe("keyed lists", () => {
     let snapshot = Option.none<Signal<string>>();
     let computations = 0;
     const descriptor = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const label = yield* context.derive({
           sources: { item: inputs.item, index: inputs.index },
           compute: ({ item, index }) => {
@@ -217,7 +220,7 @@ describe("keyed lists", () => {
         return { setup: ({ he }) => he("span", { children: [label] }) };
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await shows({ parent, text: "0:A" });
     const label = Option.getOrThrow(snapshot);
     const before = computations;
@@ -259,7 +262,7 @@ describe("keyed lists", () => {
     const committedObservations = gate();
     let subscriptions = 0;
     const checked = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const snapshot = yield* context.derive({
           sources: { item: inputs.item, index: inputs.index, suffix },
           compute: ({ item, index, suffix }) => `${item.label}:${index}:${suffix};`,
@@ -307,7 +310,7 @@ describe("keyed lists", () => {
         };
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => checked }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => checked })));
     await run(Deferred.await(ready));
     await shows({ parent, text: "A:0:old;B:1:old;" });
     await run(Deferred.await(initialObservations));
@@ -347,7 +350,7 @@ describe("keyed lists", () => {
     let factories = 0;
     let finalizers = 0;
     const regular = row<Item>()(({ context }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         factories++;
         yield* context.addSyncFinalizer(() => {
           finalizers++;
@@ -356,7 +359,7 @@ describe("keyed lists", () => {
       }),
     );
     const alternate = row<Item>()(() =>
-      Result.succeed({ setup: ({ he }) => he("i", { children: ["alternate"] }) }),
+      Sync.succeed({ setup: ({ he }) => he("i", { children: ["alternate"] }) }),
     );
     const list = keyed({
       items,
@@ -367,7 +370,7 @@ describe("keyed lists", () => {
           Match.orElse(() => regular),
         ),
     });
-    app.h(parent, [list, list]);
+    Effect.runSync(app.h(parent, [list, list]));
     await shows({ parent, text: "regularregularregularregular" });
     expect(factories).toBe(4);
     await run(items.set([{ ...a, alternate: true }, b]));
@@ -399,14 +402,14 @@ describe("keyed lists", () => {
       }),
     );
     const slow = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const label = yield* context.derive({
           sources: { item: inputs.item, index: inputs.index },
           compute: ({ item, index }) => `${item.label}:${index}`,
         });
         return {
           fallback: (ctx) =>
-            Result.gen(function* () {
+            Sync.gen(function* () {
               yield* ctx.addSyncFinalizer(() => {
                 fallbackFinalizers++;
               });
@@ -425,7 +428,7 @@ describe("keyed lists", () => {
         };
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => slow }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => slow })));
     await run(Deferred.await(started));
     const first = parent.querySelector("em");
     await run(
@@ -456,17 +459,17 @@ describe("keyed lists", () => {
       return Match.value(inputs.key === "bad").pipe(
         Match.when(true, () => {
           attempts++;
-          return Result.fail("factory failure");
+          return Sync.fail("factory failure");
         }),
         Match.when(false, () =>
-          Result.succeed({
+          Sync.succeed({
             setup: ({ he }: ComponentContext) => he("span", { children: ["good"] }),
           }),
         ),
         Match.exhaustive,
       );
     });
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => flaky }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => flaky })));
     await shows({ parent, text: "good" });
     expect(attempts).toBe(1);
     await run(items.set([good, bad]));
@@ -515,7 +518,7 @@ describe("keyed lists", () => {
     );
     const failing = row<Item>()(() => {
       attempts++;
-      return Result.succeed({
+      return Sync.succeed({
         fallback: ({ he }) => he("em", { children: ["pending"] }),
         setup: () =>
           Deferred.succeed(started, undefined).pipe(
@@ -524,7 +527,7 @@ describe("keyed lists", () => {
           ),
       });
     });
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => failing }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => failing })));
     await run(Deferred.await(started));
     const changed = { id: "a", label: "changed" };
     await run(items.set([changed]));
@@ -546,7 +549,7 @@ describe("keyed lists", () => {
     let finalized = 0;
     let captured = Option.none<Signal<Item>>();
     const descriptor = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         factories++;
         captured = Option.some(inputs.item);
         yield* context.addSyncFinalizer(() => {
@@ -555,7 +558,7 @@ describe("keyed lists", () => {
         return { setup: ({ he }) => he("span", { children: ["row"] }) };
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await shows({ parent, text: "row" });
     await run(
       app.batch(items.set([]).pipe(Effect.andThen(Effect.fail("abort")))).pipe(Effect.result),
@@ -593,10 +596,10 @@ describe("keyed lists", () => {
     let innerFactories = 0;
     const child = row<Item>()(() => {
       innerFactories++;
-      return Result.succeed({ setup: ({ he }) => he("b", { children: ["inner"] }) });
+      return Sync.succeed({ setup: ({ he }) => he("b", { children: ["inner"] }) });
     });
     const outer = row<Item>()(({ context }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const inner = yield* context.derive({
           sources: { trigger },
           compute: ({ trigger }) => {
@@ -615,7 +618,9 @@ describe("keyed lists", () => {
         };
       }),
     );
-    app.h(parent, keyed({ items: deepItems, key: (item) => item.id, row: () => outer }));
+    Effect.runSync(
+      app.h(parent, keyed({ items: deepItems, key: (item) => item.id, row: () => outer })),
+    );
     await shows({ parent, text: "inner" });
     await run(
       app.batch(
@@ -657,7 +662,7 @@ describe("keyed lists", () => {
     expect(
       Result.isFailure(await run(app.he("div", { children: [invalid] }).pipe(Effect.result))),
     ).toBe(true);
-    app.h(parent, invalid);
+    Effect.runSync(app.h(parent, invalid));
     expect(failures.map((failure) => failure.operation)).toEqual(["validation"]);
     expect(parent.childNodes).toHaveLength(0);
   });
@@ -671,7 +676,7 @@ describe("keyed lists", () => {
     let setups = 0;
     let finalizers = 0;
     const descriptor = row<Item>()(({ context }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         factories++;
         yield* context.addSyncFinalizer(() => {
           finalizers++;
@@ -689,20 +694,20 @@ describe("keyed lists", () => {
     const list = keyed({ items, key: (item) => item.id, row: () => descriptor });
     const unused = await run(app.he("div", { children: [list] }));
     await run(items.set([]));
-    app.h(parent, unused);
-    await rendered({ parent, check: () => parent.contains(unused) });
+    Effect.runSync(app.h(parent, unused));
+    await rendered({ parent, check: () => parent.contains(nativeNode(unused)) });
     expect(factories).toBe(0);
     const enclosing = component(() =>
-      Result.succeed({
+      Sync.succeed({
         fallback: ({ he }) => he("section", { children: [list] }),
-        setup: () => Effect.succeed(document.createTextNode("ready")),
+        setup: () => Effect.succeed(testText("ready")),
       }),
     );
     await run(items.set([{ id: "a", label: "A" }]));
     expect(factories).toBe(1);
     // Two admitted replacements retire the enclosing fallback before its row setup starts.
-    app.h(parent, enclosing);
-    app.h(parent, document.createTextNode("replacement"));
+    Effect.runSync(app.h(parent, enclosing));
+    Effect.runSync(app.h(parent, testText("replacement")));
     await shows({ parent, text: "replacement" });
     expect(finalizers).toBe(factories);
     expect(setups).toBeLessThan(factories);
@@ -719,21 +724,21 @@ describe("keyed lists", () => {
     let attempts = 0;
     const descriptor = row<Item>()(() => {
       const attempt = ++attempts;
-      return Result.succeed({
+      return Sync.succeed({
         setup: () =>
           Match.value(attempt).pipe(
             Match.when(1, () =>
               Effect.gen(function* () {
                 yield* Deferred.succeed(started, undefined);
                 yield* Deferred.await(release).pipe(Effect.uninterruptible);
-                return document.createTextNode("obsolete");
+                return testText("obsolete");
               }).pipe(Effect.ensuring(Deferred.succeed(finished, undefined))),
             ),
-            Match.orElse(() => Effect.succeed(document.createTextNode("fresh"))),
+            Match.orElse(() => Effect.succeed(testText("fresh"))),
           ),
       });
     });
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await run(Deferred.await(started));
     await run(items.set([]));
     await run(items.set([{ id: "a", label: "new" }]));
@@ -757,22 +762,22 @@ describe("keyed lists", () => {
       }),
     );
     const descriptor = row<Item>()(({ inputs }) =>
-      Result.succeed({
-        fallback: () => Result.fail("fallback"),
+      Sync.succeed({
+        fallback: () => Sync.fail("fallback"),
         setup: () =>
           Effect.succeed(
             Match.value(inputs.key).pipe(
               Match.when("a", () => []),
-              Match.orElse(() => document.createTextNode("B")),
+              Match.orElse(() => testText("B")),
             ),
           ),
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await shows({ parent, text: "B" });
     expect(failures.map((failure) => failure.operation)).toEqual(["fallback", "fallback"]);
-    const empty = document.createTextNode("cleared");
-    app.h(parent, empty);
+    const empty = testText("cleared");
+    Effect.runSync(app.h(parent, empty));
     await shows({ parent, text: "cleared" });
     expect(signalData(items).participant.dependents.size).toBe(0);
     await run(items.set([{ id: "c", label: "C" }]));
@@ -788,12 +793,12 @@ describe("keyed lists", () => {
     );
     let finalized = 0;
     const descriptor = row<Item>()(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: (ctx) =>
           Effect.gen(function* () {
             const node = yield* ctx.he("span", { children: ["row"] });
             yield* ctx.addSyncFinalizer(() => {
-              expect(parent.contains(node)).toBe(true);
+              expect(parent.contains(nativeNode(node))).toBe(true);
               finalized++;
             });
             yield* Effect.addFinalizer(() =>
@@ -803,7 +808,7 @@ describe("keyed lists", () => {
           }),
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await shows({ parent, text: "row" });
     await run(items.set([]));
     expect(finalized).toBe(1);
@@ -833,7 +838,7 @@ describe("keyed lists", () => {
     let finalized = 0;
     let factories = 0;
     const descriptor = row<Item>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         factories++;
         yield* context.addSyncFinalizer(() => {
           finalized++;
@@ -845,7 +850,7 @@ describe("keyed lists", () => {
         return { setup: ({ he }) => he("span", { children: [label] }) };
       }),
     );
-    app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor }));
+    Effect.runSync(app.h(parent, keyed({ items, key: (item) => item.id, row: () => descriptor })));
     await shows({ parent, text: "A" });
     const pending = run(
       app
@@ -877,7 +882,7 @@ describe("keyed lists", () => {
       }),
     );
     const list = keyed({ items, key: (item) => item.id, row: () => labelRow });
-    app.h(parent, list);
+    Effect.runSync(app.h(parent, list));
     await shows({ parent, text: "0:A;" });
     await run(items.set([{ id: "a", label: "suppressed" }]));
     expect(await run(items.get)).toEqual([a]);

@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Fiber, Match, Result, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Match, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { Counter } from "./counter";
 import {
@@ -10,6 +10,8 @@ import {
   type WritableSignal,
 } from "./framework";
 import { Home } from "./home";
+import { nativeNode } from "./output";
+import * as Sync from "./sync-public";
 
 const run = Effect.runPromise;
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,12 +56,14 @@ const mounted = async () => {
   const h = await harness();
   const parent = document.createElement("div");
   const context = Deferred.makeUnsafe<ComponentContext>();
-  h.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        setup: (ctx) => Deferred.succeed(context, ctx).pipe(Effect.andThen(ctx.he("main"))),
-      }),
+  Effect.runSync(
+    h.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          setup: (ctx) => Deferred.succeed(context, ctx).pipe(Effect.andThen(ctx.he("main"))),
+        }),
+      ),
     ),
   );
   const ctx = await run(Deferred.await(context));
@@ -71,7 +75,7 @@ describe("reactive DOM and ownership", () => {
   it("renders independent counters, negative values, reset, and stable DOM identities", async () => {
     const { h, close } = await harness();
     const parent = document.createElement("div");
-    h(parent, [Home, Counter]);
+    Effect.runSync(h(parent, [Home, Counter]));
     await rendered({
       parent,
       check: () => parent.querySelectorAll(".counter output").length === 2,
@@ -108,23 +112,28 @@ describe("reactive DOM and ownership", () => {
     const label = await run(ctx.signal({ initial: "old" }));
     const tree = await run(ctx.he("p", { children: ["before", label, label, "after"] }));
     await run(label.set("<b>new</b>"));
-    expect(tree.textContent).toBe("beforeoldoldafter");
-    ctx.h(parent.querySelector("main") ?? parent, tree);
-    await rendered({ parent, check: () => tree.textContent === "before<b>new</b><b>new</b>after" });
-    expect(tree.querySelector("b")).toBeNull();
-    const nodes = Array.from(tree.childNodes);
+    expect(nativeNode(tree).textContent).toBe("beforeoldoldafter");
+    Effect.runSync(ctx.h(parent.querySelector("main") ?? parent, tree));
+    await rendered({
+      parent,
+      check: () => nativeNode(tree).textContent === "before<b>new</b><b>new</b>after",
+    });
+    expect(nativeNode(tree).querySelector("b")).toBeNull();
+    const nodes = Array.from(nativeNode(tree).childNodes);
     await run(label.set("live"));
-    expect(tree.textContent).toBe("beforeliveliveafter");
-    expect(Array.from(tree.childNodes)).toEqual(nodes);
+    expect(nativeNode(tree).textContent).toBe("beforeliveliveafter");
+    expect(Array.from(nativeNode(tree).childNodes)).toEqual(nodes);
     const discarded = await run(ctx.he("p", { children: [label] }));
-    ctx.h(
-      parent.querySelector("main") ?? parent,
-      await run(ctx.he("p", { children: ["replacement"] })),
+    Effect.runSync(
+      ctx.h(
+        parent.querySelector("main") ?? parent,
+        await run(ctx.he("p", { children: ["replacement"] })),
+      ),
     );
     await rendered({ parent, check: () => parent.textContent === "replacement" });
     await run(label.set("later"));
-    expect(tree.textContent).toBe("beforeliveliveafter");
-    expect(discarded.textContent).toBe("live");
+    expect(nativeNode(tree).textContent).toBe("beforeliveliveafter");
+    expect(nativeNode(discarded).textContent).toBe("live");
   });
 
   it("flushes all related text before a write completes and leaves DOM unchanged on rollback", async () => {
@@ -134,7 +143,7 @@ describe("reactive DOM and ownership", () => {
     const xText = await run(ctx.derive({ sources: { x }, compute: ({ x }) => String(x) }));
     const yText = await run(ctx.derive({ sources: { y }, compute: ({ y }) => String(y) }));
     const tree = await run(ctx.he("p", { children: [xText, "/", yText] }));
-    ctx.h(parent.querySelector("main") ?? parent, tree);
+    Effect.runSync(ctx.h(parent.querySelector("main") ?? parent, tree));
     await rendered({ parent, check: () => parent.textContent === "1/2" });
     await run(x.set(2));
     expect(parent.textContent).toBe("2/4");
@@ -146,29 +155,31 @@ describe("reactive DOM and ownership", () => {
     const { h, errors, failures } = await harness();
     const parent = document.createElement("div");
     const signalReady = Deferred.makeUnsafe<WritableSignal<string>>();
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: (ctx) =>
-            Effect.gen(function* () {
-              const label = yield* ctx.signal({ initial: "ancestor" });
-              yield* Deferred.succeed(signalReady, label);
-              const Child = component(() =>
-                Result.succeed({
-                  setup: (child) =>
-                    Effect.gen(function* () {
-                      const derived = yield* child.derive({
-                        sources: { label },
-                        compute: ({ label }) => label.toUpperCase(),
-                      });
-                      return yield* child.he("p", { children: [derived] });
-                    }),
-                }),
-              );
-              return yield* ctx.he("main", { children: [Child] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: (ctx) =>
+              Effect.gen(function* () {
+                const label = yield* ctx.signal({ initial: "ancestor" });
+                yield* Deferred.succeed(signalReady, label);
+                const Child = component(() =>
+                  Sync.succeed({
+                    setup: (child) =>
+                      Effect.gen(function* () {
+                        const derived = yield* child.derive({
+                          sources: { label },
+                          compute: ({ label }) => label.toUpperCase(),
+                        });
+                        return yield* child.he("p", { children: [derived] });
+                      }),
+                  }),
+                );
+                return yield* ctx.he("main", { children: [Child] });
+              }),
+          }),
+        ),
       ),
     );
     const label = await run(Deferred.await(signalReady));
@@ -176,9 +187,11 @@ describe("reactive DOM and ownership", () => {
     await run(label.set("updated"));
     expect(parent.textContent).toBe("UPDATED");
     const unrelated = document.createElement("div");
-    h(
-      unrelated,
-      component(() => Result.succeed({ setup: (ctx) => ctx.he("p", { children: [label] }) })),
+    Effect.runSync(
+      h(
+        unrelated,
+        component(() => Sync.succeed({ setup: (ctx) => ctx.he("p", { children: [label] }) })),
+      ),
     );
     await run(Deferred.await(errors));
     expect(unrelated.textContent).toBe("");
@@ -202,22 +215,24 @@ describe("reactive DOM and ownership", () => {
     }>();
     const cleaning = Deferred.makeUnsafe<void>();
     const releaseCleanup = Deferred.makeUnsafe<void>();
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: (context) =>
-            Effect.gen(function* () {
-              const signal = yield* context.signal({ initial: "old" });
-              yield* Effect.addFinalizer(() =>
-                Deferred.succeed(cleaning, undefined).pipe(
-                  Effect.andThen(Deferred.await(releaseCleanup)),
-                ),
-              );
-              yield* Deferred.succeed(ready, { context, signal });
-              return yield* context.he("p", { children: [signal] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: (context) =>
+              Effect.gen(function* () {
+                const signal = yield* context.signal({ initial: "old" });
+                yield* Effect.addFinalizer(() =>
+                  Deferred.succeed(cleaning, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseCleanup)),
+                  ),
+                );
+                yield* Deferred.succeed(ready, { context, signal });
+                return yield* context.he("p", { children: [signal] });
+              }),
+          }),
+        ),
       ),
     );
     const { context, signal } = await run(Deferred.await(ready));
@@ -246,32 +261,34 @@ describe("reactive DOM and ownership", () => {
     const parent = document.createElement("div");
     const ready = Deferred.makeUnsafe<{ button: HTMLButtonElement; count: Signal<number> }>();
     let first = true;
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: (ctx) =>
-            Effect.gen(function* () {
-              const button = yield* ctx.he("button", { children: ["Click"] });
-              const clicks = yield* ctx.events(button, "click");
-              const count = yield* ctx.fold({
-                events: clicks,
-                initial: 0,
-                reducer: ({ state: n }) => {
-                  const previous = first;
-                  first = false;
-                  expect(previous).toBe(false);
-                  return n + 1;
-                },
-              });
-              const label = yield* ctx.derive({
-                sources: { count },
-                compute: ({ count }) => String(count),
-              });
-              yield* Deferred.succeed(ready, { button, count });
-              return yield* ctx.he("p", { children: [label, button] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: (ctx) =>
+              Effect.gen(function* () {
+                const button = yield* ctx.he("button", { children: ["Click"] });
+                const clicks = yield* ctx.events(button, "click");
+                const count = yield* ctx.fold({
+                  events: clicks,
+                  initial: 0,
+                  reducer: ({ state: n }) => {
+                    const previous = first;
+                    first = false;
+                    expect(previous).toBe(false);
+                    return n + 1;
+                  },
+                });
+                const label = yield* ctx.derive({
+                  sources: { count },
+                  compute: ({ count }) => String(count),
+                });
+                yield* Deferred.succeed(ready, { button: nativeNode(button), count });
+                return yield* ctx.he("p", { children: [label, button] });
+              }),
+          }),
+        ),
       ),
     );
     const { button, count } = await run(Deferred.await(ready));

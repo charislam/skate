@@ -18,7 +18,7 @@ import { lazy } from "./synchronous";
 export interface RowContext {
   readonly list: object;
   readonly key: Key;
-  readonly descriptor: Row<unknown>;
+  readonly descriptor: Row<unknown, unknown>;
 }
 interface ListOwner {
   readonly active: boolean;
@@ -44,7 +44,7 @@ interface Hooks<O> {
   readonly activate: (options: {
     lifetime: O;
     region: Region;
-    definition: Component;
+    definition: Component<unknown>;
     onKeyedRowOccurrenceFailure: () => void;
   }) => Effect.Effect<unknown>;
 }
@@ -112,7 +112,7 @@ const moveRange = (options: { region: Region; before: Node }): void => {
 /** List plans and row inputs are graph dependencies, never a second reactive commit. */
 export const activateKeyed = <O extends ListOwner>(options: {
   readonly region: Region;
-  readonly description: KeyedList;
+  readonly description: KeyedList<unknown, unknown>;
   readonly lifetime: O;
   readonly hooks: Hooks<O>;
 }): Effect.Effect<void> =>

@@ -9,6 +9,10 @@ import {
   type SynchronousContext,
   type WritableSignal,
 } from "./framework";
+import { nativeNode } from "./output";
+import { testText } from "./output-test-helpers";
+import { toEffect } from "./sync";
+import * as Sync from "./sync-public";
 import { rendered } from "./test-helpers";
 
 const run = Effect.runPromise;
@@ -22,7 +26,7 @@ const gate = () => {
 };
 
 const open = (value: Deferred.Deferred<void>) => run(Deferred.succeed(value, undefined));
-const text = (value: string) => document.createTextNode(value);
+const text = (value: string) => testText(value);
 
 const shows = (parent: Node, value: string) =>
   rendered({ parent, check: () => parent.textContent === value });
@@ -54,7 +58,7 @@ it("invokes inert descriptions once per occurrence and keeps independent factory
   let calls = 0;
   const signals: WritableSignal<string>[] = [];
   const definition = component(({ signal }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       calls += 1;
       const label = yield* signal({ initial: String(calls) });
       signals.push(label);
@@ -63,7 +67,7 @@ it("invokes inert descriptions once per occurrence and keeps independent factory
   );
   const detached = await run(app.he("section", { children: [definition, definition] }));
   expect(calls).toBe(0);
-  app.h(parent, detached);
+  Effect.runSync(app.h(parent, detached));
   await shows(parent, "12");
   expect(calls).toBe(2);
   await run(Effect.forEach(signals.slice(0, 1), (signal) => signal.set("first")));
@@ -74,14 +78,14 @@ it("binds committed parent and shared progress values without rerunning callback
   const { app, parent } = await fixture();
   const label = await run(app.signal({ initial: "old" }));
   const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
-  app.h(parent, [selected, text("sibling")]);
+  Effect.runSync(app.h(parent, [selected, text("sibling")]));
   await shows(parent, "sibling");
   const release = gate();
   let factories = 0;
   let fallbacks = 0;
   let setups = 0;
   const definition = component(({ signal }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       factories += 1;
       const progress = yield* signal({ initial: "loading" });
       return {
@@ -122,14 +126,14 @@ it("binds committed parent and shared progress values without rerunning callback
 it("activates mixed and direct fallback children synchronously and skips retired setup", async () => {
   const { app, parent } = await fixture();
   const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
-  app.h(parent, [text("left"), selected, text("right")]);
+  Effect.runSync(app.h(parent, [text("left"), selected, text("right")]));
   await shows(parent, "leftright");
   let childFactories = 0;
   let childSetups = 0;
   const child = component(() => {
     childFactories += 1;
-    return Result.succeed({
-      fallback: () => Result.succeed(text("child")),
+    return Sync.succeed({
+      fallback: () => Sync.succeed(text("child")),
       setup: () =>
         Effect.sync(() => {
           childSetups += 1;
@@ -138,10 +142,10 @@ it("activates mixed and direct fallback children synchronously and skips retired
     });
   });
   const branch = component(({ signal }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       const choice = yield* signal({ initial: Option.some(child) });
       return {
-        fallback: () => Result.succeed([text("a"), child, choice, text("b")]),
+        fallback: () => Sync.succeed([text("a"), child, choice, text("b")]),
         setup: () => Effect.never,
       };
     }),
@@ -168,24 +172,24 @@ it("retires pending descendants before attached finalizers and awaits cleanup on
   const order: string[] = [];
   let factoryFinalized = false;
   const child = component(({ addSyncFinalizer }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       yield* addSyncFinalizer(() => {
         order.push(`child:${parent.textContent}`);
       });
       return {
-        fallback: () => Result.succeed(text("child")),
+        fallback: () => Sync.succeed(text("child")),
         setup: () => Deferred.succeed(childStarted, undefined).pipe(Effect.andThen(Effect.never)),
       };
     }),
   );
   const branch = component(({ addSyncFinalizer }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       yield* addSyncFinalizer(() => {
         factoryFinalized = true;
       });
       return {
         fallback: (ctx) =>
-          Result.gen(function* () {
+          Sync.gen(function* () {
             yield* ctx.addSyncFinalizer(() => {
               order.push(`pending:${parent.textContent}`);
             });
@@ -203,7 +207,7 @@ it("retires pending descendants before attached finalizers and awaits cleanup on
       };
     }),
   );
-  app.h(parent, branch);
+  Effect.runSync(app.h(parent, branch));
   await shows(parent, "child");
   await run(Deferred.await(childStarted));
   await open(ready);
@@ -231,12 +235,12 @@ it("keeps factory work alive through readiness and stops pending stream work", a
   const pendingStarted = gate();
   const pendingStopped = gate();
   const definition = component(({ signal, fork }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       const progress = yield* signal({ initial: "initial" });
       yield* fork(Deferred.await(factoryWrite).pipe(Effect.andThen(progress.set("updated"))));
       return {
         fallback: (ctx) =>
-          Result.gen(function* () {
+          Sync.gen(function* () {
             yield* ctx.subscribeStream(
               Stream.fromEffect(
                 Deferred.succeed(pendingStarted, undefined).pipe(Effect.andThen(Effect.never)),
@@ -250,7 +254,7 @@ it("keeps factory work alive through readiness and stops pending stream work", a
       };
     }),
   );
-  app.h(parent, definition);
+  Effect.runSync(app.h(parent, definition));
   await shows(parent, "initial");
   await run(Deferred.await(pendingStarted));
   await open(release);
@@ -263,21 +267,23 @@ it("keeps factory work alive through readiness and stops pending stream work", a
 it("rejects escaped fallback state from setup while retaining ancestor access", async () => {
   const { app, parent, failure } = await fixture();
   const captured = Deferred.makeUnsafe<Signal<string>>();
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        fallback: (ctx) =>
-          Result.gen(function* () {
-            const signal = yield* ctx.signal({ initial: "pending" });
-            Effect.runSync(Deferred.succeed(captured, signal));
-            return yield* ctx.he("p", { children: [signal] });
-          }),
-        setup: ({ he }) =>
-          Deferred.await(captured).pipe(
-            Effect.flatMap((signal) => he("p", { children: [signal] })),
-          ),
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          fallback: (ctx) =>
+            Sync.gen(function* () {
+              const signal = yield* ctx.signal({ initial: "pending" });
+              Effect.runSync(Deferred.succeed(captured, signal));
+              return yield* ctx.he("p", { children: [signal] });
+            }),
+          setup: ({ he }) =>
+            Deferred.await(captured).pipe(
+              Effect.flatMap((signal) => he("p", { children: [signal] })),
+            ),
+        }),
+      ),
     ),
   );
   const error = await failure();
@@ -286,13 +292,13 @@ it("rejects escaped fallback state from setup while retaining ancestor access", 
   expect(parent.textContent).toBe("");
 });
 
-it("cleans failed factory Results, preserves typed causes, and never calls later callbacks", async () => {
+it("cleans failed factory Sync computations, preserves typed causes, and never calls later callbacks", async () => {
   const { app, parent, failure } = await fixture();
   let finalized = 0;
   let deferredWork = 0;
   let callbacks = 0;
   const definition = component((ctx) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       yield* ctx.addSyncFinalizer(() => {
         finalized += 1;
       });
@@ -301,12 +307,12 @@ it("cleans failed factory Results, preserves typed causes, and never calls later
           deferredWork += 1;
         }),
       );
-      yield* Result.fail("factory failed");
+      yield* Sync.fail("factory failed");
       callbacks += 1;
       return { setup: () => Effect.succeed([]) };
     }),
   );
-  app.h(parent, definition);
+  Effect.runSync(app.h(parent, definition));
   const error = await failure();
   expect(error.operation).toBe("factory");
   expect(Cause.hasDies(error.cause)).toBe(false);
@@ -321,24 +327,26 @@ it("cleans a failed fallback Result and continues enclosing setup", async () => 
   const release = gate();
   let pendingFinalized = 0;
   let factoryFinalized = 0;
-  app.h(
-    parent,
-    component((ctx) =>
-      Result.gen(function* () {
-        yield* ctx.addSyncFinalizer(() => {
-          factoryFinalized += 1;
-        });
-        return {
-          fallback: (pending) =>
-            Result.gen(function* () {
-              yield* pending.addSyncFinalizer(() => {
-                pendingFinalized += 1;
-              });
-              return yield* Result.fail("fallback failed");
-            }),
-          setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
-        };
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component((ctx) =>
+        Sync.gen(function* () {
+          yield* ctx.addSyncFinalizer(() => {
+            factoryFinalized += 1;
+          });
+          return {
+            fallback: (pending) =>
+              Sync.gen(function* () {
+                yield* pending.addSyncFinalizer(() => {
+                  pendingFinalized += 1;
+                });
+                return yield* Sync.fail("fallback failed");
+              }),
+            setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
+          };
+        }),
+      ),
     ),
   );
   expect((await failure()).operation).toBe("fallback");
@@ -351,17 +359,17 @@ it("rejects reentrant writes and batches without invoking thunks and starts fork
   const { app, parent } = await fixture();
   const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
   const label = await run(app.signal({ initial: "initial" }));
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await run(Effect.yieldNow);
   let thunks = 0;
   const definition = component((ctx) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       expect(Exit.isFailure(Effect.runSyncExit(label.set("illegal")))).toBe(true);
       const batch = ctx.batch(() => {
         thunks += 1;
-        return Result.succeed(undefined);
+        return Sync.succeed(undefined);
       });
-      expect(Result.isFailure(batch)).toBe(true);
+      expect(Result.isFailure(Effect.runSync(toEffect(batch).pipe(Effect.result)))).toBe(true);
       yield* ctx.fork(label.set("deferred"));
       return { fallback: ({ he }) => he("p", { children: [label] }), setup: () => Effect.never };
     }),
@@ -372,33 +380,35 @@ it("rejects reentrant writes and batches without invoking thunks and starts fork
   await shows(parent, "deferred");
 });
 
-it("aborts Result batches and keeps Effect helper execution lazy", async () => {
+it("aborts Sync batches and keeps Effect helper execution lazy", async () => {
   const { app, parent } = await fixture();
   const ready = Deferred.makeUnsafe<SynchronousContext>();
   const label = await run(app.signal({ initial: "initial" }));
-  app.h(
-    parent,
-    component((ctx) => {
-      Effect.runSync(Deferred.succeed(ready, ctx));
-      return Result.succeed({ setup: ({ he }) => he("p", { children: [label] }) });
-    }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component((ctx) => {
+        Effect.runSync(Deferred.succeed(ready, ctx));
+        return Sync.succeed({ setup: ({ he }) => he("p", { children: [label] }) });
+      }),
+    ),
   );
   const ctx = await run(Deferred.await(ready));
   await shows(parent, "initial");
   const aborted = ctx.batch(() =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       Effect.runSync(label.set("staged"));
-      return yield* Result.fail("abort");
+      return yield* Sync.fail("abort");
     }),
   );
-  expect(Result.isFailure(aborted)).toBe(true);
+  expect(Result.isFailure(await run(toEffect(aborted).pipe(Effect.result)))).toBe(true);
   expect(await run(label.get)).toBe("initial");
   expect(parent.textContent).toBe("initial");
   const committed = ctx.batch(() => {
     Effect.runSync(label.set("committed"));
-    return Result.succeed(42);
+    return Sync.succeed(42);
   });
-  expect(committed).toEqual(Result.succeed(42));
+  expect(await run(toEffect(committed))).toBe(42);
   expect(parent.textContent).toBe("committed");
   let calculations = 0;
   const lazy = app.derive({
@@ -415,18 +425,22 @@ it("aborts Result batches and keeps Effect helper execution lazy", async () => {
 
 it("supports direct components, selections, and empty arrays as setup output", async () => {
   const { app, parent } = await fixture();
-  const child = component(() => Result.succeed({ setup: () => Effect.sync(() => text("child")) }));
+  const child = component(() => Sync.succeed({ setup: () => Effect.sync(() => text("child")) }));
   const selected = await run(app.signal({ initial: Option.some(child) }));
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({ setup: () => Effect.succeed([child, selected, text("end")]) }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({ setup: () => Effect.succeed([child, selected, text("end")]) }),
+      ),
     ),
   );
   await shows(parent, "childchildend");
-  app.h(
-    parent,
-    component(() => Result.succeed({ setup: () => Effect.succeed([]) })),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() => Sync.succeed({ setup: () => Effect.succeed([]) })),
+    ),
   );
   await shows(parent, "");
 });
@@ -439,21 +453,21 @@ it.each([
     },
     defect: true,
   },
-  { name: "bare lifecycle", factory: () => ({ setup: () => Effect.succeed([]) }), defect: false },
+  { name: "bare lifecycle", factory: () => ({ setup: () => Effect.succeed([]) }), defect: true },
   {
     name: "Promise",
     factory: () => Promise.resolve({ setup: () => Effect.succeed([]) }),
-    defect: false,
+    defect: true,
   },
   {
     name: "Effect",
     factory: () => Effect.succeed({ setup: () => Effect.succeed([]) }),
-    defect: false,
+    defect: true,
   },
 ])("validates untyped factory $name and preserves cause semantics", async ({ factory, defect }) => {
   const { app, parent, failure } = await fixture();
   const invalid: Component = Reflect.apply(component, undefined, [factory]);
-  app.h(parent, invalid);
+  Effect.runSync(app.h(parent, invalid));
   const error = await failure();
   expect(error.operation).toBe("factory");
   expect(Cause.hasDies(error.cause)).toBe(defect);
@@ -464,16 +478,16 @@ it.each([
   () => text("bare"),
   () => Promise.resolve([]),
   () => Effect.succeed([]),
-  () => Result.succeed([[text("nested")]]),
+  () => Sync.succeed([[text("nested")]]),
   () => {
     throw new Error("fallback defect");
   },
 ])("isolates invalid untyped fallback output and continues setup", async (fallback) => {
   const { app, parent, failure } = await fixture();
   const invalid: Component = Reflect.apply(component, undefined, [
-    () => Result.succeed({ fallback, setup: () => Effect.sync(() => text("ready")) }),
+    () => Sync.succeed({ fallback, setup: () => Effect.sync(() => text("ready")) }),
   ]);
-  app.h(parent, invalid);
+  Effect.runSync(app.h(parent, invalid));
   expect((await failure()).operation).toBe("fallback");
   await shows(parent, "ready");
 });
@@ -483,21 +497,23 @@ it("reports throwing pending finalizers while inserting ready content and blocki
   const release = gate();
   const label = await run(app.signal({ initial: "initial" }));
   let attached = false;
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        fallback: (ctx) =>
-          Result.gen(function* () {
-            yield* ctx.addSyncFinalizer(() => {
-              attached = parent.textContent === "pending";
-              expect(Exit.isFailure(Effect.runSyncExit(label.set("illegal")))).toBe(true);
-              throw new Error("pending cleanup defect");
-            });
-            return text("pending");
-          }),
-        setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          fallback: (ctx) =>
+            Sync.gen(function* () {
+              yield* ctx.addSyncFinalizer(() => {
+                attached = parent.textContent === "pending";
+                expect(Exit.isFailure(Effect.runSyncExit(label.set("illegal")))).toBe(true);
+                throw new Error("pending cleanup defect");
+              });
+              return text("pending");
+            }),
+          setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
+        }),
+      ),
     ),
   );
   await shows(parent, "pending");
@@ -516,8 +532,8 @@ it("revokes late uninterruptible pending child adoption without delaying readine
   const childFinished = gate();
   let childFinalized = false;
   const child = component(() =>
-    Result.succeed({
-      fallback: () => Result.succeed(text("child pending")),
+    Sync.succeed({
+      fallback: () => Sync.succeed(text("child pending")),
       setup: () =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() =>
@@ -532,13 +548,15 @@ it("revokes late uninterruptible pending child adoption without delaying readine
         }).pipe(Effect.uninterruptible),
     }),
   );
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        fallback: () => Result.succeed(child),
-        setup: () => Deferred.await(enclosing).pipe(Effect.map(() => text("ready"))),
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          fallback: () => Sync.succeed(child),
+          setup: () => Deferred.await(enclosing).pipe(Effect.map(() => text("ready"))),
+        }),
+      ),
     ),
   );
   await run(Deferred.await(childStarted));
@@ -558,10 +576,10 @@ it("never invokes factories for failed batches, invalid requests, or transient s
   let factories = 0;
   const definition = component(() => {
     factories += 1;
-    return Result.succeed({ setup: () => Effect.succeed([]) });
+    return Sync.succeed({ setup: () => Effect.succeed([]) });
   });
   const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
-  app.h(parent, [selected, text("sibling")]);
+  Effect.runSync(app.h(parent, [selected, text("sibling")]));
   await shows(parent, "sibling");
   await run(
     app.batch(
@@ -577,7 +595,7 @@ it("never invokes factories for failed batches, invalid requests, or transient s
       .pipe(Effect.result),
   );
   const duplicate = text("duplicate");
-  app.h(parent, [definition, duplicate, duplicate]);
+  Effect.runSync(app.h(parent, [definition, duplicate, duplicate]));
   expect((await failure()).operation).toBe("validation");
   expect(factories).toBe(0);
   expect(parent.textContent).toBe("sibling");
@@ -589,49 +607,51 @@ it("owns synchronous event folds, input bindings, subscriptions, and queued moun
   const handled = gate();
   const pendingSignals: WritableSignal<string>[] = [];
   let handlers = 0;
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        fallback: (ctx) =>
-          Result.gen(function* () {
-            const value = yield* ctx.signal({ initial: "initial" });
-            pendingSignals.push(value);
-            expect(yield* ctx.read(value)).toBe("initial");
-            const source = yield* ctx.source<string>();
-            const folded = yield* ctx.fold({
-              events: source.events,
-              initial: "fold",
-              reducer: ({ event }) => event,
-            });
-            const combined = yield* ctx.combine({ value, folded });
-            const label = yield* ctx.derive({
-              sources: { combined },
-              compute: ({ combined }) => `${combined.value}:${combined.folded}`,
-            });
-            const input = yield* ctx.he("input");
-            yield* ctx.bindValue({ element: input, signal: value });
-            const button = yield* ctx.he("button", { children: ["emit"] });
-            yield* ctx.subscribe(yield* ctx.events(button, "click"), () => source.emit("event"));
-            yield* ctx.subscribeStream(yield* ctx.toStream(source.events), () =>
-              Effect.sync(() => {
-                handlers += 1;
-              }).pipe(Effect.andThen(Deferred.succeed(handled, undefined))),
-            );
-            const streamFold = yield* ctx.foldStream({
-              stream: Stream.make("stream"),
-              initial: "waiting",
-              reducer: ({ event }) => event,
-            });
-            const target = yield* ctx.he("aside");
-            yield* ctx.h(target, text("queued"));
-            expect(target.textContent).toBe("");
-            return yield* ctx.he("section", {
-              children: [input, button, label, streamFold, target],
-            });
-          }),
-        setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          fallback: (ctx) =>
+            Sync.gen(function* () {
+              const value = yield* ctx.signal({ initial: "initial" });
+              pendingSignals.push(value);
+              expect(yield* ctx.read(value)).toBe("initial");
+              const source = yield* ctx.source<string>();
+              const folded = yield* ctx.fold({
+                events: source.events,
+                initial: "fold",
+                reducer: ({ event }) => event,
+              });
+              const combined = yield* ctx.combine({ value, folded });
+              const label = yield* ctx.derive({
+                sources: { combined },
+                compute: ({ combined }) => `${combined.value}:${combined.folded}`,
+              });
+              const input = yield* ctx.he("input");
+              yield* ctx.bindValue({ element: input, signal: value });
+              const button = yield* ctx.he("button", { children: ["emit"] });
+              yield* ctx.subscribe(yield* ctx.events(button, "click"), () => source.emit("event"));
+              yield* ctx.subscribeStream(yield* ctx.toStream(source.events), () =>
+                Effect.sync(() => {
+                  handlers += 1;
+                }).pipe(Effect.andThen(Deferred.succeed(handled, undefined))),
+              );
+              const streamFold = yield* ctx.foldStream({
+                stream: Stream.make("stream"),
+                initial: "waiting",
+                reducer: ({ event }) => event,
+              });
+              const target = yield* ctx.he("aside");
+              yield* ctx.h(target, text("queued"));
+              expect(nativeNode(target).textContent).toBe("");
+              return yield* ctx.he("section", {
+                children: [input, button, label, streamFold, target],
+              });
+            }),
+          setup: () => Deferred.await(release).pipe(Effect.map(() => text("ready"))),
+        }),
+      ),
     ),
   );
   await shows(parent, "emitinitial:foldstreamqueued");

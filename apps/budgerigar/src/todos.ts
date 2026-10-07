@@ -1,5 +1,6 @@
-import { Effect, Match, Option, Result } from "effect";
+import { Effect, Match, Option } from "effect";
 import { component, keyed, row } from "./framework";
+import * as Sync from "./sync-public";
 
 interface Todo {
   readonly id: string;
@@ -8,13 +9,13 @@ interface Todo {
 }
 
 const Empty = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he }) => he("p", { children: ["No todos yet. Add one above."] }),
   }),
 );
 
 export const Todos = component((context) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     let nextId = 0;
     const items = yield* context.signal<ReadonlyArray<Todo>>({ initial: [] });
     const newText = yield* context.signal({ initial: "" });
@@ -28,7 +29,7 @@ export const Todos = component((context) =>
         ),
     });
     const TodoRow = row<Todo>()(({ context, inputs }) =>
-      Result.gen(function* () {
+      Sync.gen(function* () {
         const initial = yield* context.read(inputs.item);
         const draft = yield* context.signal({ initial: initial.text });
         const position = yield* context.derive({

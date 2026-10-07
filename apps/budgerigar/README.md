@@ -6,32 +6,42 @@ Effect 4. Run `pnpm dev:budgerigar` from the repository root, or `pnpm --filter
 
 `component(factory)` defines an inert, reusable description. Each committed
 occurrence invokes its synchronous factory once. The factory returns
-`Result.succeed({ setup, fallback? })`, or composes typed helpers with `Result.gen`.
+`Sync.succeed({ setup, fallback? })`, or composes typed helpers with `Sync.gen`.
 Factory closures, signals, and scopes are independent across mounts. Construction,
 invalid requests, aborted batches, and coalesced-away selections invoke no factories.
 Stable selected definitions preserve factory state, pending DOM, and outstanding setup.
 
-Factory and fallback use `SynchronousContext`: fallible helpers return typed Results.
-Setup and the application use Effect helpers, which stay lazy until evaluated.
-Setup can suspend and runs once, after the commit, unless the occurrence has retired.
-Both fallback and setup return a native node, component, `Signal<Option<Component>>`,
-or a readonly mixed array of those items. `[]` is empty output. Strings and text
-signals remain children of `he`; nested root arrays are unsupported.
+Factory and fallback use `SynchronousContext`: fallible helpers return typed
+Sync computations. Setup and the application use Effect helpers, which stay
+lazy until evaluated. Setup can suspend and runs once, after the commit, unless
+the occurrence has retired. Both fallback and setup return an opaque element
+output, component, `Signal<Option<Component>>`, or a readonly mixed array of
+those items. `[]` is empty output. Strings and text signals remain children of
+`he`; nested root arrays are unsupported.
 
-Import `Result` alongside `Effect` for the examples below.
+Import `Sync` from the framework alongside `Effect` for the examples below.
 
 The context provides:
 
-- `he(tag, options?)` to return an Effect that constructs a detached HTML element.
-  Validation failures use the typed `ConstructionError` channel. Options
-  contain optional-value `attrs`, writable native `props`, and ordered `children`
-  consisting of strings, nodes, signals of strings, component definitions, or
-  signals of `Option<Component>`. Attribute and property entries can themselves
-  be signals. Attributes precede children, and properties are assigned last.
-  Strings become literal text nodes.
-- `h(parent, content)` to enqueue replacement of all children and return
-  immediately. Content is a node, component, signal of `Option<Component>`, or
+- `he(tag, options?)` to return an Effect that constructs a detached HTML
+  element and returns `ElementOutput<ElementType, R>`. Deferred child
+  requirements stay on the handle; constructing it does not consume their
+  services. Validation failures use the typed `ConstructionError` channel.
+  Options contain optional-value `attrs`, writable native `props`, and ordered
+  `children` consisting of strings, element outputs, signals of strings,
+  component definitions, or signals of `Option<Component>`. Attribute and
+  property entries can themselves be signals. Attributes precede children, and
+  properties are assigned last. Strings become literal text nodes.
+- `h(parent, content)` to lazily enqueue replacement of all children. Yield it in
+  Effect or Sync composition; it returns after enqueueing without awaiting setup.
+  Content is an element output, component, signal of `Option<Component>`, or
   readonly mixed array; `[]` clears the target after cleanup.
+- `nativeNode(output)` for typed native DOM access, such as focus and measurement.
+  Exported nodes are not mountable output. `importNative(node)` lazily checks a
+  fresh detached native tree and returns a closed output handle. Import rejects
+  framework nodes, including exported elements, regions, consumed nodes, and
+  wrappers containing them. Adoption checks the imported tree again for mutation.
+  Native application mount targets remain supported.
 - `addSyncFinalizer(callback)` to register synchronous DOM cleanup. Callbacks run
   in reverse registration order, descendants before owners, while outgoing DOM is
   still attached. Callbacks return `undefined` and cannot await work.
@@ -47,13 +57,13 @@ The context provides:
 
 ```ts
 const Child = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he }) => he("p", { children: ["Hello"] }),
   }),
 );
 
 const Parent = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he }) =>
       Effect.gen(function* () {
         return yield* he("main", {
@@ -64,19 +74,20 @@ const Parent = component(() =>
 );
 ```
 
-Effect-based `he` is lazy; synchronous `he` constructs immediately. Component setup is
-deferred until the constructed tree is adopted. Each occurrence
-occupies an independent region between comment anchors, without visible wrappers.
-Children can finish in any order while retaining their positions. Their completion
-is independent of their enclosing setup. Properties that depend on component
-children, such as a select's `value`, are assigned before those children mount and
-are not replayed later.
+Both Effect-based and synchronous `he` are lazy and construct when executed.
+Component setup is deferred until the constructed tree is adopted. Each
+occurrence occupies an independent region between comment anchors, without
+visible wrappers. Children can finish in any order while retaining their
+positions. Their completion is independent of their enclosing setup. Properties
+that depend on component children, such as a select's `value`, are assigned
+before those children mount and are not replayed later.
 
-Acquire an application context with `const app = yield* mounting({ scope, onError })`,
-then destructure `const { h } = app` and call `h(root, Parent)`. The context provides
-the same construction, scope, fork, synchronous-finalizer, and reactive helpers as
-a component context. Keep the application scope alive; closing it awaits disposal.
-`bootstrap` does this for the welcome page and requires the existing `#app` root.
+Acquire an application context with `const app = yield* mounting({ scope,
+onError })`, then destructure `const { h } = app` and execute `yield* h(root,
+Parent)`. The context provides the same construction, scope, fork,
+synchronous-finalizer, and reactive helpers as a component context. Keep the
+application scope alive; closing it awaits disposal. `bootstrap` does this for
+the welcome page and requires the existing `#app` root.
 
 Requests for a parent execute in order: validate, deactivate the current
 installation, run synchronous finalizers while its DOM is attached, remove it,
@@ -141,7 +152,7 @@ helpers:
 
 ```ts
 const Label = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ signal, derive, he }) =>
       Effect.gen(function* () {
         const count = yield* signal({ initial: 0 });
@@ -226,7 +237,7 @@ accepted for a native property whose domain includes it.
 
 ```ts
 const Input = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he, signal, derive, bindValue }) =>
       Effect.gen(function* () {
         const text = yield* signal({ initial: "" });
@@ -317,13 +328,13 @@ is empty. Observers see that pending view; successful setup later replaces it wi
 its output. This makes the transition to pending content visually atomic, while
 setup completion remains asynchronous.
 
-A factory can return an optional fallback. It runs synchronously under a separate
-pending-view owner and returns a Result. Before activating the selected component,
-the commit installs all signal changes from the transaction. Its fallback therefore
-renders those new values immediately. Child factories and fallbacks mount
-recursively in that same commit; their setups and owned asynchronous work start
-afterward. Bare values, Effects, and Promises are invalid factory or fallback
-returns, including for infallible callbacks.
+A factory can return an optional fallback. It runs synchronously under a
+separate pending-view owner and returns a Sync computation. Before activating
+the selected component, the commit installs all signal changes from the
+transaction. Its fallback therefore renders those new values immediately. Child
+factories and fallbacks mount recursively in that same commit; their setups and
+owned asynchronous work start afterward. Bare values, Effects, and Promises are
+invalid factory or fallback returns, including for infallible callbacks.
 
 Factory and setup share occurrence ownership. Their signals and work survive
 fallback replacement. Fallback-local resources belong to a descendant lifetime:
@@ -331,10 +342,11 @@ its children can consume them, but enclosing setup and ready bindings cannot.
 Passing a reference through a closure does not bypass lifetime validation.
 
 ```ts
-import { Effect, Result } from "effect";
+import { Effect } from "effect";
+import { Sync } from "./framework";
 
 const Page = component(({ signal }) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     const progress = yield* signal({ initial: "Loading…" });
     return {
       fallback: ({ he }) => he("p", { children: [progress] }),
@@ -351,19 +363,19 @@ const Page = component(({ signal }) =>
 
 Synchronous contexts expose `signal`, `derive`, `combine`, `he`, queued `h`,
 `source`, `events`, `fold`, `toStream`, `subscribe`, `subscribeStream`, `foldStream`,
-`bindValue`, `fork`, and `addSyncFinalizer` as Result helpers. `read(signal)` validates
+`bindValue`, `fork`, and `addSyncFinalizer` as lazy Sync helpers. `read(signal)` validates
 ancestor access and returns its committed value. `scope` remains a plain scope.
 The same signal object retains Effect-based `get`, `set`, `update`, and `changes`.
 `fork` reports registration failure synchronously; eventual background failure
 uses the application reporter. Stream consumers, event handlers, and queued mounts
 never run user work inline during commit.
 
-`batch(() => Result.gen(...))` accepts a lazy thunk and rejects entry during commit
-before invoking it. A failed Result aborts staged signal writes and emissions.
+`batch(() => Sync.gen(...))` accepts a lazy thunk and rejects entry during commit
+before invoking it. A failed Sync computation aborts staged signal writes and emissions.
 Signal writes, even manually run Effect methods, cannot reenter a commit. Allocate
 new signals with initial values during construction and use `fork` for later work.
-`Result.gen` short-circuits without rolling back earlier registrations; lifecycle
-failure retires those resources. Expected Result failures retain typed Effect
+`Sync.gen` short-circuits without rolling back earlier registrations; lifecycle
+failure retires those resources. Expected Sync failures retain typed Effect
 failures; throws retain defect causes.
 
 Successful setup validates and binds its candidate first, then synchronously
@@ -379,14 +391,14 @@ factory or setup using a named options object:
 ```ts
 const child = (options: { label: Signal<string> }) =>
   component(() =>
-    Result.succeed({
+    Sync.succeed({
       fallback: ({ he }) => he("p", { children: [options.label] }),
       setup: ({ he }) => he("article", { children: [options.label] }),
     }),
   );
 
 const Parent = component(({ signal }) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     const label = yield* signal({ initial: "Parent label" });
     const stableChild = child({ label });
     return { setup: () => Effect.succeed(stableChild) };
@@ -402,14 +414,15 @@ restart is provided. The home page's gated loading demo shows parent title
 updates and shared progress while awaiting a button, without depending on a
 live network.
 
-Use `yield* addSyncFinalizer(() => { ... })` in setup for DOM-dependent work such
-as checking `panel.contains(document.activeElement)` and focusing a surviving
-trigger before the panel detaches. Reactive handles owned by the outgoing
-occurrence are already inactive during this callback. Keep asynchronous work in
-ordinary scope finalizers; those see detached outgoing nodes. Old resource cleanup
-and new resource acquisition may overlap, so shared resources need ownership rules
-that support overlapping lifetimes. Avoid restoring focus in delayed cleanup,
-which could override a newer user interaction.
+Use `yield* addSyncFinalizer(() => { ... })` in setup for DOM-dependent work
+such as checking `nativeNode(panel).contains(document.activeElement)` and
+focusing a surviving trigger before the panel detaches. Reactive handles owned
+by the outgoing occurrence are already inactive during this callback. Keep
+asynchronous work in ordinary scope finalizers; those see detached outgoing
+nodes. Old resource cleanup and new resource acquisition may overlap, so shared
+resources need ownership rules that support overlapping lifetimes. Avoid
+restoring focus in delayed cleanup, which could override a newer user
+interaction.
 
 Synchronous finalizer exceptions report as `cleanup` failures and do not stop
 removal, other finalizers, or fallback insertion. Factory failures report as
@@ -464,7 +477,7 @@ const program = Effect.gen(function* () {
       }),
   });
   const { h } = app;
-  h(root, selected);
+  yield* h(root, selected);
   yield* access.set(Option.some(true)); // Commits the request, not setup completion.
   yield* Effect.never; // Keep the application lifetime open.
 }).pipe(Effect.scoped);
@@ -479,7 +492,7 @@ in mounts, setup, and fallback output, including mixed arrays and nested lists.
 
 ```ts
 const TodoRow = row<Todo>()(({ context, inputs }) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     const label = yield* context.derive({
       sources: { item: inputs.item, index: inputs.index },
       compute: ({ item, index }) => `${index + 1}. ${item.text}`,
@@ -495,7 +508,7 @@ const element = yield * he("ol", { children: [list] });
 The only row constructor signature is `row<Todo>()(factory)`. It preserves
 inferred factory, setup, and fallback error types while specifying the item
 type. Import `keyed` and `row` from the framework with the existing
-Effect/Result helpers.
+Effect/Sync helpers.
 
 Each row receives a stable key, a read-only item signal, and a read-only zero-based
 index signal. Retained row inputs and parent dependencies update in one source
@@ -525,3 +538,29 @@ Row actions should update parent state by key. Compose empty views through the
 existing selection helpers. The home page's todo example demonstrates add, save,
 completion, deletion, and Move up/Move down buttons, with unsaved row-local drafts
 preserved across reordering.
+
+## Service environments
+
+Use ordinary Effect service tokens with namespaced keys. Components infer services
+from factory, fallback, setup, returned descriptions, and registered work.
+`Component<R>` records unmet identifier types; `Component` defaults to no unmet
+requirements. `provideContext({ key, value, child })` accepts a component description
+and supplies an existing value to its descendant occurrences without a DOM wrapper.
+Nearest providers win, and bindings stay fixed for each occurrence. Publish changing
+values through signals rather than replacing a binding.
+
+Factory and fallback read tokens through `yield* Sync.service(Token)`. Setup reads
+ordinary Effect tokens directly. `Sync.fromResult` explicitly lifts an existing
+Result, and `Sync.suspend(() => Sync.fromResult(validate()))` defers validation.
+Sync generators cannot yield Effects, Promises, Results, or tokens directly.
+
+Local `Effect.provideService` and `Sync.provideService` affect computation reads and
+captured deferred work. They do not supply descendant occurrences mounted by `h`.
+Use an explicit subtree provider for those descendants. Application `h` accepts
+closed content, and the application's subtree starts without mounting-caller
+services. Deferred registration captures its environment when executed; owned work
+receives its owning Scope and a fresh transaction rather than a staging transaction.
+
+The home page's account example provides a read-only user signal through Settings
+to Account. Sign in and Sign out update the root-owned writable signal and derived
+account text without rerunning consumer setup. See [account.ts](src/account.ts).

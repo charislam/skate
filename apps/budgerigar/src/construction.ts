@@ -1,9 +1,18 @@
 import { Effect, Result, Match, Option, Schema } from "effect";
 import { isComponent, type Component } from "./component";
 import { isKeyedList, planKeyed, type KeyedList } from "./keyed";
+import {
+  elementOutput,
+  isElementOutput,
+  managedNodes,
+  nativeNode,
+  type ElementOutput,
+} from "./output";
 import { isSignal, type Signal, type ReactiveRuntime, ReactiveError } from "./reactive";
 import { readSync } from "./reactive/signal";
 import { reactiveTextSync as reactiveText } from "./reactive/text";
+import type { OutputRequirements } from "./requirements";
+import { fromResultLazy, type Sync } from "./sync";
 import { lazy } from "./synchronous";
 import {
   attributeNameValid,
@@ -17,8 +26,12 @@ import {
 } from "./reactive/dom";
 import { propertyValidatorSync, writePropertySync } from "./reactive/properties";
 
-export type MountItem = Component | Node | Signal<Option.Option<Component>> | KeyedList;
-export type Child = string | MountItem | Signal<string>;
+export type MountItem<R = never> =
+  | Component<R>
+  | ElementOutput<Node, R>
+  | Signal<Option.Option<Component<R>>>
+  | KeyedList<unknown, R>;
+export type Child<R = never> = string | MountItem<R> | Signal<string>;
 
 type Equal<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
@@ -49,16 +62,26 @@ export type ElementProperties<K extends keyof HTMLElementTagNameMap> = {
     | Signal<HTMLElementTagNameMap[K][P]>;
 };
 
-export interface ElementOptions<K extends keyof HTMLElementTagNameMap> {
+export interface ElementOptions<K extends keyof HTMLElementTagNameMap, R = never> {
   readonly attrs?: Readonly<Record<string, AttributeValue | Signal<AttributeValue>>>;
   readonly props?: ElementProperties<K>;
-  readonly children?: ReadonlyArray<Child>;
+  readonly children?: ReadonlyArray<Child<R>>;
 }
 
-export type SyncConstruct = <K extends keyof HTMLElementTagNameMap>(
+type InferredOptions<
+  K extends keyof HTMLElementTagNameMap,
+  C extends ReadonlyArray<unknown>,
+> = Omit<ElementOptions<K, unknown>, "children"> & {
+  readonly children?: C & (C extends ReadonlyArray<Child<unknown>> ? unknown : never);
+};
+
+export type SyncConstruct = <
+  K extends keyof HTMLElementTagNameMap,
+  const C extends ReadonlyArray<unknown> = readonly [],
+>(
   tag: K,
-  options?: ElementOptions<K>,
-) => Result.Result<HTMLElementTagNameMap[K], ConstructionError>;
+  options?: InferredOptions<K, C>,
+) => Sync<ElementOutput<HTMLElementTagNameMap[K], OutputRequirements<C>>, ConstructionError>;
 
 export interface ConstructionOwner {
   readonly active: boolean;
@@ -69,7 +92,7 @@ export interface ConstructionOwner {
 export interface Region {
   readonly start: Comment;
   readonly end: Comment;
-  readonly definition: Component | Signal<unknown> | KeyedList;
+  readonly definition: Component<unknown> | Signal<unknown> | KeyedList<unknown, unknown>;
   readonly issuer: ConstructionOwner;
   activated: boolean;
 }
@@ -84,6 +107,7 @@ export interface Tree {
 const anchors = new WeakMap<Node, Region>();
 const consumed = new WeakMap<Node, object>();
 const constructedRegions = new WeakMap<Node, ReadonlyArray<Region>>();
+const importedTrees = new WeakMap<Node, Tree>();
 
 export class ConstructionError extends Schema.TaggedError<ConstructionError>()(
   "ConstructionError",
@@ -107,7 +131,7 @@ export const validateSync = (
 export const isNode = (value: unknown): value is Node => value instanceof Node;
 
 export const makeRegion = (options: {
-  definition: Component | Signal<unknown> | KeyedList;
+  definition: Component<unknown> | Signal<unknown> | KeyedList<unknown, unknown>;
   issuer: ConstructionOwner;
 }): Region => {
   const region: Region = {
@@ -118,13 +142,18 @@ export const makeRegion = (options: {
   };
   anchors.set(region.start, region);
   anchors.set(region.end, region);
+  managedNodes.add(region.start);
+  managedNodes.add(region.end);
   return region;
 };
 
-const isSelection = (value: unknown): value is Option.Option<Component> =>
+const isSelection = (value: unknown): value is Option.Option<Component<unknown>> =>
   Option.isOption(value) && (Option.isNone(value) || isComponent(value.value));
 
-export const keyedRegionSync = (options: { description: KeyedList; issuer: ConstructionOwner }) =>
+export const keyedRegionSync = (options: {
+  description: KeyedList<unknown, unknown>;
+  issuer: ConstructionOwner;
+}) =>
   Result.gen(function* () {
     const runtime = yield* Option.match(options.issuer.reactiveRuntime, {
       onNone: () =>
@@ -153,7 +182,7 @@ export const keyedRegionSync = (options: { description: KeyedList; issuer: Const
 
 export const validateSelectionSync = (
   value: unknown,
-): Result.Result<Option.Option<Component>, ReactiveError> =>
+): Result.Result<Option.Option<Component<unknown>>, ReactiveError> =>
   Match.value(value).pipe(
     Match.when(isSelection, (selection) => Result.succeed(selection)),
     Match.orElse(() =>
@@ -212,6 +241,7 @@ export const inspectSync = (options: {
       Result.gen(function* () {
         yield* validateSync(!seen.has(node), "duplicate region anchor");
         yield* checkReservation(node);
+
         yield* validateReactiveNodeSync({ node, runtime: options.owner.reactiveRuntime }).pipe(
           Result.mapError((error) => new ConstructionError({ message: error.message })),
         );
@@ -236,6 +266,11 @@ export const inspectSync = (options: {
         );
 
         yield* validateSync(!root || node.parentNode === null, "roots must be detached");
+        yield* Option.match(Option.fromUndefinedOr(importedTrees.get(node)), {
+          onNone: () => Result.succeed(undefined),
+          onSome: checkStructureSync,
+        });
+
         yield* validateSync(
           !root || !anchors.has(node),
           "region anchors cannot be explicit content",
@@ -317,7 +352,10 @@ export const inspectSync = (options: {
   });
 
 export const reserve = (tree: Tree, token: object): void => {
-  for (const node of tree.nodes) consumed.set(node, token);
+  for (const node of tree.nodes) {
+    consumed.set(node, token);
+    managedNodes.add(node);
+  }
 };
 
 export const checkStructureSync = (tree: Tree) =>
@@ -341,23 +379,39 @@ const tags = new Set(
 const constructElement = <K extends keyof HTMLElementTagNameMap>(
   owner: ConstructionOwner,
   tag: K,
-  options: ElementOptions<K>,
+  options: Omit<ElementOptions<K, unknown>, "children"> & {
+    readonly children?: ReadonlyArray<unknown>;
+  },
 ) =>
   Result.gen(function* () {
     yield* validateSync(owner.active, "owner has been disposed");
     yield* validateSync(tags.has(tag), "unsupported HTML tag");
 
-    const children = [...(options.children ?? [])];
-    for (const child of children) {
+    const content = [...(options.children ?? [])];
+    for (const child of content) {
       yield* validateSync(
         typeof child === "string" ||
-          isNode(child) ||
+          isElementOutput(child) ||
           isComponent(child) ||
           isSignal(child) ||
           isKeyedList(child),
         "unsupported child",
       );
     }
+    // The preceding validation establishes this private erased union.
+    const validContent = content as ReadonlyArray<
+      | string
+      | ElementOutput<Node, unknown>
+      | Component<unknown>
+      | Signal<unknown>
+      | KeyedList<unknown, unknown>
+    >;
+    const children = validContent.map((child) =>
+      Match.value(child).pipe(
+        Match.when(isElementOutput, nativeNode),
+        Match.orElse((value) => value),
+      ),
+    );
 
     yield* inspectSync({
       roots: children.filter(isNode),
@@ -366,6 +420,7 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
     });
 
     const element = document.createElement(tag);
+    managedNodes.add(element);
     markElementOwner({ element, runtime: owner.reactiveRuntime });
 
     const constructionFailure = (error: { message: string }) =>
@@ -466,6 +521,8 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
     for (const write of propertyWrites) yield* write().pipe(Result.mapError(constructionFailure));
     propertyWrites.length = 0;
 
+    for (const node of element.childNodes) managedNodes.add(node);
+
     return element;
   });
 
@@ -473,16 +530,62 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
 export const constructSync =
   (owner: ConstructionOwner): SyncConstruct =>
   (tag, options = {}) =>
-    constructElement(owner, tag, options);
+    fromResultLazy(() => constructElement(owner, tag, options).pipe(Result.map(elementOutput)));
 
-export type Construct = <K extends keyof HTMLElementTagNameMap>(
+export type Construct = <
+  K extends keyof HTMLElementTagNameMap,
+  const C extends ReadonlyArray<unknown> = readonly [],
+>(
   tag: K,
-  options?: ElementOptions<K>,
-) => Effect.Effect<HTMLElementTagNameMap[K], ConstructionError>;
+  options?: InferredOptions<K, C>,
+) => Effect.Effect<
+  ElementOutput<HTMLElementTagNameMap[K], OutputRequirements<C>>,
+  ConstructionError
+>;
 export const construct =
   (owner: ConstructionOwner): Construct =>
   (tag, options = {}) =>
-    lazy(() => constructSync(owner)(tag, options));
+    lazy(() => constructElement(owner, tag, options).pipe(Result.map(elementOutput)));
+
+const importNodeSync = <N extends Node>(options: {
+  readonly node: N;
+  readonly owner: ConstructionOwner;
+}) =>
+  Result.gen(function* () {
+    yield* validateSync(options.owner.active, "owner has been disposed");
+    yield* validateSync(isNode(options.node), "native import requires a Node");
+    const tree = yield* inspectSync({ roots: [options.node], owner: options.owner });
+    for (const node of tree.nodes) {
+      yield* validateSync(!managedNodes.has(node), "native import requires a fresh unmanaged tree");
+    }
+    for (const node of tree.nodes) {
+      managedNodes.add(node);
+      Match.value(node).pipe(
+        Match.when(
+          (node): node is HTMLElement => node instanceof HTMLElement,
+          (element) => markElementOwner({ element, runtime: options.owner.reactiveRuntime }),
+        ),
+        Match.orElse(() => {}),
+      );
+    }
+    importedTrees.set(options.node, tree);
+    return elementOutput(options.node);
+  });
+
+export type ImportNative = <N extends Node>(
+  node: N,
+) => Effect.Effect<ElementOutput<N>, ConstructionError>;
+export type SyncImportNative = <N extends Node>(
+  node: N,
+) => Sync<ElementOutput<N>, ConstructionError>;
+export const importNative =
+  (owner: ConstructionOwner): ImportNative =>
+  (node) =>
+    lazy(() => importNodeSync({ node, owner }));
+export const importNativeSync =
+  (owner: ConstructionOwner): SyncImportNative =>
+  (node) =>
+    fromResultLazy(() => importNodeSync({ node, owner }));
 export const validate = (valid: boolean, message: string) =>
   lazy(() => validateSync(valid, message));
 export const validateSelection = (value: unknown) => lazy(() => validateSelectionSync(value));
