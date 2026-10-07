@@ -45,7 +45,7 @@ interface Hooks<O> {
     lifetime: O;
     region: Region;
     definition: Component<unknown>;
-    onKeyedRowOccurrenceFailure: () => void;
+    onOccurrenceFailure: () => void;
   }) => Effect.Effect<unknown>;
 }
 
@@ -205,7 +205,7 @@ export const activateKeyed = <O extends ListOwner>(options: {
           lifetime: owner,
           region: record.region,
           definition,
-          onKeyedRowOccurrenceFailure: () => {
+          onOccurrenceFailure: () => {
             record.entry = currentPlan().byKey.get(entry.key) ?? record.entry;
             record.owner = Option.none();
             hooks.retire(owner);

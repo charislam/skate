@@ -28,6 +28,7 @@ export interface DomSink {
 const SignalTypeId = "~budgerigar/Signal";
 const SignalState = Symbol("Budgerigar/SignalState");
 interface SignalData<A> {
+  readonly writableRoot: SignalCommit;
   readonly participant: SignalCommit;
   readonly committed: () => A;
   readonly candidate: (transaction: Option.Option<Transaction>) => Result.Result<A, ReactiveError>;
@@ -40,6 +41,22 @@ export interface Signal<A> {
   readonly changes: Effect.Effect<Stream.Stream<A>, ReactiveError>;
   readonly [SignalState]: SignalData<A>;
 }
+
+/** Reads in child fibers see committed values, just like ordinary source signals. */
+export const readTransaction = (runtime: ReactiveRuntime) =>
+  Effect.gen(function* () {
+    const inherited = yield* CurrentTransaction;
+    const synchronous = Option.fromUndefinedOr(synchronousTransactions.get(runtime.coordinator));
+    const transaction = Option.orElse(inherited, () => synchronous);
+    const id = yield* Effect.fiberId;
+    return Option.filter(
+      transaction,
+      (tx) =>
+        tx.phase._tag === "Staging" &&
+        (tx.fiberId === id || Option.contains(synchronous, tx)) &&
+        tx.coordinator === runtime.coordinator,
+    );
+  });
 
 export const signalData = <A>(signal: Signal<A>): SignalData<A> => signal[SignalState];
 
@@ -251,6 +268,10 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
                       transaction.phase = TransactionPhase.Staging({ revision: revision + 1 });
                       staged.set(transaction, { value: change.proposed });
                       transaction.touched.add(participant);
+                      for (const check of options.runtime.coordinator.stagedChecks.get(
+                        participant,
+                      ) ?? [])
+                        check(transaction);
                     }),
                   ),
                   Match.orElse(() =>
@@ -269,6 +290,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
   return {
     [SignalTypeId]: SignalTypeId,
     [SignalState]: {
+      writableRoot: participant,
       participant,
       committed: () => value,
       candidate,
@@ -281,19 +303,7 @@ export const makeCell = <A>(options: CellOptions<A>): WritableSignal<A> => {
     },
     get: Effect.gen(function* () {
       yield* requireValid(options.runtime.lifetime.active(), "Signal runtime has been disposed");
-      const inherited = yield* CurrentTransaction;
-      const synchronous = Option.fromUndefinedOr(
-        synchronousTransactions.get(options.runtime.coordinator),
-      );
-      const transaction = Option.orElse(inherited, () => synchronous);
-      const id = yield* Effect.fiberId;
-      const visible = Option.filter(
-        transaction,
-        (tx) =>
-          tx.phase._tag === "Staging" &&
-          (tx.fiberId === id || Option.contains(synchronous, tx)) &&
-          tx.coordinator === options.runtime.coordinator,
-      );
+      const visible = yield* readTransaction(options.runtime);
       const work = lazy(() => candidate(visible));
       return yield* Option.match(visible, {
         onNone: () => work,
@@ -392,3 +402,23 @@ export const derive = <S extends Sources, A>(options: {
   readonly compute: (values: Values<S>) => A;
   readonly equals?: Equality<A>;
 }) => lazy(() => deriveSync(options));
+
+export const isWritableSignal = <A>(signal: Signal<A>): signal is WritableSignal<A> =>
+  "set" in signal && "update" in signal;
+
+/** Internal capability-preserving view; signal branding stays private. */
+export const signalView = <A>(options: {
+  signal: Signal<A>;
+  candidate: SignalData<A>["candidate"];
+  writableRoot: SignalCommit;
+  get: Effect.Effect<A, ReactiveError>;
+}): Signal<A> => ({
+  ...options.signal,
+  [SignalState]: {
+    ...signalData(options.signal),
+    candidate: options.candidate,
+    writableRoot: options.writableRoot,
+  },
+  get: options.get,
+  changes: options.get.pipe(Effect.andThen(options.signal.changes)),
+});

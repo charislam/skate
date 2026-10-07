@@ -1,4 +1,5 @@
 import { Effect, Result, Match, Option, Schema } from "effect";
+import { isCases, planBranch, type Cases } from "./branch";
 import { isComponent, type Component } from "./component";
 import { isKeyedList, planKeyed, type KeyedList } from "./keyed";
 import {
@@ -30,7 +31,8 @@ export type MountItem<R = never> =
   | Component<R>
   | ElementOutput<Node, R>
   | Signal<Option.Option<Component<R>>>
-  | KeyedList<unknown, R>;
+  | KeyedList<unknown, R>
+  | Cases<R>;
 export type Child<R = never> = string | MountItem<R> | Signal<string>;
 
 type Equal<X, Y> =
@@ -92,7 +94,11 @@ export interface ConstructionOwner {
 export interface Region {
   readonly start: Comment;
   readonly end: Comment;
-  readonly definition: Component<unknown> | Signal<unknown> | KeyedList<unknown, unknown>;
+  readonly definition:
+    | Component<unknown>
+    | Signal<unknown>
+    | KeyedList<unknown, unknown>
+    | Cases<unknown>;
   readonly issuer: ConstructionOwner;
   activated: boolean;
 }
@@ -131,7 +137,7 @@ export const validateSync = (
 export const isNode = (value: unknown): value is Node => value instanceof Node;
 
 export const makeRegion = (options: {
-  definition: Component<unknown> | Signal<unknown> | KeyedList<unknown, unknown>;
+  definition: Component<unknown> | Signal<unknown> | KeyedList<unknown, unknown> | Cases<unknown>;
   issuer: ConstructionOwner;
 }): Region => {
   const region: Region = {
@@ -178,6 +184,25 @@ export const keyedRegionSync = (options: {
       write: () => Result.succeed(undefined),
     }).pipe(Result.mapError((error) => new ConstructionError({ message: error.message })));
     return region;
+  });
+
+export const casesRegionSync = (options: {
+  description: Cases<unknown>;
+  issuer: ConstructionOwner;
+}) =>
+  Result.gen(function* () {
+    const runtime = yield* Option.match(options.issuer.reactiveRuntime, {
+      onNone: () =>
+        Result.fail(new ConstructionError({ message: "Cases require a live issuing context" })),
+      onSome: Result.succeed,
+    });
+    const value = yield* readSync({ runtime, signal: options.description.state }).pipe(
+      Result.mapError((error) => new ConstructionError({ message: error.message })),
+    );
+    yield* planBranch({ description: options.description, value }).pipe(
+      Result.mapError((error) => new ConstructionError({ message: error.message })),
+    );
+    return makeRegion({ definition: options.description, issuer: options.issuer });
   });
 
 export const validateSelectionSync = (
@@ -394,7 +419,8 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
           isElementOutput(child) ||
           isComponent(child) ||
           isSignal(child) ||
-          isKeyedList(child),
+          isKeyedList(child) ||
+          isCases(child),
         "unsupported child",
       );
     }
@@ -405,6 +431,7 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
       | Component<unknown>
       | Signal<unknown>
       | KeyedList<unknown, unknown>
+      | Cases<unknown>
     >;
     const children = validContent.map((child) =>
       Match.value(child).pipe(
@@ -466,6 +493,14 @@ const constructElement = <K extends keyof HTMLElementTagNameMap>(
           (v) => Result.succeed(element.append(document.createTextNode(v))),
         ),
         Match.when(isNode, (node) => Result.succeed(element.append(node))),
+        Match.when(isCases, (description) =>
+          casesRegionSync({ description, issuer: owner }).pipe(
+            Result.map((region) => {
+              element.append(region.start, region.end);
+              regions.push(region);
+            }),
+          ),
+        ),
         Match.when(isKeyedList, (description) =>
           keyedRegionSync({ description, issuer: owner }).pipe(
             Result.map((region) => {
