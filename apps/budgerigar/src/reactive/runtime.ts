@@ -86,6 +86,7 @@ export interface SignalCommit {
 /** Shared signal membership; commits run synchronously without yielding. */
 export interface CommitCoordinator {
   readonly signals: Set<SignalCommit>;
+  readonly stagedChecks: Map<SignalCommit, Set<(transaction: Transaction) => void>>;
   committing: boolean;
 }
 
@@ -147,7 +148,11 @@ export const makeReactiveRuntime = Effect.fn("Budgerigar.makeReactiveRuntime")(f
 }) {
   const eventQueue = yield* Queue.unbounded<EventWork>();
   const coordinator = Option.match(options.parent, {
-    onNone: (): CommitCoordinator => ({ signals: new Set(), committing: false }),
+    onNone: (): CommitCoordinator => ({
+      signals: new Set(),
+      stagedChecks: new Map(),
+      committing: false,
+    }),
     onSome: (parent) => parent.coordinator,
   });
   const registerWork: ComponentLifetime["registerWork"] =
@@ -226,6 +231,12 @@ export const accessible = (options: { consumer: ComponentLifetime; producer: Com
  * owning-fiber check so manually run signal Effects participate in the batch.
  */
 export const synchronousTransactions = new WeakMap<CommitCoordinator, Transaction>();
+
+/** Private navigation integration: invoked after preparation, immediately before installation. */
+export const navigationWrites = new WeakMap<
+  Transaction,
+  () => Result.Result<void, ReactiveError>
+>();
 
 export const transactionFor = Effect.fn("Budgerigar.transactionFor")(function* (
   runtime: ReactiveRuntime,
@@ -343,6 +354,10 @@ const commit = (transaction: Transaction): Effect.Effect<void, ReactiveError> =>
                 participant.hasChange(transaction),
             );
             for (const participant of changed) yield* participant.validateDom(transaction);
+            yield* Option.match(Option.fromUndefinedOr(navigationWrites.get(transaction)), {
+              onNone: () => Effect.void,
+              onSome: (write) => Effect.fromResult(write()),
+            });
             for (const participant of changed) participant.apply(transaction);
             for (const participant of changed)
               yield* Match.value(
@@ -403,7 +418,12 @@ const evaluateBatch = <A, E, R>(options: {
           options.runtime.lifetime.active(),
           "Reactive runtime was disposed during batch",
         );
-        yield* commit(transaction);
+        // A successful write may retire its own lens occurrence. The synchronous
+        // commit has no suspension point, so teardown must not cancel its caller.
+        yield* Effect.withFiber((fiber) => {
+          options.runtime.lifetime.batchFibers.delete(fiber);
+          return commit(transaction);
+        });
         return value;
       }).pipe(
         Effect.catchCause((cause) =>

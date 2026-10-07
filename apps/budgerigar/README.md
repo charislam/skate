@@ -623,3 +623,245 @@ until runtime shutdown.
 memory layer. Bootstrap merges it with the self-contained Auth demo layer; no backend
 or credentials are required. Tests use `authMock({ initial })` and `LocalStorageMemory`,
 which allocate fresh state per runtime.
+
+## Scoped tagged-union branches
+
+`branch<A>()(factory)` describes a reusable occurrence whose `inputs.state` is a
+live `WritableSignal<A>`. `branch<A, Signal<A>>()` describes a read-only consumer,
+which also works over writable sources. `cases({ state, branches })` requires
+exactly one correctly narrowed descriptor for every `_tag` in the source union.
+A writable consumer cannot mount over a read-only signal. Cases work in `he`
+children, `h`, setup/fallback output, and mixed root arrays; their deferred context
+and resource requirements remain inferred through all those boundaries.
+
+```ts
+import { Effect } from "effect";
+import { branch, cases, focus, Sync } from "./src/framework";
+
+type State =
+  | { readonly _tag: "Editing"; readonly documentId: string; readonly draft: string }
+  | { readonly _tag: "Closed" };
+type Editing = Extract<State, { _tag: "Editing" }>;
+
+const EditingBranch = branch<Editing>()(({ context, inputs }) =>
+  Sync.gen(function* () {
+    const draft = yield* focus({ context, source: inputs.state, key: "draft" });
+    const input = yield* context.he("input", { props: { type: "text" } });
+    yield* context.bindValue({ element: input, signal: draft });
+    return { setup: () => Effect.succeed(input) };
+  }),
+);
+const ClosedBranch = branch<Extract<State, { _tag: "Closed" }>>()(() =>
+  Sync.succeed({ setup: () => Effect.succeed([]) }),
+);
+const output = cases({
+  state,
+  branches: {
+    Editing: { branch: EditingBranch, key: (state) => state.documentId },
+    Closed: { branch: ClosedBranch },
+  },
+});
+```
+
+Descriptions are inert. Construction validates ownership and the initial identity;
+adoption validates the latest committed state. Each mount has independent local
+state. Occurrences retain their descriptor, tag, and optional string/finite-number
+key. Data changes within that identity update inputs in the source commit, preserving
+pending setup and fallback. Changing identity retires outgoing descendants immediately;
+incoming content shows its fallback or an empty region. Leaving and returning starts
+a fresh occurrence. Failed occurrences stay empty until identity changes or reentry.
+There is no inactive-page cache or implicit setup restart on parameter changes.
+
+Narrowed setters replace their variant in the authoritative source and cannot change
+its tag, including through malformed JavaScript calls. `focus({ context, source, key })`
+projects a property, preserving the source's write capability. Discriminant projection
+is excluded. `get`, `set`, and `update` run lifetime checks when their Effects execute.
+Nested setters use the latest staged parent, so sibling edits and parent/child writes
+compose in program order in one batch without subscriptions or extra commits.
+
+A setter that rekeys its own occurrence succeeds; subsequent access through that
+occurrence fails with `ReactiveError`. Staged departure/rekeying also invalidates old
+lenses for the rest of that batch, even if the candidate returns to the original
+identity. Catching that failure poisons the batch. A discarded batch restores prior
+validity; a successful batch whose final identity is unchanged retains its committed
+occurrence. Saved lenses cannot revive a retired occurrence after a later matching
+login/key. Existing conflict, fiber-ownership, disposal, and cleanup rules apply.
+
+## Typed URLs and navigation
+
+Define routes once to infer both the global `Destination` union and typed validated
+prefix alternatives. Definitions are pure; parsing acquires no user or project data.
+Parameters and query values use synchronous, service-free Schema codecs with string
+encodings. Asynchronous codecs and schema defects fail through URL diagnostics or
+`UrlBuildError` rather than being awaited. Custom encoders can fail even for typed
+values, so builders return `Result`.
+
+```ts
+import { Option, Schema } from "effect";
+import {
+  arrayQuery,
+  defaultQuery,
+  optionalQuery,
+  parameter,
+  route,
+  router,
+  type Destination,
+} from "./src/framework";
+
+const ProjectId = Schema.NumberFromString.pipe(
+  Schema.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  Schema.brand("ProjectId"),
+);
+const urls = router([
+  route({ tag: "Login", path: ["login"] }),
+  route({
+    tag: "Projects",
+    path: ["projects"],
+    children: [
+      route({ tag: "NewProject", path: ["new"] }),
+      route({
+        tag: "Project",
+        path: [parameter("id", ProjectId)],
+        children: [
+          route({
+            tag: "Settings",
+            path: ["settings"],
+            query: {
+              q: optionalQuery(Schema.String),
+              page: defaultQuery(Schema.NumberFromString, 1),
+              filter: arrayQuery(Schema.String),
+            },
+          }),
+        ],
+      }),
+    ],
+  }),
+]);
+type AppDestination = Destination<typeof urls.definitions>;
+const destination: AppDestination = {
+  _tag: "Settings",
+  params: { id: ProjectId.make(123) },
+  query: { q: Option.none(), page: 1, filter: [] },
+  fragment: Option.some("details"),
+};
+const href = urls.build(destination); // Result: /projects/123/settings#details
+const outcome = urls.parse("/projects/123/unknown-child");
+```
+
+Routes match in declaration order at each level. Structural ownership precedes
+schema decoding, so an invalid `:id` cannot fall through to another schema.
+Declare literals such as `new` before parameter siblings.
+`remaining("segments")` explicitly captures remaining decoded segments and must
+be terminal. Inherited parameter/query names and route tags must be unique;
+conflicting definitions are rejected.
+
+`parse` returns exhaustive `Matched`, `NotFound`, or `InvalidUrl` variants.
+Each keeps the original URL and a typed `ancestry` array of discriminated
+prefixes containing only validated values. `NotFound` keeps the remaining
+segments; `InvalidUrl` distinguishes the structurally matched route from
+validated ancestry and includes parameter/query location and schema
+diagnostics. `/projects/wrong-id` has a valid projects prefix without a
+fabricated branded ID. `/projects/123/unknown-child` has a validated project
+prefix; the application can acquire it before rendering the nested error.
+
+Paths are case-sensitive. Builders omit trailing slashes except at the root,
+absent optional queries, and declared defaults. Parsing an equivalent trailing
+slash does not rewrite history. Splitting precedes decoding: encoded slashes
+remain segment data, and interior empty segments remain meaningful. A terminal
+empty segment cannot be built canonically and returns a build error. Unknown
+query parameters are ignored; scalar repetition and missing required queries
+are invalid. `requiredQuery` declares required scalars; arrays accept ordered
+repeated values. Query order follows definitions, with normal URL encoding.
+Malformed percent encodings are structured failures. Builders verify the
+emitted URL still matches its own tag; destinations shadowed by an earlier
+declaration fail to build. Declared defaults are validated at definition time
+and omitted using their encoded equivalence. Optional fragments, including
+empty fragments, are URL data; they do not trigger framework scroll or focus
+behavior.
+
+Acquire `browserHistory(window)` in a `Layer.effect(History, ...)` resource. It
+owns one popstate listener per document and rejects competing document
+controllers. Adapters carry a stable transport identity, which decorators must
+preserve; only one navigator may claim that identity at a time.
+`memoryHistory({ initial })` is a scoped test adapter with entries, traversal,
+failure injection, and disposal. Observation acquires the initial location and
+subscription atomically. Push/replace never emit synthetic traversal events.
+
+`navigator({ context, router, state, history, transition, onError })` binds one
+FIFO controller to an authoritative writable application signal. Await
+`navigator.initial` before rendering admitted pages. `navigate(destination, {
+mode: "push" | "replace" })` accepts every valid destination, independently of
+the current branch. `dispatch(event)` queues application/session events through
+the same controller. A synchronous pure transition receives the latest state
+and a `Navigate`, `Location`, or `Application` event and returns `{ state,
+history }`. History intents are `Keep`, typed `Push`/`Replace`, or `ReplaceUrl`
+for restoring the original URL of an admitted structured failure.
+
+Application transitions own admission and redirects. For example, represent
+unresolved sessions explicitly; when discovery says anonymous, admit a private
+request to Login with an in-memory typed return target and a `Replace` intent.
+After login, readmit that target against the new session. The parser and
+browser adapter never decide authority or mount shells. Context provision
+supplies values; the application union establishes when a non-optional
+user/project exists. Use session identity for authenticated keys, project
+identity for project keys, and variant identity for tabs.
+
+Ordinary navigation to the current canonical URL, including query/fragment
+data, is a no-op. Explicit replacement and application events still run.
+Traversal reapplies admission without pushing; denied destinations replace the
+observed entry with the final redirect. An equivalent external URL remains
+unchanged unless the transition explicitly replaces it. Redirects replace even
+when the active destination is unchanged.
+
+Navigation validates captured versions, structural plans, and DOM sinks before
+the synchronous history operation, then installs prepared signal values without
+an await between history and installation. Preparation/history failure
+preserves prior state and content. This integration is internal, not a general
+external-effect transaction API. Lifecycle errors after commit use the usual
+owner reporting path and cannot roll history back. Unexpected post-history
+defects produce a reconciliation error. Traversal failures retain the last
+valid state and expose the observed URL, last committed location/state, and
+cause through `NavigationError`; URL and view may differ. Use an explicit
+replacement to reconcile. No automatic `history.go` retry occurs.
+
+`link({ context, router, navigator, destination, children, attrs, props })`
+builds an owner-bound real anchor. Builder failures use its construction error
+channel. Only eligible unmodified primary activation (including
+keyboard-generated clicks) is intercepted, with synchronous `preventDefault`
+before queued navigation. Modifiers, non-primary buttons, `defaultPrevented`,
+download, other targets, and external origins retain native behavior. Ordinary
+anchors receive no interception.
+
+Direct writable field edits do not synchronize history. Use the navigator for
+policy changes that must coordinate state and URL. Application code owns
+focus/scroll, obsolete-result checks for work above page ownership, and
+reconciliation policy. SSR/hydration, hash transport, loaders,
+caching/prefetching, blockers, retained outgoing content, automatic request
+restarts, and backend integration remain outside v1.
+
+The [routing demo](src/routing-demo/app.ts) is mounted by bootstrap alongside
+the earlier examples. It provides `Signal<User>` and `Signal<Project>` only
+inside authenticated and ready-project subtrees. Its
+[model](src/routing-demo/model.ts) and
+[transitions](src/routing-demo/transitions.ts) keep admission policy visible.
+Controls choose session discovery, sign-in, logout, expiry, new
+sessions/account switching, refresh, immediate/delayed/failed project
+acquisition, completion, rejection of the next history write, and explicit URL
+reconciliation. Browser Back/Forward and real links exercise the same
+controller. Authenticated/project counters demonstrate shell retention;
+overview edits and settings notes demonstrate writable nested projections. No
+login return target survives reload.
+
+In the demo, signing in again as the current account preserves its application
+ownership lifetime, acquired project, page state, and shell counters. Account
+identity is the mock user's name. The incoming session notification can have a
+new identifier; the application retains its existing ownership identifier for
+the same account. Switching accounts, logout, or expiry retires that lifetime.
+
+`focus({ context, source, key })` and `navigator({ context, ... })` allocate in
+the explicitly supplied context. A descendant context may consume an ancestor's
+source, but an ancestor or unrelated context cannot allocate against a
+descendant's source. Disposing the supplied context expires its projections and
+navigation work even when the source remains live. Signals retain their commit
+participant and authoritative write-root identity; they do not carry allocation
+runtime authority.

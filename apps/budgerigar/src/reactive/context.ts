@@ -13,6 +13,7 @@ import {
   type EventStream,
 } from "./events";
 import { bindValueSync } from "./input";
+import { reactiveOwner } from "./owner";
 import {
   synchronousTransactions,
   CurrentTransaction,
@@ -51,9 +52,14 @@ const resultReactive = (runtime: ReactiveRuntime) => {
       Result.andThen(() =>
         runtime.lifetime.registerWork(
           Stream.runForEach(stream, (value) =>
-            Effect.suspend(() => handler(value)).pipe(
-              Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
-            ),
+            // Stream emissions can be caused by outgoing cleanup during a
+            // commit. Yield at ingress before invoking handlers, preserving
+            // order without reentrant writes.
+            Effect.yieldNow
+              .pipe(Effect.andThen(Effect.suspend(() => handler(value))))
+              .pipe(
+                Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
+              ),
           ).pipe(
             Effect.provideService(CurrentTransaction, Option.none()),
             Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
@@ -179,6 +185,7 @@ const resultReactive = (runtime: ReactiveRuntime) => {
 export const reactive = (runtime: ReactiveRuntime) => {
   const sync = resultReactive(runtime);
   const helpers = {
+    ...reactiveOwner(runtime),
     signal: <A>(options: SignalOptions<A>) => lazy(() => sync.signal(options)),
     read: <A>(signal: Signal<A>) => lazy(() => sync.read(signal)),
     derive: <S extends Sources, A>(options: {
@@ -229,11 +236,13 @@ export const reactive = (runtime: ReactiveRuntime) => {
               capturedWork({
                 context,
                 work: Stream.runForEach(stream, (value) =>
-                  Effect.suspend(() => handler(value)).pipe(
-                    Effect.catchCause((cause) =>
-                      reportFailure({ runtime, resource: stream, cause }),
+                  Effect.yieldNow
+                    .pipe(Effect.andThen(Effect.suspend(() => handler(value))))
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        reportFailure({ runtime, resource: stream, cause }),
+                      ),
                     ),
-                  ),
                 ).pipe(
                   Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
                 ),
@@ -262,6 +271,7 @@ export const reactive = (runtime: ReactiveRuntime) => {
 export const synchronousReactive = (runtime: ReactiveRuntime) => {
   const sync = resultReactive(runtime);
   const helpers = {
+    ...reactiveOwner(runtime),
     signal: <A>(options: SignalOptions<A>) => fromResultLazy(() => sync.signal(options)),
     read: <A>(signal: Signal<A>) => fromResultLazy(() => sync.read(signal)),
     derive: <S extends Sources, A>(options: {
@@ -319,9 +329,11 @@ export const synchronousReactive = (runtime: ReactiveRuntime) => {
           capturedWork({
             context,
             work: Stream.runForEach(stream, (value) =>
-              Effect.suspend(() => handler(value)).pipe(
-                Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
-              ),
+              Effect.yieldNow
+                .pipe(Effect.andThen(Effect.suspend(() => handler(value))))
+                .pipe(
+                  Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
+                ),
             ).pipe(
               Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
             ),

@@ -1,8 +1,12 @@
 import { Effect, Layer, Option } from "effect";
 import { mounting, type MountFailure } from "./framework";
 import { AuthLive } from "./auth";
+import { browserHistory } from "./browser-history";
+import { History } from "./history";
 import { Home } from "./home";
 import { LocalStorageLive } from "./local-storage";
+import { RoutingDemo } from "./routing-demo/app";
+import { mockResources } from "./routing-demo/resources";
 
 /** Remains alive until interrupted, then awaits disposal of the application. */
 export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
@@ -17,8 +21,13 @@ export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
   const { h } = yield* mounting({
     scope,
     onError,
-    resources: Layer.mergeAll(AuthLive, LocalStorageLive),
+    resources: Layer.mergeAll(
+      AuthLive,
+      LocalStorageLive,
+      mockResources,
+      Layer.effect(History, browserHistory(window)),
+    ),
   });
-  yield* h(root, Home);
+  yield* h(root, [RoutingDemo, Home]);
   yield* Effect.never;
 }, Effect.scoped);

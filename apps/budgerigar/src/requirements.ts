@@ -1,4 +1,5 @@
 import type { Option } from "effect";
+import type { Cases } from "./branch";
 import type { Component } from "./component";
 import type { KeyedList } from "./keyed";
 import type { ElementOutput } from "./output";
@@ -16,14 +17,16 @@ export type Structural<R> = [R] extends [never] ? never : StructuralMarker<R>;
 export type Normalize<R> = R extends StructuralMarker<infer Child> ? Normalize<Child> : R;
 
 export type OutputRequirements<T> =
-  T extends ElementOutput<Node, infer R>
+  T extends Cases<infer R>
     ? R
-    : T extends Component<infer R>
+    : T extends ElementOutput<Node, infer R>
       ? R
-      : T extends Signal<Option.Option<Component<infer R>>>
+      : T extends Component<infer R>
         ? R
-        : T extends KeyedList<unknown, infer R>
+        : T extends Signal<Option.Option<Component<infer R>>>
           ? R
-          : T extends ReadonlyArray<infer Entry>
-            ? OutputRequirements<Entry>
-            : never;
+          : T extends KeyedList<unknown, infer R>
+            ? R
+            : T extends ReadonlyArray<infer Entry>
+              ? OutputRequirements<Entry>
+              : never;

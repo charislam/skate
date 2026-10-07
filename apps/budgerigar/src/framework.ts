@@ -12,8 +12,11 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { isCases } from "./branch";
+import { activateCases } from "./branch-runtime";
 import { isComponent, subtreeContext, type Component, type Lifecycle } from "./component";
 import {
+  casesRegionSync,
   checkStructure,
   construct,
   constructSync,
@@ -61,6 +64,8 @@ import type { Identifier as ResourceIdentifier } from "./resource";
 import { fromResultLazy, toEffect, withContext, type Sync } from "./sync";
 import { lazy } from "./synchronous";
 
+export { branch, cases, type Branch, type Cases } from "./branch";
+export { browserHistory } from "./browser-history";
 export { component, provideContext, type Component, type Lifecycle } from "./component";
 export { ConstructionError } from "./construction";
 export type {
@@ -72,7 +77,22 @@ export type {
   MountItem,
 } from "./construction";
 export * as Context from "./context";
+export { focus } from "./focus";
+export {
+  History,
+  HistoryError,
+  memoryHistory,
+  type HistoryAdapter,
+  type MemoryHistory,
+} from "./history";
 export { keyed, row, type Key, type KeyedList, type Row, type RowInputs } from "./keyed";
+export {
+  NavigationError,
+  navigator,
+  type NavigationDecision,
+  type NavigationEvent,
+  type Navigator,
+} from "./navigation";
 export { nativeNode, type ElementOutput } from "./output";
 export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
 export type {
@@ -86,6 +106,22 @@ export type {
 } from "./reactive";
 export { readonlySignal } from "./reactive/signal";
 export * as Resource from "./resource";
+export {
+  arrayQuery,
+  defaultQuery,
+  optionalQuery,
+  parameter,
+  remaining,
+  requiredQuery,
+  router,
+  route,
+  type Destination,
+  type ParseResult,
+  type Prefix,
+  type Router,
+  UrlBuildError,
+} from "./routes";
+export { link } from "./router-link";
 export * as Sync from "./sync-public";
 
 export type Output<R = never> = MountItem<R> | ReadonlyArray<MountItem<R>>;
@@ -226,7 +262,7 @@ interface Owner {
   cleanup: Option.Option<Fiber.Fiber<void, never>>;
   pending: Option.Option<Owner>;
   readonly rowContext: Option.Option<RowContext>;
-  onKeyedRowOccurrenceFailure: Option.Option<() => void>;
+  onOccurrenceFailure: Option.Option<() => void>;
 }
 
 interface Request {
@@ -282,7 +318,7 @@ const makeOwner = (options: {
   rowContext: Option.orElse(Option.fromUndefinedOr(options.rowContext), () =>
     Option.flatMap(Option.fromUndefinedOr(options.parentOwner), (owner) => owner.rowContext),
   ),
-  onKeyedRowOccurrenceFailure: Option.none(),
+  onOccurrenceFailure: Option.none(),
 });
 
 /** Requirements are checked at the public mount boundary; erased owner storage is internal. */
@@ -644,6 +680,14 @@ const describeOutput = (options: { output: Output<unknown>; owner: Owner }) =>
           direct.push(region);
           return Result.succeed([region.start, region.end]);
         }),
+        Match.when(isCases, (description) =>
+          casesRegionSync({ description, issuer: options.owner }).pipe(
+            Result.map((region) => {
+              direct.push(region);
+              return [region.start, region.end];
+            }),
+          ),
+        ),
         Match.when(isKeyedList, (description) =>
           keyedRegionSync({ description, issuer: options.owner }).pipe(
             Result.map((region) => {
@@ -845,11 +889,11 @@ const activateComponent = Effect.fn("Budgerigar.activateComponent")(
     lifetime: Owner;
     parent: Element;
     onOwner?: (owner: Owner) => void;
-    onKeyedRowOccurrenceFailure?: () => void;
+    onOccurrenceFailure?: () => void;
   }) {
     const occurrence = yield* prepareComponent(options);
     const { owner, parent, subject } = occurrence;
-    owner.onKeyedRowOccurrenceFailure = Option.fromUndefinedOr(options.onKeyedRowOccurrenceFailure);
+    owner.onOccurrenceFailure = Option.fromUndefinedOr(options.onOccurrenceFailure);
     Option.match(Option.fromUndefinedOr(options.onOwner), {
       onNone: () => {},
       onSome: (ready) => ready(owner),
@@ -1056,6 +1100,20 @@ const activate = (options: {
     Match.when(isComponent, (definition) =>
       activateComponent({ ...options, definition }).pipe(Effect.asVoid),
     ),
+    Match.when(isCases, (description) =>
+      activateCases({
+        ...options,
+        description,
+        hooks: {
+          createOwner: createStructuralOwner,
+          retire: (owner) => {
+            retireOwner(owner);
+            beginCleanup(owner);
+          },
+          activate: (branch) => activateComponent({ ...branch, parent: options.parent }),
+        },
+      }),
+    ),
     Match.when(isKeyedList, (description) =>
       activateKeyed({
         ...options,
@@ -1084,9 +1142,9 @@ const failAttempt = Effect.fn("Budgerigar.failAttempt")(
     Effect.sync(() => {
       retireOwner(options.owner);
       beginCleanup(options.owner);
-      const onKeyedRowOccurrenceFailure = options.owner.onKeyedRowOccurrenceFailure;
-      options.owner.onKeyedRowOccurrenceFailure = Option.none();
-      Option.match(onKeyedRowOccurrenceFailure, { onNone: () => {}, onSome: (notify) => notify() });
+      const onOccurrenceFailure = options.owner.onOccurrenceFailure;
+      options.owner.onOccurrenceFailure = Option.none();
+      Option.match(onOccurrenceFailure, { onNone: () => {}, onSome: (notify) => notify() });
     }).pipe(
       Effect.andThen(
         Match.value(Cause.hasInterruptsOnly(options.cause)).pipe(
