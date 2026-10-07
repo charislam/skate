@@ -1,4 +1,5 @@
 import { Cause, Effect, Match, Option, Result } from "effect";
+import { managedNodes } from "~/output";
 import { lazy } from "~/synchronous";
 import { destination } from "./destinations";
 import {
@@ -35,6 +36,7 @@ export const markElementOwner = (options: {
   element: HTMLElement;
   runtime: Option.Option<ReactiveRuntime>;
 }): void => {
+  managedNodes.add(options.element);
   elementIssuers.set(options.element, options.runtime);
 };
 

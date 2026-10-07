@@ -7,7 +7,7 @@ const run = Effect.runPromise;
 
 it("adds, edits, completes, reorders, and deletes todos while preserving unsaved drafts", async () => {
   const { ctx, target, failures } = await harness();
-  ctx.h(target, Todos);
+  Effect.runSync(ctx.h(target, Todos));
   await rendered({
     parent: target,
     check: () => target.querySelector('[aria-label="New todo"]') !== null,

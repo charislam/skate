@@ -1,9 +1,13 @@
-import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Result, Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Match, Option, Queue, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrap } from "./bootstrap";
 import type { ConstructionError } from "./construction";
 import { component, mounting, type MountFailure } from "./framework";
 import { Home } from "./home";
+import { nativeNode } from "./output";
+import type { ElementOutput } from "./output";
+import { importTestNode, untypedOutput, testText } from "./output-test-helpers";
+import * as Sync from "./sync-public";
 import { rendered as waitFor } from "./test-helpers";
 
 const run = Effect.runPromise;
@@ -16,9 +20,9 @@ const gate = () => {
 };
 const open = (deferred: Deferred.Deferred<void>) => run(Deferred.succeed(deferred, undefined));
 
-const text = (value: string) => document.createTextNode(value);
+const text = (value: string) => testText(value);
 const simple = (value: string) =>
-  component(() => Result.succeed({ setup: () => Effect.sync(() => text(value)) }));
+  component(() => Sync.succeed({ setup: () => Effect.sync(() => text(value)) }));
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -68,8 +72,8 @@ describe("scoped component mounting", () => {
     const { h, close } = await harness();
     const left = document.createElement("div");
     const right = document.createElement("div");
-    h(left, Home);
-    h(right, Home);
+    Effect.runSync(h(left, Home));
+    Effect.runSync(h(right, Home));
     await Promise.all([
       waitFor({
         parent: left,
@@ -88,19 +92,23 @@ describe("scoped component mounting", () => {
     ]);
     expect(left.firstChild).not.toBe(right.firstChild);
     expect(left.querySelector("main > h1")?.textContent).toBe("Budgerigar");
-    h(
-      left,
-      component(() => Result.succeed({ setup: () => Effect.sync(() => [text("a"), text("b")]) })),
+    Effect.runSync(
+      h(
+        left,
+        component(() => Sync.succeed({ setup: () => Effect.sync(() => [text("a"), text("b")]) })),
+      ),
     );
     await rendered(left, "ab");
     expect(left.childNodes.length).toBe(4);
     const emptyStarted = gate();
-    h(
-      left,
-      component(() =>
-        Result.succeed({
-          setup: () => Deferred.succeed(emptyStarted, undefined).pipe(Effect.as([])),
-        }),
+    Effect.runSync(
+      h(
+        left,
+        component(() =>
+          Sync.succeed({
+            setup: () => Deferred.succeed(emptyStarted, undefined).pipe(Effect.as([])),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(emptyStarted));
@@ -113,7 +121,7 @@ describe("scoped component mounting", () => {
     const { h } = await harness();
 
     const parent = document.createElement("div");
-    parent.append(text("pre-existing"));
+    parent.append(nativeNode(text("pre-existing")));
 
     const cleaning = gate();
     const releaseCleanup = gate();
@@ -122,54 +130,60 @@ describe("scoped component mounting", () => {
 
     const events: string[] = [];
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  events.push(`cleanup:${parent.textContent}`);
-                  yield* Deferred.succeed(cleaning, undefined);
-                  yield* Deferred.await(releaseCleanup);
-                }),
-              );
-              return text("old");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Effect.gen(function* () {
+                    events.push(`cleanup:${parent.textContent}`);
+                    yield* Deferred.succeed(cleaning, undefined);
+                    yield* Deferred.await(releaseCleanup);
+                  }),
+                );
+                return text("old");
+              }),
+          }),
+        ),
       ),
     );
 
     await rendered(parent, "old");
 
-    parent.append(text("external"));
+    parent.append(nativeNode(text("external")));
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              events.push(`setup:${parent.textContent}`);
-              yield* Deferred.succeed(settingUp, undefined);
-              yield* Deferred.await(releaseSetup);
-              return text("middle");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                events.push(`setup:${parent.textContent}`);
+                yield* Deferred.succeed(settingUp, undefined);
+                yield* Deferred.await(releaseSetup);
+                return text("middle");
+              }),
+          }),
+        ),
       ),
     );
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.sync(() => {
-              events.push("last");
-              return text("last");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.sync(() => {
+                events.push("last");
+                return text("last");
+              }),
+          }),
+        ),
       ),
     );
 
@@ -193,23 +207,25 @@ describe("scoped component mounting", () => {
     const ready = gate();
     const release = gate();
 
-    h(
-      slow,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(ready, undefined);
-              yield* Deferred.await(release);
-              return text("slow");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        slow,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(ready, undefined);
+                yield* Deferred.await(release);
+                return text("slow");
+              }),
+          }),
+        ),
       ),
     );
 
     await run(Deferred.await(ready));
 
-    h(fast, simple("fast"));
+    Effect.runSync(h(fast, simple("fast")));
     await rendered(fast, "fast");
     expect(slow.childNodes.length).toBe(2);
 
@@ -228,38 +244,40 @@ describe("scoped component mounting", () => {
 
     const events: string[] = [];
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ h: nested }) =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.sync(() => {
-                  events.push("parent");
-                }),
-              );
-              nested(
-                child,
-                component(() =>
-                  Result.succeed({
-                    setup: () =>
-                      Effect.gen(function* () {
-                        yield* Effect.addFinalizer(() =>
-                          Effect.sync(() => {
-                            events.push("child");
-                          }),
-                        );
-                        yield* Deferred.succeed(childReady, undefined);
-                        return text("child");
-                      }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ h: nested }) =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Effect.sync(() => {
+                    events.push("parent");
                   }),
-                ),
-              );
-              yield* Deferred.succeed(parentReady, undefined);
-              return yield* Effect.never;
-            }),
-        }),
+                );
+                yield* nested(
+                  child,
+                  component(() =>
+                    Sync.succeed({
+                      setup: () =>
+                        Effect.gen(function* () {
+                          yield* Effect.addFinalizer(() =>
+                            Effect.sync(() => {
+                              events.push("child");
+                            }),
+                          );
+                          yield* Deferred.succeed(childReady, undefined);
+                          return text("child");
+                        }),
+                    }),
+                  ),
+                );
+                yield* Deferred.succeed(parentReady, undefined);
+                return yield* Effect.never;
+              }),
+          }),
+        ),
       ),
     );
 
@@ -279,45 +297,49 @@ describe("scoped component mounting", () => {
     const { h, close } = await harness();
 
     const parent = document.createElement("div");
-    const child = document.createElement("section");
+    let child = document.createElement("section");
 
     const childCleaning = gate();
     const releaseChild = gate();
     const parentCleaning = gate();
     const releaseParent = gate();
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ h: nested }) =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  yield* Deferred.succeed(parentCleaning, undefined);
-                  yield* Deferred.await(releaseParent);
-                }),
-              );
-              nested(
-                child,
-                component(() =>
-                  Result.succeed({
-                    setup: () =>
-                      Effect.gen(function* () {
-                        yield* Effect.addFinalizer(() =>
-                          Effect.gen(function* () {
-                            yield* Deferred.succeed(childCleaning, undefined);
-                            yield* Deferred.await(releaseChild);
-                          }),
-                        );
-                        return text("child");
-                      }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                const childOutput = yield* he("section");
+                child = nativeNode(childOutput);
+                yield* Effect.addFinalizer(() =>
+                  Effect.gen(function* () {
+                    yield* Deferred.succeed(parentCleaning, undefined);
+                    yield* Deferred.await(releaseParent);
                   }),
-                ),
-              );
-              return child;
-            }),
-        }),
+                );
+                yield* nested(
+                  child,
+                  component(() =>
+                    Sync.succeed({
+                      setup: () =>
+                        Effect.gen(function* () {
+                          yield* Effect.addFinalizer(() =>
+                            Effect.gen(function* () {
+                              yield* Deferred.succeed(childCleaning, undefined);
+                              yield* Deferred.await(releaseChild);
+                            }),
+                          );
+                          return text("child");
+                        }),
+                    }),
+                  ),
+                );
+                return childOutput;
+              }),
+          }),
+        ),
       ),
     );
 
@@ -346,27 +368,29 @@ describe("scoped component mounting", () => {
     const events: string[] = [];
     const original = new Error("setup failed");
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.sync(() => {
-                  events.push("remaining");
-                }),
-              );
-              yield* Effect.addFinalizer(() => Effect.die("cleanup failed"));
-              parent.append(text("partial"));
-              return yield* Effect.fail(original);
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Effect.sync(() => {
+                    events.push("remaining");
+                  }),
+                );
+                yield* Effect.addFinalizer(() => Effect.die("cleanup failed"));
+                parent.append(nativeNode(text("partial")));
+                return yield* Effect.fail(original);
+              }),
+          }),
+        ),
       ),
     );
 
     await nextFailure();
-    h(parent, simple("recovered"));
+    Effect.runSync(h(parent, simple("recovered")));
     await rendered(parent, "recovered");
 
     await close();
@@ -387,24 +411,26 @@ describe("scoped component mounting", () => {
 
     let pendingRan = false;
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ fork }) =>
-            Effect.gen(function* () {
-              yield* fork(
-                Deferred.succeed(backgroundReady, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.ensuring(Deferred.succeed(stopped, undefined)),
-                ),
-              );
-              yield* Deferred.await(backgroundReady);
-              yield* Deferred.succeed(ready, undefined);
-              yield* Deferred.await(release);
-              return text("late");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ fork }) =>
+              Effect.gen(function* () {
+                yield* fork(
+                  Deferred.succeed(backgroundReady, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(Deferred.succeed(stopped, undefined)),
+                  ),
+                );
+                yield* Deferred.await(backgroundReady);
+                yield* Deferred.succeed(ready, undefined);
+                yield* Deferred.await(release);
+                return text("late");
+              }),
+          }),
+        ),
       ),
     );
 
@@ -413,16 +439,18 @@ describe("scoped component mounting", () => {
 
     const closing = close();
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.sync(() => {
-              pendingRan = true;
-              return text("pending");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.sync(() => {
+                pendingRan = true;
+                return text("pending");
+              }),
+          }),
+        ),
       ),
     );
 
@@ -430,7 +458,7 @@ describe("scoped component mounting", () => {
     await run(Deferred.await(stopped));
     await open(release);
 
-    h(parent, simple("after disposal"));
+    Effect.runSync(h(parent, simple("after disposal")));
 
     expect(parent.childNodes.length).toBe(0);
     expect(pendingRan).toBe(false);
@@ -456,36 +484,40 @@ describe("scoped component mounting", () => {
     const reported = gate();
     const parent = document.createElement("div");
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () => {
-            throw new Error("throwing setup");
-          },
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () => {
+              throw new Error("throwing setup");
+            },
+          }),
+        ),
       ),
     );
 
     await run(Deferred.await(reported));
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() => Effect.die("first cleanup"));
-              yield* Effect.addFinalizer(() => Effect.die("second cleanup"));
-              return text("old");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() => Effect.die("first cleanup"));
+                yield* Effect.addFinalizer(() => Effect.die("second cleanup"));
+                return text("old");
+              }),
+          }),
+        ),
       ),
     );
 
     await rendered(parent, "old");
 
-    h(parent, simple("new"));
+    Effect.runSync(h(parent, simple("new")));
     await rendered(parent, "new");
 
     await run(Scope.close(scope, Exit.void));
@@ -500,10 +532,10 @@ describe("scoped component mounting", () => {
 
     const parent = document.createElement("div");
 
-    first.h(parent, simple("first"));
+    Effect.runSync(first.h(parent, simple("first")));
     await rendered(parent, "first");
 
-    second.h(parent, simple("second"));
+    Effect.runSync(second.h(parent, simple("second")));
     await Effect.runPromise(Effect.yieldNow);
 
     expect(parent.textContent).toBe("first");
@@ -511,7 +543,7 @@ describe("scoped component mounting", () => {
     expect(second.errors.map((failure) => failure.operation)).toEqual(["ownership"]);
 
     await first.close();
-    second.h(parent, simple("second"));
+    Effect.runSync(second.h(parent, simple("second")));
     await rendered(parent, "second");
   });
 
@@ -524,36 +556,40 @@ describe("scoped component mounting", () => {
     const release = gate();
     let replacementRan = false;
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  yield* Deferred.succeed(cleaning, undefined);
-                  yield* Deferred.await(release);
-                }),
-              );
-              return text("old");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Effect.gen(function* () {
+                    yield* Deferred.succeed(cleaning, undefined);
+                    yield* Deferred.await(release);
+                  }),
+                );
+                return text("old");
+              }),
+          }),
+        ),
       ),
     );
 
     await rendered(parent, "old");
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.sync(() => {
-              replacementRan = true;
-              return text("replacement");
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.sync(() => {
+                replacementRan = true;
+                return text("replacement");
+              }),
+          }),
+        ),
       ),
     );
 
@@ -579,23 +615,25 @@ describe("scoped component mounting", () => {
     const release = gate();
     let finalized = 0;
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Effect.sync(() => {
-                  finalized += 1;
-                }),
-              );
-              yield* Effect.addFinalizer(() => Effect.die("disposal cleanup"));
-              yield* Deferred.succeed(ready, undefined);
-              yield* Deferred.await(release).pipe(Effect.uninterruptible);
-              return text("late");
-            }).pipe(Effect.uninterruptible),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Effect.sync(() => {
+                    finalized += 1;
+                  }),
+                );
+                yield* Effect.addFinalizer(() => Effect.die("disposal cleanup"));
+                yield* Deferred.succeed(ready, undefined);
+                yield* Deferred.await(release).pipe(Effect.uninterruptible);
+                return text("late");
+              }).pipe(Effect.uninterruptible),
+          }),
+        ),
       ),
     );
 
@@ -629,7 +667,7 @@ describe("scoped component mounting", () => {
     const finalized: number[] = [];
 
     const definition = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: ({ scope }) =>
           Effect.gen(function* () {
             const instance = ++nextInstance;
@@ -647,10 +685,10 @@ describe("scoped component mounting", () => {
     const left = document.createElement("div");
     const right = document.createElement("div");
 
-    first.h(left, definition);
+    Effect.runSync(first.h(left, definition));
     await rendered(left, "1");
 
-    second.h(right, definition);
+    Effect.runSync(second.h(right, definition));
     await rendered(right, "2");
 
     await first.close();
@@ -682,48 +720,50 @@ describe("scoped component mounting", () => {
     const ready = gate();
     const events: string[] = [];
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ fork, h: nested }) =>
-            Effect.gen(function* () {
-              yield* fork(
-                Deferred.succeed(ready, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.ensuring(
-                    Effect.sync(() => {
-                      events.push("background");
-                    }).pipe(Effect.andThen(Effect.die("background cleanup failed"))),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ fork, he, h: nested }) =>
+              Effect.gen(function* () {
+                yield* fork(
+                  Deferred.succeed(ready, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        events.push("background");
+                      }).pipe(Effect.andThen(Effect.die("background cleanup failed"))),
+                    ),
                   ),
-                ),
-              );
-              yield* Deferred.await(ready);
-              yield* Effect.addFinalizer(() =>
-                Effect.sync(() => {
-                  events.push("parent");
-                }),
-              );
-              const child = document.createElement("section");
-              nested(
-                child,
-                component(() =>
-                  Result.succeed({
-                    setup: () =>
-                      Effect.gen(function* () {
-                        yield* Effect.addFinalizer(() =>
-                          Effect.sync(() => {
-                            events.push("child");
-                          }),
-                        );
-                        return text("child");
-                      }),
+                );
+                yield* Deferred.await(ready);
+                yield* Effect.addFinalizer(() =>
+                  Effect.sync(() => {
+                    events.push("parent");
                   }),
-                ),
-              );
-              return child;
-            }),
-        }),
+                );
+                const child = yield* he("section");
+                yield* nested(
+                  child,
+                  component(() =>
+                    Sync.succeed({
+                      setup: () =>
+                        Effect.gen(function* () {
+                          yield* Effect.addFinalizer(() =>
+                            Effect.sync(() => {
+                              events.push("child");
+                            }),
+                          );
+                          return text("child");
+                        }),
+                    }),
+                  ),
+                );
+                return child;
+              }),
+          }),
+        ),
       ),
     );
 
@@ -744,31 +784,32 @@ describe("scoped component mounting", () => {
     const stopped = gate();
     const childRelease = gate();
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ h: nested }) =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(ready, undefined).pipe(
-                Effect.andThen(Effect.never),
-                Effect.ensuring(Deferred.succeed(stopped, undefined)),
-                Effect.forkScoped,
-              );
-              const child = document.createElement("section");
-              nested(
-                child,
-                component(() =>
-                  Result.succeed({
-                    setup: () => Deferred.await(childRelease).pipe(Effect.map(() => text("child"))),
-                  }),
-                ),
-              );
-              const main = document.createElement("main");
-              main.append(text("owner"), child);
-              return main;
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(ready, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.ensuring(Deferred.succeed(stopped, undefined)),
+                  Effect.forkScoped,
+                );
+                const child = yield* he("section");
+                yield* nested(
+                  child,
+                  component(() =>
+                    Sync.succeed({
+                      setup: () =>
+                        Deferred.await(childRelease).pipe(Effect.map(() => text("child"))),
+                    }),
+                  ),
+                );
+                return yield* he("main", { children: ["owner", child] });
+              }),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(ready));
@@ -788,54 +829,56 @@ describe("static DOM construction and regions", () => {
 
     const parent = document.createElement("div");
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            Effect.gen(function* () {
-              const input = yield* he("input", {
-                attrs: {
-                  value: Option.some("default"),
-                  disabled: Option.none(),
-                  required: Option.some(true),
-                  "aria-expanded": Option.some("false"),
-                  "data-empty": Option.some(""),
-                },
-                props: { value: "current", checked: true },
-              });
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              Effect.gen(function* () {
+                const input = yield* he("input", {
+                  attrs: {
+                    value: Option.some("default"),
+                    disabled: Option.none(),
+                    required: Option.some(true),
+                    "aria-expanded": Option.some("false"),
+                    "data-empty": Option.some(""),
+                  },
+                  props: { value: "current", checked: true },
+                });
 
-              expect(input.defaultValue).toBe("default");
-              expect(input.value).toBe("current");
-              expect(input.checked).toBe(true);
+                expect(nativeNode(input).defaultValue).toBe("default");
+                expect(nativeNode(input).value).toBe("current");
+                expect(nativeNode(input).checked).toBe(true);
 
-              expect(input.hasAttribute("disabled")).toBe(false);
-              expect(input.getAttribute("required")).toBe("");
-              expect(input.getAttribute("aria-expanded")).toBe("false");
-              expect(input.getAttribute("data-empty")).toBe("");
+                expect(nativeNode(input).hasAttribute("disabled")).toBe(false);
+                expect(nativeNode(input).getAttribute("required")).toBe("");
+                expect(nativeNode(input).getAttribute("aria-expanded")).toBe("false");
+                expect(nativeNode(input).getAttribute("data-empty")).toBe("");
 
-              const select = yield* he("select", {
-                children: [
-                  yield* he("option", {
-                    attrs: { value: Option.some("apple") },
-                    children: ["Apple"],
-                  }),
-                  yield* he("option", {
-                    attrs: { value: Option.some("banana") },
-                    children: ["Banana"],
-                  }),
-                ],
-                props: { value: "banana" },
-              });
+                const select = yield* he("select", {
+                  children: [
+                    yield* he("option", {
+                      attrs: { value: Option.some("apple") },
+                      children: ["Apple"],
+                    }),
+                    yield* he("option", {
+                      attrs: { value: Option.some("banana") },
+                      children: ["Banana"],
+                    }),
+                  ],
+                  props: { value: "banana" },
+                });
 
-              expect(select.value).toBe("banana");
+                expect(nativeNode(select).value).toBe("banana");
 
-              return yield* he("main", {
-                attrs: { class: Option.some("welcome") },
-                children: [input, select, "<b>literal</b>"],
-              });
-            }),
-        }),
+                return yield* he("main", {
+                  attrs: { class: Option.some("welcome") },
+                  children: [input, select, "<b>literal</b>"],
+                });
+              }),
+          }),
+        ),
       ),
     );
 
@@ -849,38 +892,40 @@ describe("static DOM construction and regions", () => {
 
     const parent = document.createElement("div");
 
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            Effect.gen(function* () {
-              const first = yield* he("span");
-              expect(
-                (yield* he("div", { children: [first, first] }).pipe(Effect.flip)).message,
-              ).toContain("duplicate");
-              expect(first.parentNode).toBeNull();
-              const attached = yield* he("div", { children: [yield* he("span")] });
-              expect(
-                (yield* he("div", { children: [first, attached.firstChild as Node] }).pipe(
-                  Effect.flip,
-                )).message,
-              ).toContain("detached");
-              expect(first.parentNode).toBeNull();
-              expect(attached.childNodes.length).toBe(1);
-              expect(
-                (yield* he("div", { attrs: { onclick: Option.some("alert(1)") } }).pipe(
-                  Effect.flip,
-                )).message,
-              ).toContain("unsupported attribute");
-              expect(
-                (yield* he("iframe", { attrs: { srcdoc: Option.some("<p>hello</p>") } }).pipe(
-                  Effect.flip,
-                )).message,
-              ).toContain("unsupported attribute");
-              return yield* he("div", { children: ["valid"] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              Effect.gen(function* () {
+                const first = yield* he("span");
+                expect(
+                  (yield* he("div", { children: [first, first] }).pipe(Effect.flip)).message,
+                ).toContain("duplicate");
+                expect(nativeNode(first).parentNode).toBeNull();
+                const attachedChild = yield* he("span");
+                const attached = yield* he("div", { children: [attachedChild] });
+                expect(
+                  (yield* he("div", { children: [first, attachedChild] }).pipe(Effect.flip))
+                    .message,
+                ).toContain("detached");
+                expect(nativeNode(first).parentNode).toBeNull();
+                expect(nativeNode(attached).childNodes.length).toBe(1);
+                expect(
+                  (yield* he("div", { attrs: { onclick: Option.some("alert(1)") } }).pipe(
+                    Effect.flip,
+                  )).message,
+                ).toContain("unsupported attribute");
+                expect(
+                  (yield* he("iframe", { attrs: { srcdoc: Option.some("<p>hello</p>") } }).pipe(
+                    Effect.flip,
+                  )).message,
+                ).toContain("unsupported attribute");
+                return yield* he("div", { children: ["valid"] });
+              }),
+          }),
+        ),
       ),
     );
     await rendered(parent, "valid");
@@ -893,7 +938,7 @@ describe("static DOM construction and regions", () => {
     let started = 0;
     let cleaned = 0;
     const child = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.gen(function* () {
             started += 1;
@@ -906,19 +951,21 @@ describe("static DOM construction and regions", () => {
           }),
       }),
     );
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            Effect.gen(function* () {
-              yield* he("section", { children: [child] });
-              expect(started).toBe(0);
-              return yield* he("main", {
-                children: ["before", child, yield* he("hr"), child, "after"],
-              });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              Effect.gen(function* () {
+                yield* he("section", { children: [child] });
+                expect(started).toBe(0);
+                return yield* he("main", {
+                  children: ["before", child, yield* he("hr"), child, "after"],
+                });
+              }),
+          }),
+        ),
       ),
     );
     await rendered(parent, "beforechild1child2after");
@@ -942,7 +989,7 @@ describe("static DOM construction and regions", () => {
       value: string;
     }) =>
       component(() =>
-        Result.succeed({
+        Sync.succeed({
           setup: () =>
             Effect.gen(function* () {
               yield* Effect.addFinalizer(() =>
@@ -956,21 +1003,23 @@ describe("static DOM construction and regions", () => {
             }),
         }),
       );
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            he("main", {
-              children: [
-                "before",
-                child({ ready: firstReady, release: firstRelease, value: "first" }),
-                "between",
-                child({ ready: secondReady, release: secondRelease, value: "second" }),
-                "after",
-              ],
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              he("main", {
+                children: [
+                  "before",
+                  child({ ready: firstReady, release: firstRelease, value: "first" }),
+                  "between",
+                  child({ ready: secondReady, release: secondRelease, value: "second" }),
+                  "after",
+                ],
+              }),
+          }),
+        ),
       ),
     );
     await Promise.all([run(Deferred.await(firstReady)), run(Deferred.await(secondReady))]);
@@ -990,7 +1039,7 @@ describe("static DOM construction and regions", () => {
     const release = gate();
     let cleaned = 0;
     const failed = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.gen(function* () {
             yield* Effect.addFinalizer(() =>
@@ -1004,20 +1053,22 @@ describe("static DOM construction and regions", () => {
           }),
       }),
     );
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            he("main", {
-              children: [
-                "a",
-                failed,
-                component(() => Result.succeed({ setup: () => Effect.succeed([]) })),
-                "b",
-              ],
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              he("main", {
+                children: [
+                  "a",
+                  failed,
+                  component(() => Sync.succeed({ setup: () => Effect.succeed([]) })),
+                  "b",
+                ],
+              }),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(ready));
@@ -1041,7 +1092,7 @@ describe("static DOM construction and regions", () => {
       const cleaning = gate();
       const cleanupRelease = gate();
       const slow = component(() =>
-        Result.succeed({
+        Sync.succeed({
           setup: () =>
             Effect.gen(function* () {
               yield* Effect.addFinalizer(() =>
@@ -1055,15 +1106,17 @@ describe("static DOM construction and regions", () => {
             }),
         }),
       );
-      h(
-        parent,
-        Match.value(array).pipe(
-          Match.when(true, () => [slow]),
-          Match.orElse(() => slow),
+      Effect.runSync(
+        h(
+          parent,
+          Match.value(array).pipe(
+            Match.when(true, () => [slow]),
+            Match.orElse(() => slow),
+          ),
         ),
       );
       await run(Deferred.await(ready));
-      h(parent, text("next"));
+      Effect.runSync(h(parent, text("next")));
       await run(Deferred.await(cleaning));
       expect(parent.textContent).toBe("next");
       await open(setupRelease);
@@ -1079,14 +1132,14 @@ describe("static DOM construction and regions", () => {
     const parent = document.createElement("div");
     let occurrence = 0;
     const child = component(() =>
-      Result.succeed({ setup: () => Effect.sync(() => text(String(++occurrence))) }),
+      Sync.succeed({ setup: () => Effect.sync(() => text(String(++occurrence))) }),
     );
     const items = [text("a"), child, text("b"), child];
-    h(parent, items);
+    Effect.runSync(h(parent, items));
     items.splice(0, items.length, text("mutated"));
     await rendered(parent, "a1b2");
     expect(occurrence).toBe(2);
-    h(parent, []);
+    Effect.runSync(h(parent, []));
     await rendered(parent, "");
     expect(parent.childNodes.length).toBe(0);
   });
@@ -1097,33 +1150,37 @@ describe("static DOM construction and regions", () => {
     const ready = gate();
     const release = gate();
     let badStarted = false;
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Deferred.succeed(ready, undefined).pipe(
-              Effect.andThen(Deferred.await(release)),
-              Effect.map(() => text("valid")),
-            ),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Deferred.succeed(ready, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.map(() => text("valid")),
+              ),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(ready));
     const duplicate = text("duplicate");
-    h(parent, [
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.sync(() => {
-              badStarted = true;
-              return text("bad");
-            }),
-        }),
-      ),
-      duplicate,
-      duplicate,
-    ]);
+    Effect.runSync(
+      h(parent, [
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.sync(() => {
+                badStarted = true;
+                return text("bad");
+              }),
+          }),
+        ),
+        duplicate,
+        duplicate,
+      ]),
+    );
     expect(badStarted).toBe(false);
     expect(errors.map((failure) => failure.operation)).toEqual(["validation"]);
     expect(errors[0]?.subject.kind).toBe("replacement");
@@ -1134,25 +1191,25 @@ describe("static DOM construction and regions", () => {
   it("rejects invalid node kinds, parented roots, reserved and previously adopted nodes", async () => {
     const { h, errors } = await harness();
     const parent = document.createElement("div");
-    h(parent, text("old"));
+    Effect.runSync(h(parent, text("old")));
     await rendered(parent, "old");
     const reserved = text("reserved");
-    h(parent, reserved);
-    h(parent, reserved);
+    Effect.runSync(h(parent, reserved));
+    Effect.runSync(h(parent, reserved));
     const attached = document.createElement("aside");
     const root = text("attached");
-    attached.append(root);
+    attached.append(nativeNode(root));
     for (const node of [
       root,
       document,
       document.createDocumentFragment(),
       document.implementation.createDocumentType("html", "", ""),
     ])
-      h(parent, node);
+      Effect.runSync(h(parent, untypedOutput(node)));
     await rendered(parent, "reserved");
-    h(parent, text("fresh"));
+    Effect.runSync(h(parent, text("fresh")));
     await rendered(parent, "fresh");
-    h(parent, reserved);
+    Effect.runSync(h(parent, reserved));
     expect(parent.textContent).toBe("fresh");
     expect(attached.textContent).toBe("attached");
     expect(errors.length).toBe(6);
@@ -1164,31 +1221,34 @@ describe("static DOM construction and regions", () => {
     const parent = document.createElement("div");
     const cleaning = gate();
     const release = gate();
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.addFinalizer(() =>
-              Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(release))),
-            ).pipe(Effect.as(text("old"))),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.addFinalizer(() =>
+                Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(release))),
+              ).pipe(Effect.as(text("old"))),
+          }),
+        ),
       ),
     );
     await rendered(parent, "old");
-    h(parent, text("middle"));
+    Effect.runSync(h(parent, text("middle")));
     await run(Deferred.await(cleaning));
     const reparented = text("stolen");
     const mutated = document.createElement("section");
-    mutated.append(text("original"));
-    h(parent, reparented);
-    h(parent, mutated);
+    mutated.append(document.createTextNode("original"));
+    const mutatedOutput = Effect.runSync(importTestNode(mutated));
+    Effect.runSync(h(parent, reparented));
+    Effect.runSync(h(parent, mutatedOutput));
     const external = document.createElement("aside");
-    external.append(reparented);
-    mutated.append(text("changed"));
+    external.append(nativeNode(reparented));
+    mutated.append(document.createTextNode("changed"));
     await open(release);
     await rendered(parent, "middle");
-    h(parent, text("last"));
+    Effect.runSync(h(parent, text("last")));
     await rendered(parent, "last");
     expect(errors.map((failure) => failure.operation)).toEqual(["validation", "validation"]);
     expect(external.textContent).toBe("stolen");
@@ -1198,10 +1258,12 @@ describe("static DOM construction and regions", () => {
     const { h, errors } = await harness();
     const parent = document.createElement("div");
     const foreign = document.createElement("div");
-    let tree = document.createElement("main");
+    let tree: ElementOutput<HTMLElement> = Effect.runSync(
+      importTestNode(document.createElement("main")),
+    );
     let started = 0;
     const child = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.sync(() => {
             started += 1;
@@ -1209,28 +1271,30 @@ describe("static DOM construction and regions", () => {
           }),
       }),
     );
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he, h: nested }) =>
-            Effect.gen(function* () {
-              tree = yield* he("main", { children: [child] });
-              const tampered = yield* he("section", { children: [child] });
-              tampered.replaceChildren();
-              expect(
-                (yield* he("div", { children: [tampered] }).pipe(Effect.flip)).message,
-              ).toContain("missing region");
-              nested(foreign, tree.firstChild as Node);
-              return yield* he("p", { children: ["owner"] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                tree = yield* he("main", { children: [child] });
+                const tampered = yield* he("section", { children: [child] });
+                nativeNode(tampered).replaceChildren();
+                expect(
+                  (yield* he("div", { children: [tampered] }).pipe(Effect.flip)).message,
+                ).toContain("missing region");
+                yield* nested(foreign, untypedOutput(nativeNode(tree).firstChild));
+                return yield* he("p", { children: ["owner"] });
+              }),
+          }),
+        ),
       ),
     );
     await rendered(parent, "owner");
-    h(foreign, tree);
+    Effect.runSync(h(foreign, tree));
     expect(started).toBe(0);
-    expect(tree.parentNode).toBeNull();
+    expect(nativeNode(tree).parentNode).toBeNull();
     expect(errors.map((failure) => failure.operation)).toEqual(["validation", "validation"]);
   });
 
@@ -1242,51 +1306,56 @@ describe("static DOM construction and regions", () => {
     const pendingReady = gate();
     const pendingRelease = gate();
     const events: string[] = [];
-    let staleConstruct: () => Effect.Effect<Node, ConstructionError> = () =>
+    let staleConstruct: () => Effect.Effect<ElementOutput<Node>, ConstructionError> = () =>
       Effect.succeed(text("unused"));
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he, h: nested }) =>
-            Effect.gen(function* () {
-              staleConstruct = () => he("div");
-              const child = component(() =>
-                Result.succeed({
-                  setup: ({ fork, addSyncFinalizer }) =>
-                    Effect.gen(function* () {
-                      yield* addSyncFinalizer(() => {
-                        events.push(`child:${parent.textContent}`);
-                      });
-                      yield* fork(
-                        Deferred.succeed(ready, undefined).pipe(
-                          Effect.andThen(Effect.never),
-                          Effect.ensuring(Deferred.succeed(backgroundStopped, undefined)),
-                        ),
-                      );
-                      return text("child");
-                    }),
-                }),
-              );
-              const pending = component(() =>
-                Result.succeed({
-                  setup: () =>
-                    Deferred.succeed(pendingReady, undefined).pipe(
-                      Effect.andThen(Deferred.await(pendingRelease)),
-                      Effect.map(() => text("stale")),
-                    ),
-                }),
-              );
-              const target = yield* he("section");
-              nested(target, yield* he("main", { children: ["before", child, pending, "after"] }));
-              return target;
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                staleConstruct = () => he("div");
+                const child = component(() =>
+                  Sync.succeed({
+                    setup: ({ fork, addSyncFinalizer }) =>
+                      Effect.gen(function* () {
+                        yield* addSyncFinalizer(() => {
+                          events.push(`child:${parent.textContent}`);
+                        });
+                        yield* fork(
+                          Deferred.succeed(ready, undefined).pipe(
+                            Effect.andThen(Effect.never),
+                            Effect.ensuring(Deferred.succeed(backgroundStopped, undefined)),
+                          ),
+                        );
+                        return text("child");
+                      }),
+                  }),
+                );
+                const pending = component(() =>
+                  Sync.succeed({
+                    setup: () =>
+                      Deferred.succeed(pendingReady, undefined).pipe(
+                        Effect.andThen(Deferred.await(pendingRelease)),
+                        Effect.map(() => text("stale")),
+                      ),
+                  }),
+                );
+                const target = yield* he("section");
+                yield* nested(
+                  target,
+                  yield* he("main", { children: ["before", child, pending, "after"] }),
+                );
+                return target;
+              }),
+          }),
+        ),
       ),
     );
     await Promise.all([run(Deferred.await(ready)), run(Deferred.await(pendingReady))]);
     await rendered(parent, "beforechildafter");
-    h(parent, text("next"));
+    Effect.runSync(h(parent, text("next")));
     await rendered(parent, "next");
     await run(Deferred.await(backgroundStopped));
     await open(pendingRelease);
@@ -1307,39 +1376,41 @@ describe("replacement resource boundaries", () => {
     const stopped = gate();
     let replace: () => Effect.Effect<void, ConstructionError> = () => Effect.void;
     let finalized = 0;
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he, h: nested }) =>
-            Effect.gen(function* () {
-              const target = yield* he("section");
-              const pending = component(() =>
-                Result.succeed({
-                  setup: ({ fork }) =>
-                    Effect.gen(function* () {
-                      yield* Effect.addFinalizer(() =>
-                        Effect.sync(() => {
-                          finalized += 1;
-                        }),
-                      );
-                      yield* fork(
-                        Effect.never.pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
-                      );
-                      yield* Deferred.succeed(ready, undefined);
-                      yield* Deferred.await(release);
-                      return text("stale");
-                    }),
-                }),
-              );
-              nested(target, yield* he("main", { children: ["native", pending] }));
-              replace = () =>
-                he("p", { children: ["replacement"] }).pipe(
-                  Effect.map((node) => nested(target, node)),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                const target = yield* he("section");
+                const pending = component(() =>
+                  Sync.succeed({
+                    setup: ({ fork }) =>
+                      Effect.gen(function* () {
+                        yield* Effect.addFinalizer(() =>
+                          Effect.sync(() => {
+                            finalized += 1;
+                          }),
+                        );
+                        yield* fork(
+                          Effect.never.pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
+                        );
+                        yield* Deferred.succeed(ready, undefined);
+                        yield* Deferred.await(release);
+                        return text("stale");
+                      }),
+                  }),
                 );
-              return target;
-            }),
-        }),
+                yield* nested(target, yield* he("main", { children: ["native", pending] }));
+                replace = () =>
+                  he("p", { children: ["replacement"] }).pipe(
+                    Effect.flatMap((node) => nested(target, node)),
+                  );
+                return target;
+              }),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(ready));
@@ -1358,20 +1429,22 @@ describe("replacement resource boundaries", () => {
     const { h, errors } = await harness();
     const parent = document.createElement("div");
     const ready = gate();
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Deferred.succeed(ready, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(Effect.die("interruption cleanup defect")),
-            ),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Deferred.succeed(ready, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(Effect.die("interruption cleanup defect")),
+              ),
+          }),
+        ),
       ),
     );
     await run(Deferred.await(ready));
-    h(parent, text("next"));
+    Effect.runSync(h(parent, text("next")));
     await rendered(parent, "next");
     expect(errors.map((failure) => failure.operation)).toEqual(["cleanup"]);
     expect(Cause.pretty(errors[0]?.cause ?? Cause.empty)).toContain("interruption cleanup defect");
@@ -1381,28 +1454,30 @@ describe("replacement resource boundaries", () => {
     const { h, errors } = await harness();
     const parent = document.createElement("div");
     const ready = gate();
-    h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he, h: nested }) =>
-            Effect.gen(function* () {
-              const target = yield* he("section");
-              nested(
-                target,
-                component(() =>
-                  Result.succeed({
-                    setup: ({ he: childElement }) =>
-                      childElement("p", { children: ["child"] }).pipe(
-                        Effect.tap(() => Deferred.succeed(ready, undefined)),
-                      ),
-                  }),
-                ),
-              );
-              yield* Deferred.await(ready);
-              return yield* he("main", { children: ["before", target, "after"] });
-            }),
-        }),
+    Effect.runSync(
+      h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he, h: nested }) =>
+              Effect.gen(function* () {
+                const target = yield* he("section");
+                yield* nested(
+                  target,
+                  component(() =>
+                    Sync.succeed({
+                      setup: ({ he: childElement }) =>
+                        childElement("p", { children: ["child"] }).pipe(
+                          Effect.tap(() => Deferred.succeed(ready, undefined)),
+                        ),
+                    }),
+                  ),
+                );
+                yield* Deferred.await(ready);
+                return yield* he("main", { children: ["before", target, "after"] });
+              }),
+          }),
+        ),
       ),
     );
     await rendered(parent, "beforechildafter");
@@ -1414,23 +1489,25 @@ describe("replacement resource boundaries", () => {
     const parent = document.createElement("div");
     const supplied = text("duplicate");
     let cleaned = false;
-    h(parent, [
-      text("before"),
-      component(() =>
-        Result.succeed({
-          setup: () =>
-            Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                cleaned = true;
-              }),
-            ).pipe(Effect.as([supplied, supplied])),
-        }),
-      ),
-      text("after"),
-    ]);
+    Effect.runSync(
+      h(parent, [
+        text("before"),
+        component(() =>
+          Sync.succeed({
+            setup: () =>
+              Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  cleaned = true;
+                }),
+              ).pipe(Effect.as([supplied, supplied])),
+          }),
+        ),
+        text("after"),
+      ]),
+    );
     await nextFailure();
     await rendered(parent, "beforeafter");
-    expect(supplied.parentNode).toBeNull();
+    expect(nativeNode(supplied).parentNode).toBeNull();
     await close();
     expect(cleaned).toBe(true);
     expect(errors.map((failure) => failure.operation)).toEqual(["validation"]);
@@ -1442,20 +1519,22 @@ it("cleans setup resources and reports a typed construction failure", async () =
   const { h, errors } = await harness();
   const parent = document.createElement("div");
   const cleaned = gate();
-  h(
-    parent,
-    component(() =>
-      Result.succeed({
-        setup: ({ he }) =>
-          Effect.gen(function* () {
-            yield* Effect.addFinalizer(() => Deferred.succeed(cleaned, undefined));
-            return yield* he("div", { attrs: { onclick: Option.some("unsupported") } });
-          }),
-      }),
+  Effect.runSync(
+    h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          setup: ({ he }) =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() => Deferred.succeed(cleaned, undefined));
+              return yield* he("div", { attrs: { onclick: Option.some("unsupported") } });
+            }),
+        }),
+      ),
     ),
   );
   await run(Deferred.await(cleaned));
-  h(parent, text("recovered"));
+  Effect.runSync(h(parent, text("recovered")));
   await rendered(parent, "recovered");
   expect(errors.map((failure) => failure.operation)).toEqual(["setup"]);
   expect(Cause.hasFails(errors[0]?.cause ?? Cause.empty)).toBe(true);

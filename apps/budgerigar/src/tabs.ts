@@ -1,20 +1,31 @@
-import { Result, Effect, Match, Option } from "effect";
-import { component } from "./framework";
+import { Effect, Match, Option } from "effect";
+import { component, nativeNode, type ElementOutput } from "./framework";
 import { occurrenceId } from "./occurrence";
+import * as Sync from "./sync-public";
 
 const names = ["Overview", "Details", "Settings"] as const;
 const navigation = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 export const Tabs = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he, signal, derive, events, subscribe, batch }) =>
       Effect.gen(function* () {
         const id = occurrenceId("tabs");
         const focused = yield* signal({ initial: 0 });
         const selected = yield* signal({ initial: 0 });
-        const buttons: HTMLButtonElement[] = [];
-        const panels: HTMLElement[] = [];
+        const buttons: ElementOutput<HTMLButtonElement>[] = [];
+        const panels: ElementOutput<HTMLElement>[] = [];
         const focusTab = (next: number) =>
-          focused.set(next).pipe(Effect.andThen(Effect.sync(() => buttons[next]?.focus())));
+          focused
+            .set(next)
+            .pipe(
+              Effect.andThen(
+                Effect.sync(() =>
+                  Option.fromUndefinedOr(buttons[next]).pipe(
+                    Option.map((button) => nativeNode(button).focus()),
+                  ),
+                ),
+              ),
+            );
         for (const [index, name] of names.entries()) {
           const tabIndex = yield* derive({
             sources: { focused },
@@ -67,7 +78,7 @@ export const Tabs = component(() =>
           );
           yield* subscribe(yield* events(button, "click"), () =>
             batch(selected.set(index).pipe(Effect.andThen(focused.set(index)))).pipe(
-              Effect.andThen(Effect.sync(() => button.focus())),
+              Effect.andThen(Effect.sync(() => nativeNode(button).focus())),
             ),
           );
           yield* subscribe(yield* events(button, "focus"), () => focused.set(index));

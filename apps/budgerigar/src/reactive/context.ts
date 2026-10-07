@@ -1,4 +1,7 @@
-import { Effect, Result, Option, Stream, type Scope } from "effect";
+import { Context, Effect, Result, Option, Stream, type Scope } from "effect";
+import { capturedWork } from "~/deferred-context";
+import { nativeNode, type ElementOutput } from "~/output";
+import { fromResultLazy, withContext, runResult, gen as syncGen, type Sync } from "~/sync";
 import { lazy } from "~/synchronous";
 import {
   checkEventsSync,
@@ -24,6 +27,7 @@ import {
   deriveSync,
   makeCell,
   readSync,
+  readonlySignal,
   type Signal,
   type WritableSignal,
   type SignalOptions,
@@ -32,7 +36,7 @@ import {
   type Equality,
 } from "./signal";
 
-export const synchronousReactive = (runtime: ReactiveRuntime) => {
+const resultReactive = (runtime: ReactiveRuntime) => {
   const valid = () =>
     requireValidSync(runtime.lifetime.active(), "Reactive runtime has been disposed");
   const signal = <A>(options: SignalOptions<A>): Result.Result<WritableSignal<A>, ReactiveError> =>
@@ -173,8 +177,8 @@ export const synchronousReactive = (runtime: ReactiveRuntime) => {
 };
 
 export const reactive = (runtime: ReactiveRuntime) => {
-  const sync = synchronousReactive(runtime);
-  return {
+  const sync = resultReactive(runtime);
+  const helpers = {
     signal: <A>(options: SignalOptions<A>) => lazy(() => sync.signal(options)),
     read: <A>(signal: Signal<A>) => lazy(() => sync.read(signal)),
     derive: <S extends Sources, A>(options: {
@@ -186,14 +190,14 @@ export const reactive = (runtime: ReactiveRuntime) => {
     batch: <A, E, R>(work: Effect.Effect<A, E, R>) => runBatch({ runtime, work }),
     source: <A>() => lazy(() => sync.source<A>()),
     bindValue: (options: {
-      element: HTMLInputElement | HTMLTextAreaElement;
+      element: ElementOutput<HTMLInputElement | HTMLTextAreaElement, unknown>;
       signal: WritableSignal<string>;
-    }) => lazy(() => sync.bindValue(options)),
+    }) => lazy(() => sync.bindValue({ ...options, element: nativeNode(options.element) })),
     events: <K extends keyof HTMLElementEventMap>(
-      element: HTMLElement,
+      element: ElementOutput<HTMLElement, unknown>,
       name: K,
       options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
-    ) => lazy(() => sync.events(element, name, options)),
+    ) => lazy(() => sync.events(nativeNode(element), name, options)),
     fold: <A, B>(options: {
       events: EventStream<A>;
       initial: B;
@@ -201,21 +205,144 @@ export const reactive = (runtime: ReactiveRuntime) => {
       equals?: Equality<B>;
     }) => lazy(() => sync.fold(options)),
     toStream: <A>(events: EventStream<A>) => lazy(() => sync.toStream(events)),
-    subscribe: <A>(
+    subscribe: <A, E, R>(
       events: EventStream<A>,
-      handler: (value: A) => Effect.Effect<unknown, unknown, Scope.Scope>,
-    ) => lazy(() => sync.subscribe(events, handler)),
-    subscribeStream: <A, E>(
-      stream: Stream.Stream<A, E, Scope.Scope>,
-      handler: (value: A) => Effect.Effect<unknown, unknown, Scope.Scope>,
-    ) => lazy(() => sync.subscribeStream(stream, handler)),
-    foldStream: <A, B, E>(options: {
-      stream: Stream.Stream<A, E, Scope.Scope>;
+      handler: (value: A) => Effect.Effect<unknown, E, R>,
+    ): Effect.Effect<void, ReactiveError, Exclude<R, Scope.Scope>> =>
+      Effect.context<Exclude<R, Scope.Scope>>().pipe(
+        Effect.flatMap((context) =>
+          lazy(() =>
+            sync.subscribe(events, (value) =>
+              capturedWork({ work: Effect.suspend(() => handler(value)), context }),
+            ),
+          ),
+        ),
+      ),
+    subscribeStream: <A, E, R, EH, RH>(
+      stream: Stream.Stream<A, E, R>,
+      handler: (value: A) => Effect.Effect<unknown, EH, RH>,
+    ): Effect.Effect<void, ReactiveError, Exclude<R | RH, Scope.Scope>> =>
+      Effect.context<Exclude<R | RH, Scope.Scope>>().pipe(
+        Effect.flatMap((context) =>
+          lazy(() =>
+            runtime.lifetime.registerWork(
+              capturedWork({
+                context,
+                work: Stream.runForEach(stream, (value) =>
+                  Effect.suspend(() => handler(value)).pipe(
+                    Effect.catchCause((cause) =>
+                      reportFailure({ runtime, resource: stream, cause }),
+                    ),
+                  ),
+                ).pipe(
+                  Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
+                ),
+              }),
+            ),
+          ),
+        ),
+      ),
+    foldStream: <A, B, E, R>(options: {
+      stream: Stream.Stream<A, E, R>;
       initial: B;
       reducer: (options: { readonly state: B; readonly event: A }) => B;
       equals?: Equality<B>;
-    }) => lazy(() => sync.foldStream(options)),
+    }): Effect.Effect<Signal<B>, ReactiveError, Exclude<R, Scope.Scope>> =>
+      Effect.gen(function* () {
+        const cell = yield* helpers.signal(options);
+        yield* helpers.subscribeStream(options.stream, (event) =>
+          cell.update((state) => options.reducer({ state, event })),
+        );
+        return readonlySignal(cell);
+      }),
   };
+  return helpers;
+};
+
+export const synchronousReactive = (runtime: ReactiveRuntime) => {
+  const sync = resultReactive(runtime);
+  const helpers = {
+    signal: <A>(options: SignalOptions<A>) => fromResultLazy(() => sync.signal(options)),
+    read: <A>(signal: Signal<A>) => fromResultLazy(() => sync.read(signal)),
+    derive: <S extends Sources, A>(options: {
+      sources: S;
+      compute: (values: Values<S>) => A;
+      equals?: Equality<A>;
+    }) => fromResultLazy(() => sync.derive(options)),
+    combine: <S extends Sources>(sources: S) => fromResultLazy(() => sync.combine(sources)),
+    batch: <A, E, R>(work: () => Sync<A, E, R>): Sync<A, E | ReactiveError, R> =>
+      withContext((context) =>
+        sync.batch(() =>
+          runResult({
+            computation: work(),
+            context: Context.add(
+              context,
+              CurrentTransaction,
+              Option.fromUndefinedOr(synchronousTransactions.get(runtime.coordinator)),
+            ),
+          }),
+        ),
+      ),
+    source: <A>() => fromResultLazy(() => sync.source<A>()),
+    bindValue: (options: {
+      element: ElementOutput<HTMLInputElement | HTMLTextAreaElement, unknown>;
+      signal: WritableSignal<string>;
+    }) =>
+      fromResultLazy(() => sync.bindValue({ ...options, element: nativeNode(options.element) })),
+    events: <K extends keyof HTMLElementEventMap>(
+      element: ElementOutput<HTMLElement, unknown>,
+      name: K,
+      options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
+    ) => fromResultLazy(() => sync.events(nativeNode(element), name, options)),
+    fold: <A, B>(options: {
+      events: EventStream<A>;
+      initial: B;
+      reducer: (options: { readonly state: B; readonly event: A }) => B;
+      equals?: Equality<B>;
+    }) => fromResultLazy(() => sync.fold(options)),
+    toStream: <A>(events: EventStream<A>) => fromResultLazy(() => sync.toStream(events)),
+    subscribe: <A, E, R>(
+      events: EventStream<A>,
+      handler: (value: A) => Effect.Effect<unknown, E, R>,
+    ): Sync<void, ReactiveError, Exclude<R, Scope.Scope>> =>
+      withContext((context) =>
+        sync.subscribe(events, (value) =>
+          capturedWork({ work: Effect.suspend(() => handler(value)), context }),
+        ),
+      ),
+    subscribeStream: <A, E, R, EH, RH>(
+      stream: Stream.Stream<A, E, R>,
+      handler: (value: A) => Effect.Effect<unknown, EH, RH>,
+    ): Sync<void, ReactiveError, Exclude<R | RH, Scope.Scope>> =>
+      withContext((context) =>
+        runtime.lifetime.registerWork(
+          capturedWork({
+            context,
+            work: Stream.runForEach(stream, (value) =>
+              Effect.suspend(() => handler(value)).pipe(
+                Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
+              ),
+            ).pipe(
+              Effect.catchCause((cause) => reportFailure({ runtime, resource: stream, cause })),
+            ),
+          }),
+        ),
+      ),
+    foldStream: <A, B, E, R>(options: {
+      stream: Stream.Stream<A, E, R>;
+      initial: B;
+      reducer: (options: { readonly state: B; readonly event: A }) => B;
+      equals?: Equality<B>;
+    }): Sync<Signal<B>, ReactiveError, Exclude<R, Scope.Scope>> =>
+      syncGen(function* () {
+        const cell = yield* helpers.signal(options);
+        yield* helpers.subscribeStream(options.stream, (event) =>
+          cell.update((state) => options.reducer({ state, event })),
+        );
+        return readonlySignal(cell);
+      }),
+  };
+  return helpers;
 };
 export type SynchronousReactiveContext = ReturnType<typeof synchronousReactive>;
 export type ReactiveContext = ReturnType<typeof reactive>;

@@ -1,14 +1,15 @@
-import { Deferred, Effect, Option, Result } from "effect";
+import { Deferred, Effect, Option } from "effect";
 import { component, type Signal } from "./framework";
+import * as Sync from "./sync-public";
 
 /** Stable child description closes over parent state; its occurrence owns progress. */
 const loadingContent = (options: { title: Signal<string>; release: Deferred.Deferred<void> }) =>
   component(({ signal }) =>
-    Result.gen(function* () {
+    Sync.gen(function* () {
       const progress = yield* signal({ initial: "Loading…" });
       return {
         fallback: ({ he, events, subscribe }) =>
-          Result.gen(function* () {
+          Sync.gen(function* () {
             const finish = yield* he("button", { children: ["Finish loading"] });
             yield* subscribe(yield* events(finish, "click"), () =>
               Deferred.succeed(options.release, undefined),
@@ -54,7 +55,7 @@ const loadingContent = (options: { title: Signal<string>; release: Deferred.Defe
 
 /** An explicit gate makes the loading example deterministic without a network request. */
 export const LoadingExample = component(({ signal }) =>
-  Result.gen(function* () {
+  Sync.gen(function* () {
     const title = yield* signal({ initial: "First title" });
     const release = Deferred.makeUnsafe<void>();
     const content = loadingContent({ title, release });

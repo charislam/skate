@@ -1,10 +1,11 @@
-import { Result, Effect, Match, Option } from "effect";
+import { Effect, Match, Option } from "effect";
 import { component, mapEvents, mergeEvents } from "./framework";
+import * as Sync from "./sync-public";
 
 type Action = "increment" | "decrement" | "reset";
 
 export const Counter = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he, events, fold, derive }) =>
       Effect.gen(function* () {
         const increment = yield* he("button", {

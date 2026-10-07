@@ -9,7 +9,10 @@ import {
   type MountFailure,
   type WritableSignal,
 } from "./framework";
+import { nativeNode } from "./output";
+import { importTestNode, testText } from "./output-test-helpers";
 import { signalData } from "./reactive/signal";
+import * as Sync from "./sync-public";
 import { rendered } from "./test-helpers";
 
 const run = Effect.runPromise;
@@ -43,7 +46,7 @@ const harness = async (onError: (failure: MountFailure) => void = () => {}) => {
   return { app, parent, close, scope, failures };
 };
 const text = (value: string) =>
-  component(() => Result.succeed({ setup: ({ he }) => he("span", { children: [value] }) }));
+  component(() => Sync.succeed({ setup: ({ he }) => he("span", { children: [value] }) }));
 const shows = (parent: Node, value: string) =>
   rendered({ parent, check: () => parent.textContent === value });
 const installed = (parent: Node) => rendered({ parent, check: () => parent.childNodes.length > 0 });
@@ -53,11 +56,11 @@ describe("signal-selected subtrees", () => {
     const { app, parent } = await harness();
     let setups = 0;
     const page = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.sync(() => {
             setups += 1;
-            return document.createTextNode("page");
+            return testText("page");
           }),
       }),
     );
@@ -67,15 +70,15 @@ describe("signal-selected subtrees", () => {
     expect(setups).toBe(0);
     await run(selected.set(Option.some(page)));
     expect(setups).toBe(0);
-    app.h(parent, tree);
+    Effect.runSync(app.h(parent, tree));
     await shows(parent, "beforepageafter");
-    const node = sibling.nextSibling?.nextSibling;
+    const node = nativeNode(sibling).nextSibling?.nextSibling;
     await run(selected.set(Option.some(page)));
     expect(setups).toBe(1);
-    expect(sibling.nextSibling?.nextSibling).toBe(node);
+    expect(nativeNode(sibling).nextSibling?.nextSibling).toBe(node);
     await run(selected.set(Option.some(text("other"))));
     await shows(parent, "beforeotherafter");
-    expect(tree.firstChild).toBe(sibling);
+    expect(nativeNode(tree).firstChild).toBe(nativeNode(sibling));
     await run(selected.set(Option.none()));
     await shows(parent, "beforeafter");
   });
@@ -88,7 +91,7 @@ describe("signal-selected subtrees", () => {
     let warnings = 0;
     const values: Array<WritableSignal<number>> = [];
     const page = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: (ctx) =>
           Effect.gen(function* () {
             setups += 1;
@@ -101,7 +104,7 @@ describe("signal-selected subtrees", () => {
             const node = yield* ctx.he("output", { children: [label] });
             yield* Effect.addFinalizer(() =>
               Effect.gen(function* () {
-                expect(parent.contains(node)).toBe(false);
+                expect(parent.contains(nativeNode(node))).toBe(false);
                 yield* Deferred.succeed(cleaning, undefined);
                 yield* Deferred.await(finish);
               }),
@@ -111,16 +114,16 @@ describe("signal-selected subtrees", () => {
       }),
     );
     const warning = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.sync(() => {
             warnings += 1;
-            return document.createTextNode("denied");
+            return testText("denied");
           }),
       }),
     );
     const selected = await run(app.signal({ initial: Option.some(page) }));
-    app.h(parent, selected);
+    Effect.runSync(app.h(parent, selected));
     await shows(parent, "0");
     const counter = values[0];
     expect(counter).toBeDefined();
@@ -149,20 +152,20 @@ describe("signal-selected subtrees", () => {
     const release = gate();
     let starts = 0;
     const slow = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.gen(function* () {
             starts += 1;
             yield* Effect.addFinalizer(() => Deferred.succeed(cancelled, undefined));
             yield* Deferred.succeed(started, undefined);
             yield* Deferred.await(release);
-            return document.createTextNode("obsolete");
+            return testText("obsolete");
           }),
       }),
     );
     const first = await run(app.signal<Option.Option<Component>>({ initial: Option.some(slow) }));
     const second = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
-    app.h(parent, [first, second]);
+    Effect.runSync(app.h(parent, [first, second]));
     await run(Deferred.await(started));
     await run(first.set(Option.some(slow)));
     expect(starts).toBe(1);
@@ -179,17 +182,17 @@ describe("signal-selected subtrees", () => {
     const { app, parent } = await harness();
     let starts = 0;
     const branch = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.sync(() => {
             starts += 1;
-            return document.createTextNode("branch");
+            return testText("branch");
           }),
       }),
     );
     const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
     const label = await run(app.signal({ initial: "original" }));
-    app.h(parent, await run(app.he("div", { children: [label, selected] })));
+    Effect.runSync(app.h(parent, await run(app.he("div", { children: [label, selected] }))));
     await shows(parent, "original");
     await run(
       app.batch(
@@ -234,7 +237,7 @@ describe("signal-selected subtrees", () => {
     );
     let occurrences = 0;
     const branch = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: ({ he }) =>
           Effect.gen(function* () {
             occurrences += 1;
@@ -248,13 +251,13 @@ describe("signal-selected subtrees", () => {
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
     );
-    app.h(parent, [selected, selected]);
+    Effect.runSync(app.h(parent, [selected, selected]));
     await shows(parent, "rootnestedrootnested");
     expect(occurrences).toBe(2);
     await run(label.set("new"));
     expect(parent.textContent).toBe("newnestednewnested");
     await run(
-      nested.set(Option.some(component(() => Result.succeed({ setup: () => Effect.succeed([]) })))),
+      nested.set(Option.some(component(() => Sync.succeed({ setup: () => Effect.succeed([]) })))),
     );
     await shows(parent, "newnew");
     await run(selected.set(Option.none()));
@@ -280,7 +283,7 @@ describe("signal-selected subtrees", () => {
     });
     let attempts = 0;
     const failed = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.sync(() => {
             attempts += 1;
@@ -290,7 +293,7 @@ describe("signal-selected subtrees", () => {
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(failed) }),
     );
-    app.h(parent, selected);
+    Effect.runSync(app.h(parent, selected));
     await run(Deferred.await(error));
     expect(attempts).toBe(1);
     expect(failures[0]?.subject.kind).toBe("component");
@@ -315,7 +318,7 @@ describe("signal-selected subtrees", () => {
     const release = gate();
     let finalizers = 0;
     const branch = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: () =>
           Effect.gen(function* () {
             yield* Effect.addFinalizer(() =>
@@ -325,22 +328,22 @@ describe("signal-selected subtrees", () => {
                 yield* Deferred.await(release);
               }),
             );
-            return document.createTextNode("old");
+            return testText("old");
           }),
       }),
     );
     const selected = await run(
       app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
     );
-    app.h(parent, selected);
+    Effect.runSync(app.h(parent, selected));
     await shows(parent, "old");
     await run(selected.set(Option.none()));
     await run(Deferred.await(cleaning));
-    app.h(parent, text("late"));
+    Effect.runSync(app.h(parent, text("late")));
     const closing = close();
     expect(Exit.isFailure(await run(selected.get.pipe(Effect.exit)))).toBe(true);
     expect(Exit.isFailure(await run(app.he("div").pipe(Effect.exit)))).toBe(true);
-    app.h(parent, text("ignored"));
+    Effect.runSync(app.h(parent, text("ignored")));
     await open(release);
     await closing;
     expect(finalizers).toBe(1);
@@ -349,7 +352,7 @@ describe("signal-selected subtrees", () => {
 
   it("demonstrates all access states and preserves reachable controls", async () => {
     const { app, parent } = await harness();
-    app.h(parent, AccessExample);
+    Effect.runSync(app.h(parent, AccessExample));
     await rendered({ parent, check: () => parent.querySelectorAll("button").length === 3 });
     const click = (label: string) =>
       Array.from(parent.querySelectorAll("button"))
@@ -386,7 +389,7 @@ describe("application reactive ownership", () => {
       }),
     );
     const branch = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: ({ he }) => he("p", { children: [label], props: { hidden: false } }),
       }),
     );
@@ -403,8 +406,8 @@ describe("application reactive ownership", () => {
         },
       }),
     );
-    app.h(parent, node);
-    app.h(right, selected);
+    Effect.runSync(app.h(parent, node));
+    Effect.runSync(app.h(right, selected));
     await Promise.all([shows(parent, "LRLR"), shows(right, "LR")]);
     const observations: string[] = [];
     await run(
@@ -424,7 +427,7 @@ describe("application reactive ownership", () => {
     );
     expect(parent.textContent).toBe("ABAB");
     expect(right.textContent).toBe("AB");
-    app.h(parent, []);
+    Effect.runSync(app.h(parent, []));
     await shows(parent, "");
     await run(leftValue.set("C"));
     expect(right.textContent).toBe("CB");
@@ -441,12 +444,14 @@ describe("application reactive ownership", () => {
   it("rejects descendant, sibling, separate-root and disposed resources", async () => {
     const { app, parent, scope } = await harness();
     const ready = Deferred.makeUnsafe<ComponentContext>();
-    app.h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("div"))),
-        }),
+    Effect.runSync(
+      app.h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: (ctx) => Deferred.succeed(ready, ctx).pipe(Effect.andThen(ctx.he("div"))),
+          }),
+        ),
       ),
     );
     const child = await run(Deferred.await(ready));
@@ -468,12 +473,14 @@ describe("application reactive ownership", () => {
     ).toBe(true);
     const siblingReady = Deferred.makeUnsafe<ComponentContext>();
     const target = document.createElement("div");
-    app.h(
-      target,
-      component(() =>
-        Result.succeed({
-          setup: (ctx) => Deferred.succeed(siblingReady, ctx).pipe(Effect.andThen(ctx.he("div"))),
-        }),
+    Effect.runSync(
+      app.h(
+        target,
+        component(() =>
+          Sync.succeed({
+            setup: (ctx) => Deferred.succeed(siblingReady, ctx).pipe(Effect.andThen(ctx.he("div"))),
+          }),
+        ),
       ),
     );
     const sibling = await run(Deferred.await(siblingReady));
@@ -481,7 +488,7 @@ describe("application reactive ownership", () => {
       Exit.isFailure(await run(sibling.he("div", { children: [owned] }).pipe(Effect.exit))),
     ).toBe(true);
     await rendered({ parent, check: () => parent.querySelector("div") !== null });
-    app.h(parent, []);
+    Effect.runSync(app.h(parent, []));
     await rendered({ parent, check: () => parent.childNodes.length === 0 });
     expect(Exit.isFailure(await run(owned.get.pipe(Effect.exit)))).toBe(true);
   });
@@ -492,7 +499,7 @@ describe("application reactive ownership", () => {
     const coordinator = signalData(selected).participant;
     const childSignals: Array<typeof coordinator> = [];
     const branch = component(() =>
-      Result.succeed({
+      Sync.succeed({
         setup: ({ signal, derive, he }) =>
           Effect.gen(function* () {
             const local = yield* signal({ initial: 0 });
@@ -502,7 +509,7 @@ describe("application reactive ownership", () => {
           }),
       }),
     );
-    app.h(parent, selected);
+    Effect.runSync(app.h(parent, selected));
     await installed(parent);
     for (let index = 0; index < 5; index += 1) {
       await run(selected.set(Option.some(branch)));
@@ -512,7 +519,7 @@ describe("application reactive ownership", () => {
       expect(childSignals.every((signal) => !signal.lifetime.active())).toBe(true);
       expect(coordinator.dependents.size).toBe(1);
     }
-    app.h(parent, []);
+    Effect.runSync(app.h(parent, []));
     await rendered({ parent, check: () => parent.childNodes.length === 0 });
     expect(coordinator.dependents.size).toBe(0);
   });
@@ -537,18 +544,22 @@ describe("application reactive ownership", () => {
     const cleaning = gate();
     const release = gate();
     const value = await run(app.signal({ initial: "root" }));
-    app.h(
-      parent,
-      component(() =>
-        Result.succeed({
-          setup: ({ he }) =>
-            Effect.gen(function* () {
-              yield* Effect.addFinalizer(() =>
-                Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(release))),
-              );
-              return yield* he("p", { children: [value] });
-            }),
-        }),
+    Effect.runSync(
+      app.h(
+        parent,
+        component(() =>
+          Sync.succeed({
+            setup: ({ he }) =>
+              Effect.gen(function* () {
+                yield* Effect.addFinalizer(() =>
+                  Deferred.succeed(cleaning, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  ),
+                );
+                return yield* he("p", { children: [value] });
+              }),
+          }),
+        ),
       ),
     );
     await shows(parent, "root");
@@ -587,15 +598,15 @@ it("supports the direct root access derivation and reactive native values", asyn
   const node = await run(
     app.he("div", { children: [selected], props: { hidden }, attrs: { title } }),
   );
-  app.h(parent, node);
+  Effect.runSync(app.h(parent, node));
   await installed(parent);
   await run(access.set(Option.some(false)));
   await shows(parent, "denied");
   await run(access.set(Option.some(true)));
   await shows(parent, "allowed");
   await run(app.batch(hidden.set(true).pipe(Effect.andThen(title.set(Option.some("changed"))))));
-  expect(node.hidden).toBe(true);
-  expect(node.title).toBe("changed");
+  expect(nativeNode(node).hidden).toBe(true);
+  expect(nativeNode(node).title).toBe("changed");
   await run(access.set(Option.none()));
   await shows(parent, "");
 });
@@ -606,7 +617,7 @@ it("rejects invalid initial selections and revalidates unadopted trees before re
     Effect.runSync(Deferred.succeed(failed, failure));
   });
   const original = await run(app.he("p", { children: ["installed"] }));
-  app.h(parent, original);
+  Effect.runSync(app.h(parent, original));
   await shows(parent, "installed");
   for (const invalid of [
     false,
@@ -627,9 +638,9 @@ it("rejects invalid initial selections and revalidates unadopted trees before re
   // Detached construction has no live validation sink: the state can change before adoption.
   // @ts-expect-error Exercise adoption revalidation of an invalid committed payload.
   await run(selected.set(Option.some(false)));
-  app.h(parent, unused);
+  Effect.runSync(app.h(parent, unused));
   await run(Deferred.await(failed));
-  expect(parent.firstChild).toBe(original);
+  expect(parent.firstChild).toBe(nativeNode(original));
   expect(parent.textContent).toBe("installed");
 });
 
@@ -640,27 +651,27 @@ it("prevents late uninterruptible setup from adopting while replacement setup pr
   const finished = gate();
   let replacementStarts = 0;
   const slow = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() => Deferred.succeed(finished, undefined));
           yield* Deferred.succeed(ready, undefined);
           yield* Deferred.await(release).pipe(Effect.uninterruptible);
-          return document.createTextNode("late obsolete result");
+          return testText("late obsolete result");
         }),
     }),
   );
   const replacement = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.sync(() => {
           replacementStarts += 1;
-          return document.createTextNode("latest");
+          return testText("latest");
         }),
     }),
   );
   const selected = await run(app.signal({ initial: Option.some(slow) }));
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await run(Deferred.await(ready));
   await run(selected.set(Option.some(replacement)));
   expect(parent.textContent).toBe("");
@@ -677,7 +688,7 @@ it("skips outgoing derivations when selection retires their owner in the same ba
   const trigger = await run(app.signal({ initial: false }));
   let computations = 0;
   const branch = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: ({ derive, he }) =>
         Effect.gen(function* () {
           const value = yield* derive({
@@ -699,7 +710,7 @@ it("skips outgoing derivations when selection retires their owner in the same ba
   const selected = await run(
     app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
   );
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await shows(parent, "outgoing");
   const before = computations;
   expect(Exit.isFailure(await run(trigger.set(true).pipe(Effect.exit)))).toBe(true);
@@ -716,13 +727,13 @@ it("publishes observations and ordinary DOM while selection cleanup is awaiting"
   const release = gate();
   const observed = gate();
   const branch = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() =>
             Deferred.succeed(cleaning, undefined).pipe(Effect.andThen(Deferred.await(release))),
           );
-          return document.createTextNode("outgoing");
+          return testText("outgoing");
         }),
     }),
   );
@@ -730,7 +741,7 @@ it("publishes observations and ordinary DOM while selection cleanup is awaiting"
     app.signal<Option.Option<Component>>({ initial: Option.some(branch) }),
   );
   const label = await run(app.signal({ initial: "old" }));
-  app.h(parent, await run(app.he("div", { children: [label, selected] })));
+  Effect.runSync(app.h(parent, await run(app.he("div", { children: [label, selected] }))));
   await shows(parent, "oldoutgoing");
   await run(
     app.subscribeStream(await run(selected.changes), (value) =>
@@ -754,7 +765,7 @@ it("keeps latest requests received during failure cleanup and continues after cl
   const cleaning = gate();
   const release = gate();
   const broken = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() =>
@@ -771,7 +782,7 @@ it("keeps latest requests received during failure cleanup and continues after cl
   const selected = await run(
     app.signal<Option.Option<Component>>({ initial: Option.some(broken) }),
   );
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await run(Deferred.await(cleaning));
   await run(selected.set(Option.some(text("latest"))));
   await open(release);
@@ -788,21 +799,22 @@ it("cleans selected adoption failures and retries only after a changed definitio
   let cleanups = 0;
   const cleaned = gate();
   const attached = document.createElement("div");
+  const attachedOutput = await run(importTestNode(attached));
   document.body.append(attached);
   const broken = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.addFinalizer(() =>
           Effect.sync(() => {
             cleanups += 1;
           }).pipe(Effect.andThen(Deferred.succeed(cleaned, undefined))),
-        ).pipe(Effect.as(attached)),
+        ).pipe(Effect.as(attachedOutput)),
     }),
   );
   const selected = await run(
     app.signal<Option.Option<Component>>({ initial: Option.some(broken) }),
   );
-  app.h(parent, [document.createTextNode("sibling"), selected]);
+  Effect.runSync(app.h(parent, [testText("sibling"), selected]));
   const failure = await run(Deferred.await(failed));
   expect(failure.operation).toBe("validation");
   await run(Deferred.await(cleaned));
@@ -821,16 +833,16 @@ it("preserves root batch conflicts and cancels pending batches on shutdown", asy
   const { app, parent, close } = await harness();
   let obsoleteStarts = 0;
   const obsolete = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.sync(() => {
           obsoleteStarts += 1;
-          return document.createTextNode("obsolete");
+          return testText("obsolete");
         }),
     }),
   );
   const selected = await run(app.signal<Option.Option<Component>>({ initial: Option.none() }));
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await installed(parent);
   const staged = gate();
   const release = gate();
@@ -891,7 +903,7 @@ it("does not visit unrelated root signals or selection regions during commits", 
         flushes += 1;
       }),
   });
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await installed(parent);
   await run(selected.set(Option.some(text("selected"))));
   await shows(parent, "selected");
@@ -927,22 +939,24 @@ it("interrupts root work before descendant finalizers and closes application res
     ),
   );
   await run(Deferred.await(ready));
-  app.h(
-    parent,
-    component(() =>
-      Result.succeed({
-        setup: () =>
-          Effect.gen(function* () {
-            yield* Effect.addFinalizer(() =>
-              Effect.gen(function* () {
-                expect(interrupted).toBe(true);
-                expect(Exit.isFailure(yield* value.get.pipe(Effect.exit))).toBe(true);
-                order.push("child");
-              }),
-            );
-            return document.createTextNode("child");
-          }),
-      }),
+  Effect.runSync(
+    app.h(
+      parent,
+      component(() =>
+        Sync.succeed({
+          setup: () =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  expect(interrupted).toBe(true);
+                  expect(Exit.isFailure(yield* value.get.pipe(Effect.exit))).toBe(true);
+                  order.push("child");
+                }),
+              );
+              return testText("child");
+            }),
+        }),
+      ),
     ),
   );
   await shows(parent, "child");
@@ -966,7 +980,7 @@ it("re-arms failed selection even when None is coalesced before the next setup",
     );
   });
   const failed = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.sync(() => {
           attempts += 1;
@@ -976,7 +990,7 @@ it("re-arms failed selection even when None is coalesced before the next setup",
   const selected = await run(
     app.signal<Option.Option<Component>>({ initial: Option.some(failed) }),
   );
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await run(Deferred.await(first));
   await run(selected.set(Option.some(failed)));
   expect(attempts).toBe(1);
@@ -996,7 +1010,7 @@ it("shuts down during pending uninterruptible selection setup without adopting i
   const release = gate();
   let cleanups = 0;
   const branch = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() =>
@@ -1006,12 +1020,12 @@ it("shuts down during pending uninterruptible selection setup without adopting i
           );
           yield* Deferred.succeed(started, undefined);
           yield* Deferred.await(release).pipe(Effect.uninterruptible);
-          return document.createTextNode("late result");
+          return testText("late result");
         }),
     }),
   );
   const selected = await run(app.signal({ initial: Option.some(branch) }));
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await run(Deferred.await(started));
   const closing = close();
   expect(Exit.isFailure(await run(selected.get.pipe(Effect.exit)))).toBe(true);
@@ -1028,9 +1042,9 @@ it("keeps concrete adoption context for failures of root-owned DOM bindings", as
   });
   const label = await run(app.signal({ initial: "original" }));
   const node = await run(app.he("input", { props: { value: label } }));
-  app.h(parent, node);
+  Effect.runSync(app.h(parent, node));
   await installed(parent);
-  Object.defineProperty(node, "value", {
+  Object.defineProperty(nativeNode(node), "value", {
     configurable: true,
     set: () => {
       throw new Error("assignment");
@@ -1050,13 +1064,13 @@ it("revokes adoption authority when a branch supersedes itself during synchronou
   const replacement = text("latest");
   let cleaned = false;
   const obsolete = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.gen(function* () {
-          const node = document.createTextNode("obsolete");
+          const node = testText("obsolete");
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              expect(node.parentNode).toBeNull();
+              expect(nativeNode(node).parentNode).toBeNull();
               cleaned = true;
             }),
           );
@@ -1066,7 +1080,7 @@ it("revokes adoption authority when a branch supersedes itself during synchronou
     }),
   );
   await run(selected.set(Option.some(obsolete)));
-  app.h(parent, selected);
+  Effect.runSync(app.h(parent, selected));
   await shows(parent, "latest");
   expect(cleaned).toBe(true);
 });
@@ -1076,11 +1090,11 @@ it("removes partially adopted output before asynchronous failure cleanup while p
   const { app, parent } = await harness((failure) => {
     Effect.runSync(Deferred.succeed(failed, failure));
   });
-  const first = document.createTextNode("partial");
-  const last = document.createTextNode("throws");
+  const first = testText("partial");
+  const last = testText("throws");
   const insert = parent.insertBefore.bind(parent);
   parent.insertBefore = <T extends Node>(node: T, child: Node | null): T => {
-    Match.value(Object.is(node, last)).pipe(
+    Match.value(Object.is(node, nativeNode(last))).pipe(
       Match.when(true, () => {
         throw new Error("native insertion failure");
       }),
@@ -1092,11 +1106,11 @@ it("removes partially adopted output before asynchronous failure cleanup while p
   let cleanupSawAttachedOutput = false;
   const cleaned = gate();
   const broken = component(() =>
-    Result.succeed({
+    Sync.succeed({
       setup: () =>
         Effect.addFinalizer(() =>
           Effect.sync(() => {
-            cleanupSawAttachedOutput = parent.contains(first);
+            cleanupSawAttachedOutput = parent.contains(nativeNode(first));
           }).pipe(Effect.andThen(Deferred.succeed(cleaned, undefined))),
         ).pipe(Effect.as([first, last])),
     }),
@@ -1104,11 +1118,11 @@ it("removes partially adopted output before asynchronous failure cleanup while p
   const selected = await run(
     app.signal<Option.Option<Component>>({ initial: Option.some(broken) }),
   );
-  app.h(parent, [document.createTextNode("sibling"), selected]);
+  Effect.runSync(app.h(parent, [testText("sibling"), selected]));
   const failure = await run(Deferred.await(failed));
   expect(failure.operation).toBe("validation");
   await run(Deferred.await(cleaned));
   expect(cleanupSawAttachedOutput).toBe(false);
   expect(parent.textContent).toBe("sibling");
-  expect(first.parentNode).toBeNull();
+  expect(nativeNode(first).parentNode).toBeNull();
 });

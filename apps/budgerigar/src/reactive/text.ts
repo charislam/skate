@@ -1,4 +1,5 @@
 import { Result, Match } from "effect";
+import { elementOutput, managedNodes } from "~/output";
 import { lazy } from "~/synchronous";
 import { registerBindingSync } from "./dom";
 import { calculateSync, ReactiveError, type ReactiveRuntime } from "./runtime";
@@ -18,6 +19,7 @@ const validateText = (value: unknown) =>
 export const reactiveTextSync = (options: { runtime: ReactiveRuntime; signal: Signal<unknown> }) =>
   Result.gen(function* () {
     const text = document.createTextNode("");
+    managedNodes.add(text);
     yield* registerBindingSync({
       ...options,
       node: text,
@@ -42,4 +44,4 @@ export const reactiveTextSync = (options: { runtime: ReactiveRuntime; signal: Si
   });
 
 export const reactiveText = (options: Parameters<typeof reactiveTextSync>[0]) =>
-  lazy(() => reactiveTextSync(options));
+  lazy(() => reactiveTextSync(options).pipe(Result.map(elementOutput)));

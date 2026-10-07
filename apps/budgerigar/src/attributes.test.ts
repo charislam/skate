@@ -1,8 +1,11 @@
-import { Cause, Effect, Exit, Match, Option, Queue, Result } from "effect";
+import { Cause, Effect, Exit, Match, Option, Queue } from "effect";
 import { describe, expect, it } from "vitest";
 import { construct, type ConstructionError } from "./construction";
 import { component } from "./framework";
+import type { ElementOutput } from "./output";
+import { nativeNode } from "./output";
 import { attributeNameValid, claimDestination, validateAttribute } from "./reactive/dom";
+import * as Sync from "./sync-public";
 import { harness, rendered } from "./test-helpers";
 
 const run = Effect.runPromise;
@@ -49,31 +52,31 @@ describe("reactive attributes and properties", () => {
       }),
     );
     await run(ctx.batch(hint.set(Option.some("new")).pipe(Effect.andThen(disabled.set(true)))));
-    expect(node.title).toBe("old");
-    expect(node.disabled).toBe(false);
+    expect(nativeNode(node).title).toBe("old");
+    expect(nativeNode(node).disabled).toBe(false);
     await adopt(node);
-    expect(node.title).toBe("new");
-    expect(node.disabled).toBe(true);
+    expect(nativeNode(node).title).toBe("new");
+    expect(nativeNode(node).disabled).toBe(true);
     for (const text of ["", "false", "true", "null"]) {
       await run(hint.set(Option.some(text)));
-      expect(node.getAttribute("title")).toBe(text);
+      expect(nativeNode(node).getAttribute("title")).toBe(text);
     }
     await run(present.set(Option.some(true)));
-    expect(node.getAttribute("required")).toBe("");
+    expect(nativeNode(node).getAttribute("required")).toBe("");
     await run(present.set(Option.none()));
-    expect(node.hasAttribute("required")).toBe(false);
+    expect(nativeNode(node).hasAttribute("required")).toBe(false);
     await run(hint.set(Option.none()));
-    expect(node.hasAttribute("title")).toBe(false);
-    expect(parent.querySelector("input")).toBe(node);
+    expect(nativeNode(node).hasAttribute("title")).toBe(false);
+    expect(parent.querySelector("input")).toBe(nativeNode(node));
     const replacement = await run(ctx.he("p"));
     await adopt(replacement);
     await run(hint.set(Option.some("late")));
-    expect(node.hasAttribute("title")).toBe(false);
+    expect(nativeNode(node).hasAttribute("title")).toBe(false);
   });
 
   it("rejects invalid attribute runtime values and names before moving children", async () => {
     const { ctx } = await harness();
-    const child = document.createElement("span");
+    const child = await run(ctx.he("span"));
     for (const value of [
       "bare",
       true,
@@ -90,7 +93,7 @@ describe("reactive attributes and properties", () => {
       >[1];
       const error = await run(ctx.he("div", options).pipe(Effect.flip));
       expect(error._tag).toBe("ConstructionError");
-      expect(child.parentNode).toBeNull();
+      expect(nativeNode(child).parentNode).toBeNull();
     }
     for (const name of [
       "",
@@ -110,10 +113,10 @@ describe("reactive attributes and properties", () => {
         ctx.he("div", { attrs: { [name]: Option.some("x") }, children: [child] }).pipe(Effect.flip),
       );
       expect(error._tag).toBe("ConstructionError");
-      expect(child.parentNode).toBeNull();
+      expect(nativeNode(child).parentNode).toBeNull();
     }
     const node = await run(ctx.he("input", { attrs: { disabled: Option.some("false") } }));
-    expect(node.disabled).toBe(true);
+    expect(nativeNode(node).disabled).toBe(true);
     const staticOwner = { active: true, ownsTarget: () => false, reactiveRuntime: Option.none() };
     const value = await run(ctx.signal({ initial: Option.some("x") }));
     expect(
@@ -130,7 +133,7 @@ describe("reactive attributes and properties", () => {
     const index = await run(ctx.signal({ initial: 0 }));
     const optional = await run(ctx.signal({ initial: Option.some("x") }));
     const child = await run(ctx.he("span"));
-    const errors: Array<Effect.Effect<HTMLElement, ConstructionError>> = [
+    const errors: Array<Effect.Effect<ElementOutput<HTMLElement>, ConstructionError>> = [
       ctx.he("input", {
         attrs: { disabled: Option.none() },
         props: { disabled },
@@ -164,13 +167,13 @@ describe("reactive attributes and properties", () => {
     ];
     for (const effect of errors) {
       expect((await run(effect.pipe(Effect.flip))).message).toContain("Conflicting");
-      expect(child.parentNode).toBeNull();
+      expect(nativeNode(child).parentNode).toBeNull();
     }
     const staticInput = await run(
       ctx.he("input", { attrs: { value: Option.some("default") }, props: { value: "live" } }),
     );
-    expect(staticInput.defaultValue).toBe("default");
-    expect(staticInput.value).toBe("live");
+    expect(nativeNode(staticInput).defaultValue).toBe("default");
+    expect(nativeNode(staticInput).value).toBe("live");
   });
 
   it("validates a candidate before installing any state or DOM, then flushes everything before observations", async () => {
@@ -195,9 +198,9 @@ describe("reactive attributes and properties", () => {
     await adopt(label);
     expect(Exit.isFailure(await run(source.set("invalid").pipe(Effect.exit)))).toBe(true);
     expect(await run(source.get)).toBe("initial");
-    expect(node.title).toBe("initial");
-    expect(node.value).toBe("initial");
-    expect(label.textContent).toBe("initial");
+    expect(nativeNode(node).title).toBe("initial");
+    expect(nativeNode(node).value).toBe("initial");
+    expect(nativeNode(label).textContent).toBe("initial");
     const observations = await run(
       Queue.unbounded<{ value: string; title: string; text: string | null; property: string }>(),
     );
@@ -206,15 +209,15 @@ describe("reactive attributes and properties", () => {
       ctx.subscribeStream(changes, (value) =>
         Queue.offer(observations, {
           value,
-          title: node.title,
-          text: label.textContent,
-          property: node.value,
+          title: nativeNode(node).title,
+          text: nativeNode(label).textContent,
+          property: nativeNode(node).value,
         }),
       ),
     );
     await run(Queue.take(observations));
     await run(source.set("committed"));
-    expect(node.value).toBe("committed");
+    expect(nativeNode(node).value).toBe("committed");
     expect(await run(Queue.take(observations))).toEqual({
       value: "committed",
       title: "committed",
@@ -224,7 +227,7 @@ describe("reactive attributes and properties", () => {
     await run(
       ctx.batch(source.set("aborted").pipe(Effect.andThen(Effect.fail("abort")))).pipe(Effect.exit),
     );
-    expect(node.value).toBe("committed");
+    expect(nativeNode(node).value).toBe("committed");
   });
 
   it("reports a throwing setter once, publishes committed state, recovers later, and skips equal retries", async () => {
@@ -238,7 +241,7 @@ describe("reactive attributes and properties", () => {
     const cause = new Error("setter rejected");
     let actual = "good";
     let attempts = 0;
-    Object.defineProperty(node, "value", {
+    Object.defineProperty(nativeNode(node), "value", {
       configurable: true,
       get: () => actual,
       set: (value: string) => {
@@ -259,11 +262,15 @@ describe("reactive attributes and properties", () => {
     await run(source.set("bad"));
     expect(await run(Queue.take(queue))).toBe("bad");
     expect(await run(source.get)).toBe("bad");
-    expect(label.textContent).toBe("bad");
-    expect(node.value).toBe("good");
+    expect(nativeNode(label).textContent).toBe("bad");
+    expect(nativeNode(node).value).toBe("good");
     expect(failures).toHaveLength(1);
     expect(failures[0]?.operation).toBe("reactive-dom");
-    expect(failures[0]?.resource).toEqual({ element: node, kind: "property", name: "value" });
+    expect(failures[0]?.resource).toEqual({
+      element: nativeNode(node),
+      kind: "property",
+      name: "value",
+    });
     expect(Cause.findDefect(failures[0]?.cause ?? Cause.empty)).toEqual(
       expect.objectContaining({ success: cause }),
     );
@@ -271,7 +278,7 @@ describe("reactive attributes and properties", () => {
     expect(attempts).toBe(1);
     expect(failures).toHaveLength(1);
     await run(source.set("recovered"));
-    expect(node.value).toBe("recovered");
+    expect(nativeNode(node).value).toBe("recovered");
     expect(attempts).toBe(2);
   });
 
@@ -279,13 +286,15 @@ describe("reactive attributes and properties", () => {
     const { ctx, h, parent, target } = await harness();
     const text = await run(ctx.signal({ initial: "ancestor" }));
     const optional = await run(ctx.signal({ initial: Option.some("ancestor") }));
-    ctx.h(
-      target,
-      component(() =>
-        Result.succeed({
-          setup: (child) =>
-            child.he("input", { attrs: { title: optional }, props: { value: text } }),
-        }),
+    Effect.runSync(
+      ctx.h(
+        target,
+        component(() =>
+          Sync.succeed({
+            setup: (child) =>
+              child.he("input", { attrs: { title: optional }, props: { value: text } }),
+          }),
+        ),
       ),
     );
     await rendered({ parent, check: () => parent.querySelector("input") !== null });
@@ -306,7 +315,7 @@ describe("reactive attributes and properties", () => {
       ),
     ).toBe(true);
     const detached = await run(ctx.he("input", { props: { value: text } }));
-    h(document.createElement("div"), detached);
+    Effect.runSync(h(document.createElement("div"), detached));
     await other.close();
     const disposed = await run(other.ctx.he("input").pipe(Effect.flip));
     expect(disposed.message).toContain("disposed");
@@ -328,7 +337,7 @@ describe("reactive attributes and properties", () => {
     );
     const tree = await run(ctx.he("p", { children: [source, bad, good] }));
     await adopt(tree);
-    Object.defineProperty(bad, "value", {
+    Object.defineProperty(nativeNode(bad), "value", {
       configurable: true,
       get: () => "good",
       set: () => {
@@ -337,9 +346,9 @@ describe("reactive attributes and properties", () => {
     });
     await run(source.set("changed"));
     expect(await run(source.get)).toBe("changed");
-    expect(good.value).toBe("changed");
-    expect(good.title).toBe("changed");
-    expect(tree.textContent).toBe("changed");
+    expect(nativeNode(good).value).toBe("changed");
+    expect(nativeNode(good).title).toBe("changed");
+    expect(nativeNode(tree).textContent).toBe("changed");
     expect(failures).toHaveLength(1);
   });
 
@@ -373,7 +382,7 @@ describe("reactive attributes and properties", () => {
         },
       });
       await run(source.set("recovered"));
-      expect(node.value).toBe("recovered");
+      expect(nativeNode(node).value).toBe("recovered");
       expect(failures.every((failure) => failure.operation === "reactive-dom")).toBe(true);
     } finally {
       Option.match(Option.fromUndefinedOr(descriptor), {
@@ -395,7 +404,7 @@ describe("reactive attributes and properties", () => {
     await adopt(node);
     expect(Exit.isFailure(await run(source.set("invalid").pipe(Effect.exit)))).toBe(true);
     expect(await run(source.get)).toBe(false);
-    expect(node.disabled).toBe(false);
+    expect(nativeNode(node).disabled).toBe(false);
     const readonly = { props: { offsetHeight: 1 } } as unknown as NonNullable<
       Parameters<typeof ctx.he<"input">>[1]
     >;
@@ -409,7 +418,7 @@ describe("reactive attributes and properties", () => {
     expect(
       Exit.isFailure(await run(ctx.he("section", { children: [detached] }).pipe(Effect.exit))),
     ).toBe(true);
-    expect(target.contains(node)).toBe(true);
-    expect(detached.parentNode).toBeNull();
+    expect(target.contains(nativeNode(node))).toBe(true);
+    expect(nativeNode(detached).parentNode).toBeNull();
   });
 });

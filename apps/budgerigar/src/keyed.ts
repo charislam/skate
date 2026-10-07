@@ -1,7 +1,10 @@
-import { Match, Option, Result } from "effect";
-import type { Lifecycle, SynchronousContext } from "./framework";
+import { Match, Option, Result, type Scope } from "effect";
+import type { FactoryLifecycle } from "./component";
+import type { Lifecycle, Output, SynchronousContext } from "./framework";
 import { calculateSync, requireValidSync, ReactiveError } from "./reactive/runtime";
 import type { Signal } from "./reactive/signal";
+import type { Normalize, OutputRequirements } from "./requirements";
+import type { Sync } from "./sync";
 
 const RowTypeId = "~budgerigar/Row";
 const ListTypeId = "~budgerigar/KeyedList";
@@ -12,41 +15,63 @@ export interface RowInputs<A> {
   readonly item: Signal<A>;
   readonly index: Signal<number>;
 }
-export interface Row<A, EFactory = unknown, ESetup = unknown, EFallback = unknown> {
+export interface Row<A, R = never, EFactory = unknown, ESetup = unknown, EFallback = unknown> {
   readonly [RowTypeId]: typeof RowTypeId;
+  readonly requirements?: () => R;
   factory(options: {
     readonly context: SynchronousContext;
     readonly inputs: RowInputs<A>;
-  }): Result.Result<Lifecycle<ESetup, EFallback>, EFactory>;
+  }): Sync<Lifecycle<ESetup, EFallback, unknown, unknown, unknown>, EFactory, unknown>;
 }
 
-type Factory<A, EF, ES, EP> = Row<A, EF, ES, EP>["factory"];
-
-/** Specify the item type first, then infer lifecycle errors from the factory. */
+/** Specify the item type first, then infer every lifecycle requirement and error. */
 export const row =
   <A>() =>
-  <EF = never, ES = never, EP = never>(factory: Factory<A, EF, ES, EP>): Row<A, EF, ES, EP> => ({
+  <
+    EF = never,
+    ES = never,
+    EP = never,
+    RF = never,
+    RS = never,
+    RB = never,
+    OS extends Output<unknown> = never,
+    OB extends Output<unknown> = never,
+  >(
+    factory: (options: {
+      readonly context: SynchronousContext;
+      readonly inputs: RowInputs<A>;
+    }) => Sync<FactoryLifecycle<ES, EP, OS, OB, RS, RB>, EF, RF>,
+  ): Row<
+    A,
+    Normalize<Exclude<RF | RS | RB, Scope.Scope>> | OutputRequirements<OS | OB>,
+    EF,
+    ES,
+    EP
+  > => ({
     [RowTypeId]: RowTypeId,
     factory,
   });
 
-export interface KeyedList<A = unknown> {
+export interface KeyedList<A = unknown, R = never> {
   readonly [ListTypeId]: typeof ListTypeId;
+  readonly requirements?: () => R;
   readonly items: Signal<ReadonlyArray<A>>;
   key(item: A): Key;
-  row(item: A): Row<A>;
+  row(item: A): Row<A, unknown>;
 }
 
-export const keyed = <A>(options: {
+type RowRequirements<D> = D extends Row<infer _A, infer R> ? R : never;
+
+export const keyed = <A, D extends Row<A, unknown>>(options: {
   readonly items: Signal<ReadonlyArray<A>>;
   readonly key: (item: A) => Key;
-  readonly row: (item: A) => Row<A>;
-}): KeyedList<A> => ({ ...options, [ListTypeId]: ListTypeId });
+  readonly row: (item: A) => D;
+}): KeyedList<A, RowRequirements<D>> => ({ ...options, [ListTypeId]: ListTypeId });
 
-export const isKeyedList = (value: unknown): value is KeyedList =>
+export const isKeyedList = (value: unknown): value is KeyedList<unknown, unknown> =>
   typeof value === "object" && value !== null && ListTypeId in value;
 
-const isRow = (value: unknown): value is Row<unknown> =>
+const isRow = (value: unknown): value is Row<unknown, unknown> =>
   typeof value === "object" &&
   value !== null &&
   Reflect.get(value, RowTypeId) === RowTypeId &&
@@ -56,7 +81,7 @@ export interface KeyedEntry {
   readonly key: Key;
   readonly item: unknown;
   readonly index: number;
-  readonly descriptor: Row<unknown>;
+  readonly descriptor: Row<unknown, unknown>;
 }
 
 export interface KeyedPlan {
@@ -65,7 +90,7 @@ export interface KeyedPlan {
 }
 
 export const planKeyed = (options: {
-  readonly description: KeyedList;
+  readonly description: KeyedList<unknown, unknown>;
   readonly value: unknown;
 }): Result.Result<KeyedPlan, ReactiveError> =>
   Result.gen(function* () {

@@ -1,6 +1,8 @@
 import { Effect, Option, Scope } from "effect";
 import { expect, it } from "vitest";
 import { checkStructure, construct, ConstructionError, inspect, reserve } from "./construction";
+import { nativeNode } from "./output";
+import { importTestNode } from "./output-test-helpers";
 import { makeReactiveRuntime, reactive, stopReactiveRuntime } from "./reactive";
 
 const owner = { active: true, ownsTarget: () => false, reactiveRuntime: Option.none() };
@@ -32,19 +34,19 @@ it("constructs fresh text nodes from string signals when a reactive runtime exis
         const context = { ...owner, reactiveRuntime: Option.some(runtime) };
         const pending = construct(context)("p", { children: ["Before ", text, " after"] });
         const first = yield* pending;
-        expect(first.childNodes).toHaveLength(3);
-        expect(first.childNodes[1]).toBeInstanceOf(Text);
-        expect(first.childNodes[1]?.textContent).toBe("<strong>count: 0</strong>");
-        expect(first.textContent).toBe("Before <strong>count: 0</strong> after");
-        expect(first.children).toHaveLength(0);
-        yield* inspect({ roots: [first], owner: context });
+        expect(nativeNode(first).childNodes).toHaveLength(3);
+        expect(nativeNode(first).childNodes[1]).toBeInstanceOf(Text);
+        expect(nativeNode(first).childNodes[1]?.textContent).toBe("<strong>count: 0</strong>");
+        expect(nativeNode(first).textContent).toBe("Before <strong>count: 0</strong> after");
+        expect(nativeNode(first).children).toHaveLength(0);
+        yield* inspect({ roots: [nativeNode(first)], owner: context });
 
         yield* text.set("count: 1");
         const second = yield* pending;
-        expect(second.childNodes[1]).not.toBe(first.childNodes[1]);
-        expect(second.textContent).toBe("Before count: 1 after");
+        expect(nativeNode(second).childNodes[1]).not.toBe(nativeNode(first).childNodes[1]);
+        expect(nativeNode(second).textContent).toBe("Before count: 1 after");
         // Construction reads the signal but does not bind an unadopted tree.
-        expect(first.textContent).toBe("Before <strong>count: 0</strong> after");
+        expect(nativeNode(first).textContent).toBe("Before <strong>count: 0</strong> after");
       }),
     ),
   );
@@ -100,14 +102,14 @@ it("permits revalidation only for the request that reserved a tree", async () =>
 it("keeps construction lazy and creates fresh elements on each evaluation", async () => {
   const he = construct(owner);
 
-  const child = document.createTextNode("child");
+  const child = Effect.runSync(importTestNode(document.createTextNode("child")));
   const tree = he("main", { children: [child] });
 
-  expect(child.parentNode).toBeNull();
+  expect(nativeNode(child).parentNode).toBeNull();
 
   const main = await Effect.runPromise(tree);
 
-  expect(main.firstChild).toBe(child);
+  expect(nativeNode(main).firstChild).toBe(nativeNode(child));
 
   const input = he("input", { props: { value: "current" } });
 
@@ -115,8 +117,8 @@ it("keeps construction lazy and creates fresh elements on each evaluation", asyn
   const second = await Effect.runPromise(input);
 
   expect(first).not.toBe(second);
-  expect(first.value).toBe("current");
-  expect(second.parentNode).toBeNull();
+  expect(nativeNode(first).value).toBe("current");
+  expect(nativeNode(second).parentNode).toBeNull();
 });
 
 it("fails effects evaluated after disposal, including those created before disposal", async () => {

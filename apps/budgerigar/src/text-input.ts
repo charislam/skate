@@ -1,9 +1,10 @@
-import { Result, Effect, Match, Option } from "effect";
+import { Effect, Match, Option } from "effect";
 import { component } from "./framework";
 import { occurrenceId } from "./occurrence";
+import * as Sync from "./sync-public";
 
 export const TextInput = component(() =>
-  Result.succeed({
+  Sync.succeed({
     setup: ({ he, signal, derive, bindValue, events, subscribe }) =>
       Effect.gen(function* () {
         const id = occurrenceId("text-input");
