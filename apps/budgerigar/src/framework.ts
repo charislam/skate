@@ -1,14 +1,16 @@
 import {
   Cause,
-  Context,
+  Context as EffectContext,
   Deferred,
   Effect,
   Exit,
   Fiber,
+  Layer,
   Match,
   Option,
   Result,
   Scope,
+  Stream,
 } from "effect";
 import { isComponent, subtreeContext, type Component, type Lifecycle } from "./component";
 import {
@@ -35,6 +37,7 @@ import {
   type Region,
   type Tree,
 } from "./construction";
+import type { Identifier as ContextIdentifier } from "./context";
 import { capturedWork } from "./deferred-context";
 import { isKeyedList } from "./keyed";
 import { activateKeyed, type RowContext } from "./keyed-runtime";
@@ -43,6 +46,8 @@ import {
   makeReactiveRuntime,
   reactive,
   stopReactiveRuntime,
+  type Equality,
+  type EventStream,
   type ReactiveContext,
   type ReactiveError,
   type ReactiveRuntime,
@@ -52,15 +57,23 @@ import { activateReactiveNode } from "./reactive/dom";
 import { CurrentTransaction, requireValidSync } from "./reactive/runtime";
 import { isSignal, makeCell, readonlySignal, signalData, type Signal } from "./reactive/signal";
 import type { OutputRequirements, Structural } from "./requirements";
+import type { Identifier as ResourceIdentifier } from "./resource";
 import { fromResultLazy, toEffect, withContext, type Sync } from "./sync";
 import { lazy } from "./synchronous";
 
 export { component, provideContext, type Component, type Lifecycle } from "./component";
-export * as Sync from "./sync-public";
-export { readonlySignal } from "./reactive/signal";
-export { nativeNode, type ElementOutput } from "./output";
 export { ConstructionError } from "./construction";
+export type {
+  Child,
+  Construct,
+  SyncConstruct,
+  ElementOptions,
+  ElementProperties,
+  MountItem,
+} from "./construction";
+export * as Context from "./context";
 export { keyed, row, type Key, type KeyedList, type Row, type RowInputs } from "./keyed";
+export { nativeNode, type ElementOutput } from "./output";
 export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
 export type {
   Signal,
@@ -71,14 +84,9 @@ export type {
   EventSource,
   ReactiveContext,
 } from "./reactive";
-export type {
-  Child,
-  Construct,
-  SyncConstruct,
-  ElementOptions,
-  ElementProperties,
-  MountItem,
-} from "./construction";
+export { readonlySignal } from "./reactive/signal";
+export * as Resource from "./resource";
+export * as Sync from "./sync-public";
 
 export type Output<R = never> = MountItem<R> | ReadonlyArray<MountItem<R>>;
 export interface SynchronousContext extends SynchronousReactiveContext {
@@ -109,8 +117,46 @@ export interface OwnerContext extends ReactiveContext {
 }
 
 export interface ComponentContext extends OwnerContext {}
-export interface ApplicationContext extends Omit<OwnerContext, "h"> {
-  readonly h: (parent: MountTarget, content: Output) => Effect.Effect<void>;
+/** Layer.buildWithMemoMap adds this private service; it is not an exported resource. */
+type AvailableResources<R extends ResourceIdentifier> = Exclude<R, Layer.CurrentMemoMap>;
+
+export interface ApplicationContext<Resources extends ResourceIdentifier = never> extends Omit<
+  OwnerContext,
+  "h" | "fork" | "batch" | "subscribe" | "subscribeStream" | "foldStream"
+> {
+  readonly h: (parent: MountTarget, content: Output<Resources>) => Effect.Effect<void>;
+  readonly fork: <A, E, R>(
+    work: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<void, never, Exclude<Exclude<R, Scope.Scope>, AvailableResources<Resources>>>;
+  readonly batch: <A, E, R>(
+    work: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ReactiveError, Exclude<R, AvailableResources<Resources>>>;
+  readonly subscribe: <A, E, R>(
+    events: EventStream<A>,
+    handler: (value: A) => Effect.Effect<unknown, E, R>,
+  ) => Effect.Effect<
+    void,
+    ReactiveError,
+    Exclude<Exclude<R, Scope.Scope>, AvailableResources<Resources>>
+  >;
+  readonly subscribeStream: <A, E, R, EH, RH>(
+    stream: Stream.Stream<A, E, R>,
+    handler: (value: A) => Effect.Effect<unknown, EH, RH>,
+  ) => Effect.Effect<
+    void,
+    ReactiveError,
+    Exclude<Exclude<R | RH, Scope.Scope>, AvailableResources<Resources>>
+  >;
+  readonly foldStream: <A, B, E, R>(options: {
+    stream: Stream.Stream<A, E, R>;
+    initial: B;
+    reducer: (options: { readonly state: B; readonly event: A }) => B;
+    equals?: Equality<B>;
+  }) => Effect.Effect<
+    Signal<B>,
+    ReactiveError,
+    Exclude<Exclude<R, Scope.Scope>, AvailableResources<Resources>>
+  >;
 }
 
 export type Mount = <C extends Output<unknown>>(
@@ -157,7 +203,8 @@ type FailureContext = DomFailureContext | { readonly subject: ApplicationSubject
 export type MountFailure = FailureDetails & FailureContext;
 
 interface Owner {
-  readonly subtreeContext: Context.Context<never>;
+  readonly resources: EffectContext.Context<never>;
+  readonly subtreeContext: EffectContext.Context<never>;
   active: boolean;
   readonly ownsTarget: (node: Node) => boolean;
   disposing: boolean;
@@ -198,7 +245,8 @@ interface ParentQueue {
 const parents = new WeakMap<Element, ParentQueue>();
 
 const makeOwner = (options: {
-  readonly subtreeContext?: Context.Context<never>;
+  readonly resources?: EffectContext.Context<never>;
+  readonly subtreeContext?: EffectContext.Context<never>;
   readonly report: Owner["report"];
   readonly scope?: Scope.Closeable;
   readonly parentOwner?: Owner;
@@ -206,7 +254,9 @@ const makeOwner = (options: {
   readonly parentRuntime: Option.Option<ReactiveRuntime>;
   readonly rowContext?: RowContext;
 }): Owner => ({
-  subtreeContext: options.subtreeContext ?? options.parentOwner?.subtreeContext ?? Context.empty(),
+  resources: options.resources ?? options.parentOwner?.resources ?? EffectContext.empty(),
+  subtreeContext:
+    options.subtreeContext ?? options.parentOwner?.subtreeContext ?? EffectContext.empty(),
   active: true,
   ownsTarget(node) {
     return node instanceof Element && parents.get(node)?.owner === this;
@@ -234,6 +284,10 @@ const makeOwner = (options: {
   ),
   onKeyedRowOccurrenceFailure: Option.none(),
 });
+
+/** Requirements are checked at the public mount boundary; erased owner storage is internal. */
+const executionContext = (owner: Owner): EffectContext.Context<unknown> =>
+  EffectContext.merge(owner.resources, owner.subtreeContext) as EffectContext.Context<unknown>;
 
 const reactiveParent = (owner: Owner) =>
   Option.orElse(owner.reactiveRuntime, () => owner.parentRuntime);
@@ -635,7 +689,7 @@ const callbackSync = <A, E>(options: {
   readonly scope: Scope.Scope;
 }): Effect.Effect<A, E> =>
   Effect.suspend(() => toEffect(options.work())).pipe(
-    Effect.provide(options.owner.subtreeContext as Context.Context<unknown>),
+    Effect.provide(executionContext(options.owner)),
     Scope.provide(options.scope),
   );
 
@@ -702,7 +756,7 @@ const startComponent = (options: Occurrence & { lifecycle: AnyLifecycle }): void
       const fork = background({ owner, scope, failureContext: { parent, subject } });
       const exit = yield* restore(
         Effect.suspend(() => lifecycle.setup(ownerContext({ owner, scope, fork, runtime }))).pipe(
-          Effect.provide(owner.subtreeContext as Context.Context<unknown>),
+          Effect.provide(executionContext(owner)),
           Scope.provide(scope),
         ),
       ).pipe(Effect.exit);
@@ -1215,70 +1269,204 @@ const bindSync = (owner: Owner) => (parent: Element, content: Output<unknown>) =
     });
   });
 
-const bind =
-  (owner: Owner): Mount =>
-  (target, content) =>
-    Effect.sync(() => {
-      const parent = nativeTarget(target);
-      const output: Output<unknown> = content;
-      Match.value(owner.active).pipe(
-        Match.when(false, () => {}),
-        Match.when(true, () =>
-          Result.match(bindSync(owner)(parent, content), {
-            onSuccess: () => {},
-            onFailure: (error) => {
-              Effect.runFork(
-                report(owner, {
-                  parent,
-                  subject: {
-                    kind: "replacement",
-                    id: {},
-                    items: Match.value(output).pipe(
-                      Match.when(
-                        (value: Output<unknown>): value is ReadonlyArray<MountItem<unknown>> =>
-                          Array.isArray(value),
-                        (items) => [...items],
-                      ),
-                      Match.orElse((item) => [item]),
+const bindWork = (owner: Owner) => (target: MountTarget, content: Output<unknown>) =>
+  Effect.sync(() => {
+    const parent = nativeTarget(target);
+    const output: Output<unknown> = content;
+    Match.value(owner.active).pipe(
+      Match.when(false, () => {}),
+      Match.when(true, () =>
+        Result.match(bindSync(owner)(parent, content), {
+          onSuccess: () => {},
+          onFailure: (error) => {
+            Effect.runFork(
+              report(owner, {
+                parent,
+                subject: {
+                  kind: "replacement",
+                  id: {},
+                  items: Match.value(output).pipe(
+                    Match.when(
+                      (value: Output<unknown>): value is ReadonlyArray<MountItem<unknown>> =>
+                        Array.isArray(value),
+                      (items) => [...items],
                     ),
-                  },
-                  operation: Match.value(error.message.includes("already belongs")).pipe(
-                    Match.when(true, () => "ownership" as const),
-                    Match.orElse(() => "validation" as const),
+                    Match.orElse((item) => [item]),
                   ),
-                  cause: Cause.fail(error),
-                }),
-              );
-            },
-          }),
-        ),
-        Match.exhaustive,
-      );
-    });
+                },
+                operation: Match.value(error.message.includes("already belongs")).pipe(
+                  Match.when(true, () => "ownership" as const),
+                  Match.orElse(() => "validation" as const),
+                ),
+                cause: Cause.fail(error),
+              }),
+            );
+          },
+        }),
+      ),
+      Match.exhaustive,
+    );
+  });
 
-/** Acquires a mount binding whose lifetime is the supplied application scope. */
-export const mounting = Effect.fn("Budgerigar.mounting")(function* (options: {
+const bind = (owner: Owner): Mount => bindWork(owner);
+
+/** Acquires one isolated resource graph before exposing the mount binding. */
+const mountResources = <Resources extends ResourceIdentifier, E, Inputs>(options: {
   readonly scope: Scope.Scope;
   readonly onError: (failure: MountFailure) => void;
-}) {
-  const scope = yield* Scope.make();
-  const failureContext: FailureContext = { subject: { kind: "application", id: {} } };
-  const owner = makeOwner({
-    report: options.onError,
-    scope,
-    failureContext,
-    parentRuntime: Option.none(),
-  });
-  yield* Scope.addFinalizer(options.scope, disposeOwner(owner));
-  const fork = background({ owner, scope, failureContext });
-  const runtime = yield* makeReactiveRuntime({
-    active: () => owner.active,
-    parent: Option.none(),
-    fork,
-    registerWork: registerBackground({ owner, scope, failureContext }),
-    report: (failure) => report(owner, { ...failureContext, ...failure }),
-  });
-  owner.reactiveRuntime = Option.some(runtime);
-  const application: ApplicationContext = ownerContext({ owner, scope, fork, runtime });
-  return application;
-}, Effect.uninterruptible);
+  readonly resources: Layer.Layer<Resources, E, Inputs>;
+}): Effect.Effect<ApplicationContext<Resources>, E, Inputs> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const resourceScope = yield* Scope.make();
+      const scope = yield* Scope.make();
+      const failureContext: FailureContext = { subject: { kind: "application", id: {} } };
+      const owner = makeOwner({
+        report: options.onError,
+        failureContext,
+        parentRuntime: Option.none(),
+      });
+      let acquisition: Option.Option<Fiber.Fiber<EffectContext.Context<Resources>, E>> =
+        Option.none();
+      const close = (exit: Exit.Exit<unknown, unknown>) =>
+        Effect.sync(() => retireOwner(owner)).pipe(
+          Effect.andThen(
+            Effect.withFiber((closingFiber) =>
+              Option.match(acquisition, {
+                onNone: () => Effect.void,
+                onSome: (fiber) =>
+                  Match.value(fiber.id === closingFiber.id).pipe(
+                    // A layer may close its lexical parent scope during acquisition.
+                    // Request self-interruption without awaiting the current fiber.
+                    Match.when(true, () =>
+                      Effect.sync(() => fiber.interruptUnsafe(closingFiber.id)),
+                    ),
+                    Match.when(false, () => Fiber.interrupt(fiber).pipe(Effect.asVoid)),
+                    Match.exhaustive,
+                  ),
+              }),
+            ),
+          ),
+          Effect.andThen(disposeOwner(owner)),
+          Effect.ensuring(Scope.close(resourceScope, exit)),
+        );
+      yield* Scope.addFinalizerExit(options.scope, close);
+      return yield* Effect.gen(function* () {
+        yield* Match.value(owner.active).pipe(
+          Match.when(true, () => Effect.void),
+          Match.when(false, () => Effect.interrupt),
+          Match.exhaustive,
+        );
+        const memoMap = yield* Layer.makeMemoMap;
+        const build = Layer.buildWithMemoMap(options.resources, memoMap, resourceScope);
+        const resources = yield* Match.value(Object.is(options.resources, Layer.empty)).pipe(
+          Match.when(true, () => build),
+          Match.when(false, () =>
+            Effect.gen(function* () {
+              const fiber = yield* Effect.forkChild(restore(build));
+              acquisition = Option.some(fiber);
+              return yield* restore(Fiber.join(fiber));
+            }),
+          ),
+          Match.exhaustive,
+        );
+        // Erased Layer generics cannot expose token metadata. Validate the known
+        // key namespaces as a runtime guard; this is not a global token registry.
+        yield* Effect.sync(() => {
+          for (const key of resources.mapUnsafe.keys()) {
+            Match.value(
+              key === Layer.CurrentMemoMap.key || key.startsWith("Budgerigar/Resource/"),
+            ).pipe(
+              Match.when(true, () => {}),
+              Match.when(false, () => {
+                throw new TypeError(
+                  `Budgerigar resource layers cannot export ${key}; use Resource.Service`,
+                );
+              }),
+              Match.exhaustive,
+            );
+          }
+        });
+        // buildWithMemoMap adds a private entry disjoint from every branded
+        // resource identifier. Removing it preserves the complete Resources set.
+        const publicResources = resources.pipe(EffectContext.omit(Layer.CurrentMemoMap));
+        const runtimeOwner = makeOwner({
+          resources: publicResources,
+          report: options.onError,
+          scope,
+          failureContext,
+          parentRuntime: Option.none(),
+          parentOwner: owner,
+        });
+        owner.children.add(runtimeOwner);
+        const fork = background({ owner: runtimeOwner, scope, failureContext });
+        const runtime = yield* makeReactiveRuntime({
+          active: () => runtimeOwner.active,
+          parent: Option.none(),
+          fork,
+          registerWork: registerBackground({ owner: runtimeOwner, scope, failureContext }),
+          report: (failure) => report(runtimeOwner, { ...failureContext, ...failure }),
+        });
+        runtimeOwner.reactiveRuntime = Option.some(runtime);
+        yield* Match.value(owner.active).pipe(
+          Match.when(true, () => Effect.void),
+          Match.when(false, () => Effect.interrupt),
+          Match.exhaustive,
+        );
+        const context = ownerContext({ owner: runtimeOwner, scope, fork, runtime });
+        // Capture the caller's actual environment without claiming it supplies
+        // any requirements. Explicit local overrides win; only Resources are
+        // discharged from the public type, and descendants use their owner tree.
+        const supplyResources = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+          Effect.context<never>().pipe(
+            Effect.flatMap((caller) =>
+              work.pipe(Effect.provide(EffectContext.merge(publicResources, caller))),
+            ),
+          );
+        const application: ApplicationContext<Resources> = {
+          ...context,
+          h: bindWork(runtimeOwner),
+          fork: (work) => supplyResources(context.fork(work)),
+          batch: (work) => supplyResources(context.batch(work)),
+          subscribe: (events, handler) => supplyResources(context.subscribe(events, handler)),
+          subscribeStream: (stream, handler) =>
+            supplyResources(context.subscribeStream(stream, handler)),
+          foldStream: (options) => supplyResources(context.foldStream(options)),
+        };
+        return application;
+      }).pipe(
+        Effect.onExit((exit) =>
+          Exit.match(exit, { onSuccess: () => Effect.void, onFailure: () => close(exit) }),
+        ),
+      );
+    }),
+  );
+
+interface MountingOptions {
+  readonly scope: Scope.Scope;
+  readonly onError: (failure: MountFailure) => void;
+}
+
+export function mounting<Resources extends ResourceIdentifier, E, Inputs>(
+  options: MountingOptions & {
+    readonly resources: Layer.Layer<Resources, E, Inputs> &
+      ([
+        Extract<
+          Inputs,
+          ContextIdentifier | Scope.Scope | Layer.CurrentMemoMap | Structural<unknown>
+        >,
+      ] extends [never]
+        ? unknown
+        : never);
+  },
+): Effect.Effect<ApplicationContext<Resources>, E, Inputs>;
+export function mounting(
+  options: MountingOptions & { readonly resources?: never },
+): Effect.Effect<ApplicationContext>;
+export function mounting(
+  options: MountingOptions & {
+    readonly resources?: Layer.Layer<ResourceIdentifier, unknown, unknown>;
+  },
+) {
+  return mountResources({ ...options, resources: options.resources ?? Layer.empty });
+}

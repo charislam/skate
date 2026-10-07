@@ -1,5 +1,6 @@
-import { Context, Effect, Option, Scope } from "effect";
+import { Effect, Option, Scope } from "effect";
 import { expectTypeOf, it } from "vitest";
+import * as BudgerigarContext from "./context";
 import {
   Sync,
   component,
@@ -16,8 +17,8 @@ import {
   type SynchronousContext,
 } from "./framework";
 
-class User extends Context.Service<User, string>()("Budgerigar/output/User") {}
-class Theme extends Context.Service<Theme, string>()("Budgerigar/output/Theme") {}
+class User extends BudgerigarContext.Service<User, string>()("Budgerigar/output/User") {}
+class Theme extends BudgerigarContext.Service<Theme, string>()("Budgerigar/output/Theme") {}
 
 const Account = component(() =>
   Sync.succeed({

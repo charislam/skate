@@ -1,6 +1,8 @@
-import { Effect, Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { mounting, type MountFailure } from "./framework";
+import { AuthLive } from "./auth";
 import { Home } from "./home";
+import { LocalStorageLive } from "./local-storage";
 
 /** Remains alive until interrupted, then awaits disposal of the application. */
 export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
@@ -12,7 +14,11 @@ export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
     onSome: Effect.succeed,
   });
   const scope = yield* Effect.scope;
-  const { h } = yield* mounting({ scope, onError });
+  const { h } = yield* mounting({
+    scope,
+    onError,
+    resources: Layer.mergeAll(AuthLive, LocalStorageLive),
+  });
   yield* h(root, Home);
   yield* Effect.never;
 }, Effect.scoped);

@@ -539,28 +539,87 @@ existing selection helpers. The home page's todo example demonstrates add, save,
 completion, deletion, and Move up/Move down buttons, with unsaved row-local drafts
 preserved across reordering.
 
-## Service environments
+## Runtime resources and component context
 
-Use ordinary Effect service tokens with namespaced keys. Components infer services
-from factory, fallback, setup, returned descriptions, and registered work.
-`Component<R>` records unmet identifier types; `Component` defaults to no unmet
-requirements. `provideContext({ key, value, child })` accepts a component description
-and supplies an existing value to its descendant occurrences without a DOM wrapper.
-Nearest providers win, and bindings stay fixed for each occurrence. Publish changing
-values through signals rather than replacing a binding.
+Use `Resource.Service<Self, Shape>()("app/Name")` for services available throughout
+one mounting runtime. Use `Context.Service<Self, Shape>()("app/Name")` from
+Budgerigar for ancestor-provided values. Both constructors are branded Effect
+service classes: ordinary `yield* Token`, `Sync.service(Token)`, `.of`, and Effect
+layers work. Their underlying keys have separate namespaces. Use application-qualified
+names; repeated names within a kind retain Effect's normal identity semantics.
 
-Factory and fallback read tokens through `yield* Sync.service(Token)`. Setup reads
-ordinary Effect tokens directly. `Sync.fromResult` explicitly lifts an existing
-Result, and `Sync.suspend(() => Sync.fromResult(validate()))` defers validation.
-Sync generators cannot yield Effects, Promises, Results, or tokens directly.
+```ts
+import { Effect, Layer, Option } from "effect";
+import { Context, Resource, mounting, type Signal } from "./src/framework";
 
-Local `Effect.provideService` and `Sync.provideService` affect computation reads and
-captured deferred work. They do not supply descendant occurrences mounted by `h`.
-Use an explicit subtree provider for those descendants. Application `h` accepts
-closed content, and the application's subtree starts without mounting-caller
-services. Deferred registration captures its environment when executed; owned work
-receives its owning Scope and a fresh transaction rather than a staging transaction.
+class Storage extends Resource.Service<
+  Storage,
+  {
+    readonly get: (key: string) => Effect.Effect<Option.Option<string>>;
+  }
+>()("Example/Storage") {}
 
-The home page's account example provides a read-only user signal through Settings
-to Account. Sign in and Sign out update the root-owned writable signal and derived
-account text without rerunning consumer setup. See [account.ts](src/account.ts).
+class CurrentUser extends Context.Service<CurrentUser, Signal<Option.Option<string>>>()(
+  "Example/CurrentUser",
+) {}
+
+const StorageLive = Layer.effect(
+  Storage,
+  Effect.sync(() =>
+    Storage.of({
+      get: (key) => Effect.sync(() => Option.fromNullishOr(localStorage.getItem(key))),
+    }),
+  ),
+);
+
+const app = yield * mounting({ scope, resources: StorageLive, onError });
+yield * app.h(root, Page); // Page and its descendants may independently read Storage.
+```
+
+Components infer requirements from factory, fallback, setup, returned descriptions,
+and registered work. `Component<R>` records unmet identifier types. Mounting accepts
+content only when the runtime supplies every remaining resource requirement.
+`provideContext({ key, value, child })` accepts only a Budgerigar context token and
+supplies an existing value to descendant occurrences without a DOM wrapper. It
+subtracts that context requirement while retaining every resource requirement.
+Nearest providers win; publish changing values through signals rather than replacing
+bindings. Resources remain independent of component and native DOM ancestry.
+
+Pass an Effect layer graph through `resources` to mounting. Only resource tags may
+be exported; ordinary infrastructure dependencies can be hidden with `Layer.provide`.
+For direct component access to a third-party service, define a resource adapter tag.
+Layer inputs and typed acquisition errors remain in mounting's Effect type. Omit
+`resources`, or pass `Layer.empty`, for resource-free applications.
+
+Acquisition finishes before mounting returns, with a fresh memo map and owned scope
+for each runtime. Shared dependencies acquire once within a graph. Stateful layers
+should allocate inside acquisition; `Layer.succeed` can deliberately share a prebuilt
+object. Tests replace the entire runtime layer. Mounting is interruptible during
+acquisition, releases partial acquisitions on failure or cancellation, and fails
+through its typed error channel without also calling `onError`. Once mounted,
+component and owned-work failures retain the existing `onError` behavior.
+
+Replacing content retains resources. Shutdown interrupts consumers, awaits descendant
+and retired-branch cleanup, then releases resources once. Component finalizers can
+still use services during cleanup. Application `fork`, `batch`, subscriptions, and
+stream helpers supply runtime resources and retain any residual typed requirements.
+
+Factory and fallback read services with `yield* Sync.service(Token)`; setup uses
+ordinary Effect reads. Explicit local `Effect.provideService` and `Sync.provideService`
+affect computation reads and registration-time capture. They do not supply deferred
+children or modify runtime resources. Descendants receive their runtime resources
+and explicit ancestor context, independently of a callback's incidental environment.
+Owned deferred work receives its owning Scope and fresh transaction authority.
+
+The [account example](src/account.ts) demonstrates Root owning a writable user signal
+and providing its read-only view as CurrentUser. Root and Navigation independently
+read the [Auth resource](src/auth.ts); Navigation logs out through Auth, and Root
+consumes the replaying session stream to seed and update its signal. Session discovery
+happens during acquisition, so there is no separate read/subscribe gap. Signed-out
+is `Option.none()`. Unmounting Root stops its subscription while Auth remains alive
+until runtime shutdown.
+
+[LocalStorage](src/local-storage.ts) demonstrates an unrelated resource and an isolated
+memory layer. Bootstrap merges it with the self-contained Auth demo layer; no backend
+or credentials are required. Tests use `authMock({ initial })` and `LocalStorageMemory`,
+which allocate fresh state per runtime.
