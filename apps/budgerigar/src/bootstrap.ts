@@ -1,11 +1,10 @@
 import { Effect, Layer, Option } from "effect";
 import { mounting, type MountFailure } from "./framework";
+import { App } from "./app";
 import { AuthLive } from "./auth";
 import { browserHistory } from "./browser-history";
 import { History } from "./history";
-import { Home } from "./home";
 import { LocalStorageLive } from "./local-storage";
-import { RoutingDemo } from "./routing-demo/app";
 import { mockResources } from "./routing-demo/resources";
 
 /** Remains alive until interrupted, then awaits disposal of the application. */
@@ -28,6 +27,6 @@ export const bootstrap = Effect.fn("Budgerigar.bootstrap")(function* (
       Layer.effect(History, browserHistory(window)),
     ),
   });
-  yield* h(root, [RoutingDemo, Home]);
+  yield* h(root, App);
   yield* Effect.never;
 }, Effect.scoped);

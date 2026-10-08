@@ -59,7 +59,10 @@ export const Anonymous = branch<Extract<AppState, { _tag: "Anonymous" }>>()(({ c
 
 export const Resolving = branch<Extract<AppState, { _tag: "ResolvingSession" }>>()(({ context }) =>
   Sync.gen(function* () {
-    const output = yield* message(context, "Resolving session… choose a discovery result above.");
+    const output = yield* message(
+      context,
+      "Resolving session… choose a discovery result in the sidebar.",
+    );
     return { setup: () => Effect.succeed(output) };
   }),
 );

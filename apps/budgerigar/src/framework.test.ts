@@ -4,7 +4,7 @@ import { bootstrap } from "./bootstrap";
 import type { ConstructionError } from "./construction";
 import { component, mounting, type MountFailure } from "./framework";
 import { AuthLive } from "./auth";
-import { Home } from "./home";
+import { Examples } from "./examples";
 import { LocalStorageMemory } from "./local-storage";
 import { nativeNode } from "./output";
 import type { ElementOutput } from "./output";
@@ -75,8 +75,8 @@ describe("scoped component mounting", () => {
     const { h, close } = await harness();
     const left = document.createElement("div");
     const right = document.createElement("div");
-    Effect.runSync(h(left, Home));
-    Effect.runSync(h(right, Home));
+    Effect.runSync(h(left, Examples));
+    Effect.runSync(h(right, Examples));
     await Promise.all([
       waitFor({
         parent: left,
@@ -94,7 +94,7 @@ describe("scoped component mounting", () => {
       }),
     ]);
     expect(left.firstChild).not.toBe(right.firstChild);
-    expect(left.querySelector("main > h1")?.textContent).toBe("Budgerigar");
+    expect(left.querySelector("main > h1")?.textContent).toBe("Examples");
     Effect.runSync(
       h(
         left,

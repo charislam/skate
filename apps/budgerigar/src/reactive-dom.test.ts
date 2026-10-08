@@ -10,7 +10,7 @@ import {
   type Signal,
   type WritableSignal,
 } from "./framework";
-import { Home } from "./home";
+import { Examples } from "./examples";
 import { LocalStorageMemory } from "./local-storage";
 import { nativeNode } from "./output";
 import * as Sync from "./sync-public";
@@ -78,7 +78,7 @@ describe("reactive DOM and ownership", () => {
   it("renders independent counters, negative values, reset, and stable DOM identities", async () => {
     const { h, close } = await harness();
     const parent = document.createElement("div");
-    Effect.runSync(h(parent, [Home, Counter]));
+    Effect.runSync(h(parent, [Examples, Counter]));
     await rendered({
       parent,
       check: () => parent.querySelectorAll(".counter output").length === 2,
@@ -103,8 +103,10 @@ describe("reactive DOM and ownership", () => {
     expect(
       Array.from(counter.querySelectorAll("button")).every((button) => button.type === "button"),
     ).toBe(true);
-    expect(parent.querySelector("h1")?.textContent).toBe("Budgerigar");
-    expect(parent.querySelector("p")?.textContent).toBe("Effect-based FRP for the frontend");
+    expect(parent.querySelector("h1")?.textContent).toBe("Examples");
+    expect(parent.querySelector("p")?.textContent).toBe(
+      "Small, interactive examples of reactive state and scoped components.",
+    );
     await close();
     increment?.click();
     expect(parent.childNodes.length).toBe(0);
