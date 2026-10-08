@@ -101,7 +101,7 @@ export const Tabs = component(() =>
           );
         }
         return yield* he("section", {
-          attrs: { class: Option.some("tabs"), "aria-label": Option.some("Reactive tabs") },
+          attrs: { class: Option.some("card tabs"), "aria-label": Option.some("Reactive tabs") },
           children: [
             yield* he("div", {
               attrs: {

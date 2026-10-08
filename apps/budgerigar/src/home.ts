@@ -9,8 +9,12 @@ export const Home = component(() =>
         return yield* he("main", {
           attrs: { class: Option.some("home-page") },
           children: [
-            yield* he("h1", { children: ["Budgerigar"] }),
-            yield* he("p", { children: ["Effect-based FRP for the frontend"] }),
+            yield* he("hgroup", {
+              children: [
+                yield* he("h1", { children: ["frappé"] }),
+                yield* he("p", { children: ["Effect-based FRP for the frontend"] }),
+              ],
+            }),
           ],
         });
       }),

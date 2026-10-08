@@ -33,12 +33,27 @@ export const Settings = component(() =>
 /** Reads Auth independently of Root; it can only read the ancestor user signal. */
 export const Navigation = component(() =>
   Sync.succeed({
-    setup: ({ he, events, subscribe }) =>
+    setup: ({ he, derive, events, subscribe }) =>
       Effect.gen(function* () {
         const auth = yield* Auth;
-        const signOut = yield* he("button", { children: ["Sign out"] });
+        const user = yield* CurrentUser;
+        const isSignedOut = yield* derive({
+          sources: { user },
+          compute: ({ user }) => Option.isNone(user),
+        });
+        const signOut = yield* he("button", {
+          props: {
+            disabled: isSignedOut,
+          },
+          children: ["Sign out"],
+        });
         yield* subscribe(yield* events(signOut, "click"), () => auth.logout());
-        return yield* he("nav", { children: [Settings, signOut] });
+        return yield* he("nav", {
+          attrs: {
+            "aria-label": Option.some("Accounts example navigation"),
+          },
+          children: [Settings, signOut],
+        });
       }),
   }),
 );
@@ -48,12 +63,19 @@ export const AccountExample = component(({ signal }) =>
   Sync.gen(function* () {
     const user = yield* signal<Option.Option<User>>({ initial: Option.none() });
     return {
-      setup: ({ he, events, subscribe, subscribeStream }) =>
+      setup: ({ he, events, subscribe, subscribeStream, derive }) =>
         Effect.gen(function* () {
           const auth = yield* Auth;
           const storage = yield* LocalStorage;
+          const isSignedIn = yield* derive({
+            sources: { user },
+            compute: ({ user }) => Option.isSome(user),
+          });
           yield* subscribeStream(auth.sessions, (session) => user.set(session));
-          const signIn = yield* he("button", { children: ["Sign in"] });
+          const signIn = yield* he("button", {
+            props: { disabled: isSignedIn },
+            children: ["Sign in"],
+          });
           yield* subscribe(yield* events(signIn, "click"), () =>
             Effect.gen(function* () {
               const email = Option.getOrElse(
@@ -70,7 +92,7 @@ export const AccountExample = component(({ signal }) =>
             child: Navigation,
           });
           return yield* he("section", {
-            attrs: { class: Option.some("account-example") },
+            attrs: { class: Option.some("card account-example") },
             children: [
               yield* he("h2", { children: ["Runtime resources and ancestor context"] }),
               signIn,

@@ -39,7 +39,7 @@ export const TextInput = component(() =>
         yield* subscribe(yield* events(toggle, "click"), () => disabled.update((value) => !value));
         return yield* he("section", {
           attrs: {
-            class: Option.some("text-input"),
+            class: Option.some("card text-input"),
             "aria-label": Option.some("Reactive text input"),
           },
           children: [

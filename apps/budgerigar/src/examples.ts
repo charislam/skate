@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { AccountExample } from "./account";
 import { AccessExample } from "./access";
 import { Counter } from "./counter";
@@ -14,18 +14,30 @@ export const Examples = component(() =>
     setup: ({ he }) =>
       Effect.gen(function* () {
         return yield* he("main", {
+          attrs: { class: Option.some("examples-page") },
           children: [
-            yield* he("h1", { children: ["Examples"] }),
-            yield* he("p", {
-              children: ["Small, interactive examples of reactive state and scoped components."],
+            yield* he("hgroup", {
+              children: [
+                yield* he("h1", { children: ["Examples"] }),
+                yield* he("p", {
+                  children: [
+                    "Small, interactive examples of reactive state and scoped components.",
+                  ],
+                }),
+              ],
             }),
-            Counter,
-            TextInput,
-            AccountExample,
-            Tabs,
-            AccessExample,
-            LoadingExample,
-            Todos,
+            yield* he("div", {
+              attrs: { class: Option.some("example-cards") },
+              children: [
+                Counter,
+                TextInput,
+                AccountExample,
+                Tabs,
+                AccessExample,
+                LoadingExample,
+                Todos,
+              ],
+            }),
           ],
         });
       }),

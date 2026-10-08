@@ -77,6 +77,7 @@ export const Todos = component((context) =>
               });
               yield* ctx.bindValue({ element: input, signal: draft });
               const save = yield* ctx.he("button", {
+                attrs: { class: Option.some("primary") },
                 props: { type: "button" },
                 children: ["Save"],
               });
@@ -156,11 +157,12 @@ export const Todos = component((context) =>
       setup: (ctx) =>
         Effect.gen(function* () {
           const input = yield* ctx.he("input", {
-            attrs: { "aria-label": Option.some("New todo") },
+            attrs: { name: Option.some("New todo"), "aria-label": Option.some("New todo") },
             props: { type: "text" },
           });
           yield* ctx.bindValue({ element: input, signal: newText });
           const add = yield* ctx.he("button", {
+            attrs: { class: Option.some("primary") },
             props: { type: "button" },
             children: ["Add todo"],
           });
@@ -187,7 +189,10 @@ export const Todos = component((context) =>
             ),
           );
           return yield* ctx.he("section", {
-            attrs: { class: Option.some("todos"), "aria-label": Option.some("Reorderable todos") },
+            attrs: {
+              class: Option.some("card todos"),
+              "aria-label": Option.some("Reorderable todos"),
+            },
             children: [
               yield* ctx.he("h2", { children: ["Todos"] }),
               input,
