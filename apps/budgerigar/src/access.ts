@@ -71,7 +71,7 @@ export const AccessExample = component(() =>
         }
         return yield* he("section", {
           attrs: {
-            class: Option.some("access-example"),
+            class: Option.some("card access-example"),
             "aria-label": Option.some("Access selection"),
           },
           children: [
@@ -79,7 +79,12 @@ export const AccessExample = component(() =>
             yield* he("p", {
               children: ["Allowed again preserves the counter. Leave and return to reset it."],
             }),
-            ...controls,
+            yield* he("div", {
+              attrs: {
+                class: Option.some("access-controls"),
+              },
+              children: [...controls],
+            }),
             selected,
           ],
         });

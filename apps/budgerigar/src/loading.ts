@@ -65,7 +65,7 @@ export const LoadingExample = component(({ signal }) =>
           const changeTitle = yield* he("button", { children: ["Change title while loading"] });
           yield* subscribe(yield* events(changeTitle, "click"), () => title.set("Updated title"));
           return yield* he("section", {
-            attrs: { class: Option.some("loading-example") },
+            attrs: { class: Option.some("card loading-example") },
             children: [
               yield* he("h2", { children: ["Reactive loading view"] }),
               changeTitle,

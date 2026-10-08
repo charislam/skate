@@ -9,6 +9,7 @@ export const Counter = component(() =>
     setup: ({ he, events, fold, derive }) =>
       Effect.gen(function* () {
         const increment = yield* he("button", {
+          attrs: { class: Option.some("primary") },
           props: { type: "button" },
           children: ["Increment"],
         });
@@ -35,7 +36,7 @@ export const Counter = component(() =>
         });
         const label = yield* derive({ sources: { count }, compute: ({ count }) => String(count) });
         return yield* he("section", {
-          attrs: { class: Option.some("counter"), "aria-label": Option.some("Counter") },
+          attrs: { class: Option.some("card counter"), "aria-label": Option.some("Counter") },
           children: [yield* he("output", { children: [label] }), increment, decrement, reset],
         });
       }),

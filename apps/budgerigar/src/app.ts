@@ -115,7 +115,10 @@ export const App = component(() =>
                 yield* context.he("header", {
                   attrs: { class: Option.some("app-header") },
                   children: [
-                    yield* context.he("span", { children: ["Budgerigar"] }),
+                    yield* context.he("span", {
+                      attrs: { class: Option.some("app-header-title") },
+                      children: ["frappé"],
+                    }),
                     yield* context.he("nav", {
                       attrs: { "aria-label": Option.some("Main navigation") },
                       children: links,
