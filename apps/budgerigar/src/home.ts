@@ -1,12 +1,5 @@
-import { Effect } from "effect";
-import { AccountExample } from "./account";
-import { AccessExample } from "./access";
-import { Counter } from "./counter";
+import { Effect, Option } from "effect";
 import { component } from "./framework";
-import { LoadingExample } from "./loading";
-import { Tabs } from "./tabs";
-import { TextInput } from "./text-input";
-import { Todos } from "./todos";
 import * as Sync from "./sync-public";
 
 export const Home = component(() =>
@@ -14,16 +7,10 @@ export const Home = component(() =>
     setup: ({ he }) =>
       Effect.gen(function* () {
         return yield* he("main", {
+          attrs: { class: Option.some("home-page") },
           children: [
             yield* he("h1", { children: ["Budgerigar"] }),
             yield* he("p", { children: ["Effect-based FRP for the frontend"] }),
-            Counter,
-            TextInput,
-            AccountExample,
-            Tabs,
-            AccessExample,
-            LoadingExample,
-            Todos,
           ],
         });
       }),

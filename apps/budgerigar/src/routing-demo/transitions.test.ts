@@ -51,7 +51,7 @@ const loading = (state: AppState) => {
 
 it("preserves pending return targets across repeated anonymous discovery and clears them on logout", () => {
   const discover: AppEvent = { _tag: "Auth", event: { _tag: "Ended", reason: "discovery" } };
-  const first = event({ state: initial("/projects/123/settings"), event: discover });
+  const first = event({ state: initial("/routing/projects/123/settings"), event: discover });
   const repeated = event({ state: first, event: discover });
   const signedIn = session(repeated);
   expect(signedIn).toMatchObject({
@@ -65,7 +65,7 @@ it("preserves pending return targets across repeated anonymous discovery and cle
   expect(logout).toMatchObject({ _tag: "Anonymous", returnTo: Option.none() });
   expect(session(logout)).toMatchObject({ _tag: "Authenticated", page: { _tag: "Dashboard" } });
   // A fresh application state carries only its observed URL.
-  expect(session(initial("/login"))).toMatchObject({
+  expect(session(initial("/routing/login"))).toMatchObject({
     _tag: "Authenticated",
     page: { _tag: "Dashboard" },
   });
@@ -73,7 +73,7 @@ it("preserves pending return targets across repeated anonymous discovery and cle
 
 it("updates nested unknown remainders without discarding the acquired project", () => {
   const id = ProjectId.make(123);
-  const acquiring = session(initial("/projects/123/first"));
+  const acquiring = session(initial("/routing/projects/123/first"));
   const ready = event({
     state: acquiring,
     event: {
@@ -88,8 +88,8 @@ it("updates nested unknown remainders without discarding the acquired project", 
     state: ready,
     event: {
       _tag: "Location",
-      observed: "/projects/123/second",
-      target: urls.parse("/projects/123/second"),
+      observed: "/routing/projects/123/second",
+      target: urls.parse("/routing/projects/123/second"),
       initial: false,
     },
   });
@@ -109,7 +109,7 @@ it("updates nested unknown remainders without discarding the acquired project", 
 
 it("ignores obsolete project completions by session, project and request identity", () => {
   const id = ProjectId.make(123);
-  const state = session(initial("/projects/123"));
+  const state = session(initial("/routing/projects/123"));
   const requestId = loading(state).requestId;
   for (const identity of [
     { sessionId: "obsolete", projectId: id, requestId },
@@ -151,7 +151,7 @@ it("ignores obsolete project completions by session, project and request identit
 
 it("preserves acquired project state for the same account and resets it for another account", () => {
   const id = ProjectId.make(123);
-  const acquiring = session(initial("/projects/123/settings"));
+  const acquiring = session(initial("/routing/projects/123/settings"));
   const ready = event({
     state: acquiring,
     event: {

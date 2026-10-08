@@ -524,7 +524,18 @@ const registerBackground =
             ),
           ).pipe(
             Effect.catchCause((cause) =>
-              Match.value(Cause.hasInterruptsOnly(cause)).pipe(
+              Match.value(
+                Cause.hasInterruptsOnly(cause) ||
+                  (!options.owner.active &&
+                    cause.reasons.every((failure) =>
+                      Match.value(failure).pipe(
+                        Match.tag("Interrupt", () => true),
+                        Match.tag("Fail", ({ error }) => Cause.isDone(error)),
+                        Match.tag("Die", () => false),
+                        Match.exhaustive,
+                      ),
+                    )),
+              ).pipe(
                 Match.when(true, () => Effect.void),
                 Match.when(false, () =>
                   report(options.owner, {

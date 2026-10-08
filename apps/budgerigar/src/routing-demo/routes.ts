@@ -14,11 +14,10 @@ export const ProjectId = Schema.NumberFromString.pipe(
 export type ProjectId = typeof ProjectId.Type;
 
 export const urls = router([
-  route({ tag: "Login", path: ["login"] }),
-  route({ tag: "Dashboard", path: [] }),
+  route({ tag: "Login", path: ["routing", "login"] }),
   route({
     tag: "Projects",
-    path: ["projects"],
+    path: ["routing", "projects"],
     children: [
       route({
         tag: "Project",
@@ -27,6 +26,7 @@ export const urls = router([
       }),
     ],
   }),
+  route({ tag: "Dashboard", path: ["routing"] }),
 ]);
 
 export type Destination = InferredDestination<typeof urls.definitions>;

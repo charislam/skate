@@ -68,14 +68,14 @@ const fixture = async (initial: string) => {
 
 describe("mock nested routing application", () => {
   it("resumes a private deep link after discovery/login and retains eligible shell state", async () => {
-    const f = await fixture("/projects/123/settings");
+    const f = await fixture("/routing/projects/123/settings");
     expect(f.parent.querySelector('[aria-label="Authenticated shell"]')).toBeNull();
     await Effect.runPromise(f.auth.resolve(Option.none()));
     await f.shows("Sign in to resume");
-    expect(f.history.location()).toBe("/login");
+    expect(f.history.location()).toBe("/routing/login");
     f.press("Sign in as Ada");
     await f.shows("Project 123 settings");
-    expect(f.history.location()).toBe("/projects/123/settings");
+    expect(f.history.location()).toBe("/routing/projects/123/settings");
     f.press("Increment authenticated shell");
     await f.shows("authenticated shell: 1");
     f.press("Increment project shell");
@@ -112,13 +112,13 @@ describe("mock nested routing application", () => {
   });
 
   it("defers malformed private URLs without acquiring a project and restores their URL after login", async () => {
-    const f = await fixture("/projects/wrong-id");
+    const f = await fixture("/routing/projects/wrong-id");
     await Effect.runPromise(f.auth.resolve(Option.none()));
     await f.shows("Sign in to resume");
-    expect(f.history.location()).toBe("/login");
+    expect(f.history.location()).toBe("/routing/login");
     await Effect.runPromise(f.auth.signIn({ name: "Ada" }));
     await f.shows("Invalid project URL");
-    expect(f.history.location()).toBe("/projects/wrong-id");
+    expect(f.history.location()).toBe("/routing/projects/wrong-id");
     expect(f.parent.querySelector('[aria-label="Projects shell"]')).not.toBeNull();
     expect(f.parent.querySelector('[aria-label="Project shell"]')).toBeNull();
     expect(f.parent.textContent).toContain("Pending project acquisitions: 0");
@@ -126,7 +126,7 @@ describe("mock nested routing application", () => {
   });
 
   it("cancels delayed projects on replacement, retains pending work through tab changes, and renders nested errors", async () => {
-    const f = await fixture("/projects/123/doesnt-exist");
+    const f = await fixture("/routing/projects/123/doesnt-exist");
     await Effect.runPromise(f.projects.mode("Delayed"));
     await Effect.runPromise(f.auth.resolve(Option.some({ name: "Ada" })));
     await f.shows("Acquiring project 123");
@@ -158,13 +158,13 @@ describe("mock nested routing application", () => {
 });
 
 it("keeps the page on rejected history writes and reconciles a denied traversal explicitly", async () => {
-  const f = await fixture("/projects/123/settings");
+  const f = await fixture("/routing/projects/123/settings");
   await Effect.runPromise(f.auth.resolve(Option.some({ name: "Ada" })));
   await f.shows("Project 123 settings");
   f.history.failNextWrite("reject dashboard");
   f.press("Dashboard");
   await f.shows("history: navigation failed");
-  expect(f.history.location()).toBe("/projects/123/settings");
+  expect(f.history.location()).toBe("/routing/projects/123/settings");
   expect(f.parent.textContent).toContain("Project 123 settings");
   f.press("Dashboard");
   await f.shows("Dashboard for Ada");
@@ -173,23 +173,24 @@ it("keeps the page on rejected history writes and reconciles a denied traversal 
   f.history.failNextWrite("reject denied traversal redirect");
   Result.getOrThrow(f.history.traverse(-1));
   await f.shows("traversal: navigation failed");
-  expect(f.history.location()).toBe("/projects/123/settings");
+  expect(f.history.location()).toBe("/routing/projects/123/settings");
   expect(f.parent.querySelector('[aria-label="Authenticated shell"]')).toBeNull();
   f.press("Reconcile URL");
   await rendered({
     parent: f.parent,
     check: () =>
-      f.history.location() === "/login" && !f.parent.textContent?.includes("navigation failed"),
+      f.history.location() === "/routing/login" &&
+      !f.parent.textContent?.includes("navigation failed"),
   });
   expect(f.failures).toEqual([]);
 });
 
 it("resets project ownership on direct project changes and separates acquisition failures from URL errors", async () => {
-  const f = await fixture("/projects/123");
+  const f = await fixture("/routing/projects/123");
   await Effect.runPromise(f.projects.mode("Failed"));
   await Effect.runPromise(f.auth.resolve(Option.some({ name: "Ada" })));
   await f.shows("Project 123 could not be acquired");
-  expect(f.history.location()).toBe("/projects/123");
+  expect(f.history.location()).toBe("/routing/projects/123");
   await Effect.runPromise(f.projects.mode("Immediate"));
   f.press("Retry project");
   await f.shows("Project 123 overview");
@@ -200,11 +201,11 @@ it("resets project ownership on direct project changes and separates acquisition
   await f.shows("project shell: 0");
   await Effect.runPromise(f.auth.expire);
   await f.shows("Sign in to resume");
-  expect(f.history.location()).toBe("/login");
+  expect(f.history.location()).toBe("/routing/login");
   expect(f.parent.querySelector('[aria-label="Project shell"]')).toBeNull();
   await Effect.runPromise(f.auth.signIn({ name: "Grace" }));
   await f.shows("Signed in as Grace");
   await f.shows("Project 456 overview");
-  expect(f.history.location()).toBe("/projects/456");
+  expect(f.history.location()).toBe("/routing/projects/456");
   expect(f.failures).toEqual([]);
 });
