@@ -51,6 +51,10 @@ it("routes between the home, examples, and routing pages and traverses browser h
     expect(history.location()).toBe("/routing");
     expect(parent.querySelector(".counter")).toBeNull();
     expect(parent.querySelectorAll(".routing-controls section")).toHaveLength(3);
+    expect(parent.querySelector<HTMLElement>(".routing-controls")?.hidden).toBe(true);
+    expect(parent.querySelector(".routing-heading button")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
     expect(parent.querySelector(".routing-content nav")).not.toBeNull();
     Result.getOrThrow(history.traverse(-1));
     await shows(() => parent.querySelector(".todos") !== null);

@@ -1,3 +1,3 @@
 let nextId = 0;
-/** Shared by fixed demo components; allocated once per setup occurrence. */
+/** Public ID allocator for component and UI-library occurrences. Call once during construction. */
 export const occurrenceId = (prefix: string): string => `${prefix}-${++nextId}`;

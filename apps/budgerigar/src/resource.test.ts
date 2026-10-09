@@ -709,9 +709,10 @@ it("retains acquisition and release causes without reporting an acquisition fail
 it("keeps resource-free acquisition synchronous and rejects erased non-resource exports", async () => {
   const { scope } = await parentScope();
   const application = Effect.runSync(mounting({ scope, onError: () => {} }));
-  expect(application.scope).toBeDefined();
+  expect(application.addFinalizer).toBeDefined();
+  expect("scope" in application).toBe(false);
   expect(
-    Effect.runSync(mounting({ scope, resources: Layer.empty, onError: () => {} })).scope,
+    Effect.runSync(mounting({ scope, resources: Layer.empty, onError: () => {} })).addFinalizer,
   ).toBeDefined();
   const invalid = await run(
     mounting({

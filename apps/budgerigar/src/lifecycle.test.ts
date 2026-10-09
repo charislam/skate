@@ -137,8 +137,7 @@ describe("synchronous finalizers and setup fallbacks", () => {
       }),
     );
     await run(
-      Scope.addFinalizer(
-        app.scope,
+      app.addFinalizer(
         Effect.sync(() => {
           order.push("root-async");
         }),

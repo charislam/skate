@@ -58,11 +58,12 @@ type PropertyKeys<T> = {
       : K;
 }[WritableKeys<T>];
 
-export type ElementProperties<K extends keyof HTMLElementTagNameMap> = {
-  readonly [P in PropertyKeys<HTMLElementTagNameMap[K]>]?:
-    | HTMLElementTagNameMap[K][P]
-    | Signal<HTMLElementTagNameMap[K][P]>;
+export type NativeProperties<N extends HTMLElement> = {
+  readonly [P in PropertyKeys<N>]?: N[P] | Signal<N[P]>;
 };
+export type ElementProperties<K extends keyof HTMLElementTagNameMap> = NativeProperties<
+  HTMLElementTagNameMap[K]
+>;
 
 export interface ElementOptions<K extends keyof HTMLElementTagNameMap, R = never> {
   readonly attrs?: Readonly<Record<string, AttributeValue | Signal<AttributeValue>>>;

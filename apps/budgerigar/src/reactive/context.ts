@@ -9,11 +9,18 @@ import {
   domEventsSync,
   eventData,
   eventStreamSync,
+  nativeEventTarget,
+  type DomEventTarget,
+  type DomEventMap,
+  type DomEvent,
+  type DomEventOptions,
   type EventSource,
   type EventStream,
 } from "./events";
+import { bindElementSync, type ElementBinding } from "./bind";
+import { watchSync, type WatchOptions } from "./watch";
 import { bindValueSync } from "./input";
-import { reactiveOwner } from "./owner";
+import { registerOwner } from "./owner";
 import {
   synchronousTransactions,
   CurrentTransaction,
@@ -70,6 +77,9 @@ const resultReactive = (runtime: ReactiveRuntime) => {
   return {
     signal,
     read: <A>(input: Signal<A>) => readSync({ runtime, signal: input }),
+    bind: <N extends HTMLElement>(binding: ElementBinding<N>) =>
+      bindElementSync({ runtime, binding }),
+    watchSync: <A>(watch: WatchOptions<A>) => watchSync({ runtime, watch }),
     derive: <S extends Sources, A>(options: {
       sources: S;
       compute: (values: Values<S>) => A;
@@ -135,11 +145,8 @@ const resultReactive = (runtime: ReactiveRuntime) => {
       element: HTMLInputElement | HTMLTextAreaElement;
       signal: WritableSignal<string>;
     }) => bindValueSync({ ...options, runtime }),
-    events: <K extends keyof HTMLElementEventMap>(
-      element: HTMLElement,
-      name: K,
-      options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
-    ) => domEventsSync({ runtime, element, name, ...options }),
+    events: <E extends Event>(element: EventTarget, name: string, options: DomEventOptions<E>) =>
+      domEventsSync({ runtime, element, name, ...options }),
     fold: <A, B>(options: {
       events: EventStream<A>;
       initial: B;
@@ -185,9 +192,11 @@ const resultReactive = (runtime: ReactiveRuntime) => {
 export const reactive = (runtime: ReactiveRuntime) => {
   const sync = resultReactive(runtime);
   const helpers = {
-    ...reactiveOwner(runtime),
     signal: <A>(options: SignalOptions<A>) => lazy(() => sync.signal(options)),
     read: <A>(signal: Signal<A>) => lazy(() => sync.read(signal)),
+    readCommitted: sync.read,
+    bind: <N extends HTMLElement>(binding: ElementBinding<N>) => lazy(() => sync.bind(binding)),
+    watchSync: <A>(watch: WatchOptions<A>) => lazy(() => sync.watchSync(watch)),
     derive: <S extends Sources, A>(options: {
       sources: S;
       compute: (values: Values<S>) => A;
@@ -200,11 +209,16 @@ export const reactive = (runtime: ReactiveRuntime) => {
       element: ElementOutput<HTMLInputElement | HTMLTextAreaElement, unknown>;
       signal: WritableSignal<string>;
     }) => lazy(() => sync.bindValue({ ...options, element: nativeNode(options.element) })),
-    events: <K extends keyof HTMLElementEventMap>(
-      element: ElementOutput<HTMLElement, unknown>,
+    events: <T extends DomEventTarget, K extends keyof DomEventMap<NoInfer<T>> & string>(
+      target: T,
       name: K,
-      options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
-    ) => lazy(() => sync.events(nativeNode(element), name, options)),
+      options: DomEventOptions<DomEvent<T, K>> = {},
+    ) =>
+      lazy(() =>
+        nativeEventTarget(target).pipe(
+          Result.flatMap((element) => sync.events(element, name, options)),
+        ),
+      ),
     fold: <A, B>(options: {
       events: EventStream<A>;
       initial: B;
@@ -265,15 +279,18 @@ export const reactive = (runtime: ReactiveRuntime) => {
         return readonlySignal(cell);
       }),
   };
-  return helpers;
+  return registerOwner(helpers, runtime);
 };
 
 export const synchronousReactive = (runtime: ReactiveRuntime) => {
   const sync = resultReactive(runtime);
   const helpers = {
-    ...reactiveOwner(runtime),
     signal: <A>(options: SignalOptions<A>) => fromResultLazy(() => sync.signal(options)),
     read: <A>(signal: Signal<A>) => fromResultLazy(() => sync.read(signal)),
+    readCommitted: sync.read,
+    bind: <N extends HTMLElement>(binding: ElementBinding<N>) =>
+      fromResultLazy(() => sync.bind(binding)),
+    watchSync: <A>(watch: WatchOptions<A>) => fromResultLazy(() => sync.watchSync(watch)),
     derive: <S extends Sources, A>(options: {
       sources: S;
       compute: (values: Values<S>) => A;
@@ -299,11 +316,16 @@ export const synchronousReactive = (runtime: ReactiveRuntime) => {
       signal: WritableSignal<string>;
     }) =>
       fromResultLazy(() => sync.bindValue({ ...options, element: nativeNode(options.element) })),
-    events: <K extends keyof HTMLElementEventMap>(
-      element: ElementOutput<HTMLElement, unknown>,
+    events: <T extends DomEventTarget, K extends keyof DomEventMap<NoInfer<T>> & string>(
+      target: T,
       name: K,
-      options: { synchronous?: (event: HTMLElementEventMap[K]) => void } = {},
-    ) => fromResultLazy(() => sync.events(nativeNode(element), name, options)),
+      options: DomEventOptions<DomEvent<T, K>> = {},
+    ) =>
+      fromResultLazy(() =>
+        nativeEventTarget(target).pipe(
+          Result.flatMap((element) => sync.events(element, name, options)),
+        ),
+      ),
     fold: <A, B>(options: {
       events: EventStream<A>;
       initial: B;
@@ -354,7 +376,7 @@ export const synchronousReactive = (runtime: ReactiveRuntime) => {
         return readonlySignal(cell);
       }),
   };
-  return helpers;
+  return registerOwner(helpers, runtime);
 };
 export type SynchronousReactiveContext = ReturnType<typeof synchronousReactive>;
 export type ReactiveContext = ReturnType<typeof reactive>;
