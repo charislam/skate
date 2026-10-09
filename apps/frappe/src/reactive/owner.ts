@@ -14,7 +14,7 @@ export const registerOwner = <A extends object>(context: A, runtime: ReactiveRun
 };
 
 /** Internal checked lookup, deliberately absent from public framework exports. */
-export const ownerRuntime = (context: ReactiveOwner): ReactiveRuntime =>
+export const ownerRuntime = (context: Pick<ReactiveOwner, "readCommitted">): ReactiveRuntime =>
   Option.match(Option.fromUndefinedOr(runtimes.get(context)), {
     onSome: (runtime) => runtime,
     onNone: () => {
