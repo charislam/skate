@@ -39,16 +39,16 @@ Add a small domain module, such as `domain/classifier-time.ts`, to own canonical
 
 Use an explicit mapping for the 24 combined hour choices to canonical hours. Standard choices resolve through a generated mapping to `HH:mm`; exact answers combine the mapped hour with a validated minute. Avoid locale-sensitive parsing, JavaScript `Date`, timezone conversion, or permissive parsing of arbitrary model text. Any helper taking multiple related strings should accept a named options object, following repository signature conventions.
 
-| Classifier answer | Internal time |
-| --- | --- |
-| `12:00 AM` | `00:00` |
-| `12:15 AM` | `00:15` |
-| `6:30 AM` | `06:30` |
-| `12:00 PM` | `12:00` |
-| `12:15 PM` | `12:15` |
-| `6:30 PM` | `18:30` |
-| Exact hour `6 PM`, minute `07` | `18:07` |
-| Exact hour `12 AM`, minute `07` | `00:07` |
+| Classifier answer               | Internal time |
+| ------------------------------- | ------------- |
+| `12:00 AM`                      | `00:00`       |
+| `12:15 AM`                      | `00:15`       |
+| `6:30 AM`                       | `06:30`       |
+| `12:00 PM`                      | `12:00`       |
+| `12:15 PM`                      | `12:15`       |
+| `6:30 PM`                       | `18:30`       |
+| Exact hour `6 PM`, minute `07`  | `18:07`       |
+| Exact hour `12 AM`, minute `07` | `00:07`       |
 
 Integrate decoding into `exactTime` in `services/session-extraction.ts` for both concrete and off-grid answers. Conversion happens after the classifier response is validated and before `LocalTime` validation, temporal comparisons, or session construction.
 
