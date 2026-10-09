@@ -94,7 +94,7 @@ describe("scoped component mounting", () => {
       }),
     ]);
     expect(left.firstChild).not.toBe(right.firstChild);
-    expect(left.querySelector("main > h1")?.textContent).toBe("Examples");
+    expect(left.querySelector("main > hgroup > h1")?.textContent).toBe("Examples");
     Effect.runSync(
       h(
         left,

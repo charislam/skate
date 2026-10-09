@@ -39,13 +39,13 @@ it("routes between the home, examples, and routing pages and traverses browser h
       expect(node).toBeDefined();
       node?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     };
-    await shows(() => parent.querySelector("main h1")?.textContent === "Budgerigar");
+    await shows(() => parent.querySelector("main h1")?.textContent === "frappé");
     expect(parent.querySelector(".counter")).toBeNull();
-    expect(parent.querySelector(".routing-demo")).toBeNull();
+    expect(parent.querySelector(".routing-page")).toBeNull();
     press("Examples");
     await shows(() => parent.querySelector(".todos") !== null);
     expect(history.location()).toBe("/examples");
-    expect(parent.querySelector(".routing-demo")).toBeNull();
+    expect(parent.querySelector(".routing-page")).toBeNull();
     press("Routing");
     await shows(() => parent.querySelector(".routing-controls") !== null);
     expect(history.location()).toBe("/routing");

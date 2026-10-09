@@ -15,7 +15,11 @@ const fixture = async (initialOpen = false) => {
   let api = Option.none<Api>();
   const demo = component((context) =>
     Sync.gen(function* () {
-      const popover = yield* Popover.make({ context, initialOpen });
+      const popover = yield* Popover.make({
+        context,
+        initialOpen,
+        positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+      });
       api = Option.some(popover);
       const trigger = yield* context.he("button", { children: ["Open"] });
       const panel = yield* context.he("section", {
@@ -142,7 +146,11 @@ describe("headless popover", () => {
     // Construction runs synchronously, before either pair is adopted.
     const check = component((context) =>
       Sync.gen(function* () {
-        const api = yield* Popover.make({ context, initialOpen: false });
+        const api = yield* Popover.make({
+          context,
+          initialOpen: false,
+          positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+        });
         const trigger = yield* context.he("button");
         const panel = yield* context.he("section");
         yield* api.attach({ trigger, panel });
@@ -151,7 +159,11 @@ describe("headless popover", () => {
             Effect.runSync(Sync.toEffect(api.attach({ trigger, panel })).pipe(Effect.flip)).message,
         );
         expect(duplicate).toContain("one attachment");
-        const other = yield* Popover.make({ context, initialOpen: false });
+        const other = yield* Popover.make({
+          context,
+          initialOpen: false,
+          positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+        });
         const conflictPanel = yield* context.he("section");
         const conflicting = yield* context.he("button", {
           attrs: {
@@ -176,7 +188,11 @@ describe("headless popover", () => {
     const foreignButton = await Effect.runPromise(foreign.ctx.he("button"));
     const foreignCheck = component((context) =>
       Sync.gen(function* () {
-        const api = yield* Popover.make({ context, initialOpen: false });
+        const api = yield* Popover.make({
+          context,
+          initialOpen: false,
+          positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+        });
         const panel = yield* context.he("section");
         const failure = yield* Sync.sync(
           () =>
