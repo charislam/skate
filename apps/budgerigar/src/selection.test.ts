@@ -354,6 +354,10 @@ describe("signal-selected subtrees", () => {
     const { app, parent } = await harness();
     Effect.runSync(app.h(parent, AccessExample));
     await rendered({ parent, check: () => parent.querySelectorAll("button").length === 3 });
+    const controls = Array.from(
+      parent.querySelectorAll<HTMLButtonElement>(".access-controls > button"),
+    );
+    expect(controls.map((button) => button.textContent)).toEqual(["Unknown", "Denied", "Allowed"]);
     const click = (label: string) =>
       Array.from(parent.querySelectorAll("button"))
         .find((button) => button.textContent === label)
@@ -372,7 +376,9 @@ describe("signal-selected subtrees", () => {
     await rendered({ parent, check: () => parent.querySelector("article") === null });
     click("Allowed");
     await rendered({ parent, check: () => parent.querySelector("output")?.textContent === "0" });
-    expect(parent.querySelectorAll('.access-example > button[type="button"]').length).toBe(3);
+    expect(Array.from(parent.querySelectorAll('.access-controls > button[type="button"]'))).toEqual(
+      controls,
+    );
   });
 });
 

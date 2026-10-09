@@ -7,15 +7,20 @@ import {
   type SynchronousContext,
 } from "./framework";
 
-export const geometry = (options: {
-  readonly anchor: Pick<DOMRect, "left" | "right" | "top" | "bottom">;
-  readonly width: number;
-  readonly viewport: { readonly width: number; readonly height: number };
+export interface Options {
   readonly placement: "bottom-end";
   readonly gap: number;
   readonly padding: number;
-  readonly height: number;
-}) => {
+}
+
+export const geometry = (
+  options: Options & {
+    readonly anchor: Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+    readonly width: number;
+    readonly viewport: { readonly width: number; readonly height: number };
+    readonly height: number;
+  },
+) => {
   const { anchor, viewport, padding, gap } = options;
   const width = Math.max(0, Math.min(options.width, viewport.width - padding * 2));
   const viewportBottom = Math.max(padding, viewport.height - padding);
@@ -42,15 +47,14 @@ export const geometry = (options: {
   };
 };
 
-export const attach = (options: {
-  readonly context: SynchronousContext;
-  readonly anchor: ElementOutput<HTMLElement, unknown>;
-  readonly floating: ElementOutput<HTMLElement, unknown>;
-  readonly isOpen: Signal<boolean>;
-  readonly placement: "bottom-end";
-  readonly gap: number;
-  readonly padding: number;
-}) =>
+export const attach = (
+  options: Options & {
+    readonly context: SynchronousContext;
+    readonly anchor: ElementOutput<HTMLElement, unknown>;
+    readonly floating: ElementOutput<HTMLElement, unknown>;
+    readonly isOpen: Signal<boolean>;
+  },
+) =>
   Sync.gen(function* () {
     const { context } = options;
     yield* context.bind({ element: options.anchor });

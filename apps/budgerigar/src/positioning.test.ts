@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { component } from "./framework";
 import { nativeNode } from "./output";
 import * as Popover from "./popover";
-import { attach, geometry } from "./positioning";
+import { geometry } from "./positioning";
 import * as Sync from "./sync";
 import { harness, rendered } from "./test-helpers";
 
@@ -64,21 +64,20 @@ it("waits for connection, coalesces measurements, and cancels on close and dispo
   let measure = Option.none<MockInstance<() => DOMRect>>();
   const demo = component((context) =>
     Sync.gen(function* () {
-      const popover = yield* Popover.make({ context, initialOpen: true });
+      const popover = yield* Popover.make({
+        context,
+        initialOpen: true,
+        positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+      });
       api = Option.some(popover);
       const trigger = yield* context.he("button");
       const panel = yield* context.he("section");
-      measure = Option.some(vi.spyOn(nativeNode(trigger), "getBoundingClientRect"));
+      measure = Option.some(
+        vi
+          .spyOn(nativeNode(trigger), "getBoundingClientRect")
+          .mockReturnValue(new DOMRect(200, 100, 100, 30)),
+      );
       yield* popover.attach({ trigger, panel });
-      yield* attach({
-        context,
-        anchor: trigger,
-        floating: panel,
-        isOpen: popover.isOpen,
-        placement: "bottom-end",
-        gap: 8,
-        padding: 12,
-      });
       return { setup: () => Effect.succeed([trigger, panel]) };
     }),
   );
@@ -99,6 +98,8 @@ it("waits for connection, coalesces measurements, and cancels on close and dispo
   expect(frames.size).toBe(1);
   tick();
   expect(Option.getOrThrow(measure)).toHaveBeenCalledTimes(1);
+  expect(h.parent.querySelector("section")?.style.top).toBe("138px");
+  expect(h.parent.querySelector("section")?.style.maxWidth).toBe(`${window.innerWidth - 24}px`);
   window.dispatchEvent(new Event("resize"));
   expect(frames.size).toBe(1);
   await Effect.runPromise(Option.getOrThrow(api).close({ reason: { _tag: "Programmatic" } }));

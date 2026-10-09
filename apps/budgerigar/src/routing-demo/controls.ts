@@ -1,7 +1,6 @@
 import { Effect, Option } from "effect";
 import { component } from "~/component";
 import * as Popover from "~/popover";
-import * as Positioning from "~/positioning";
 import type { Signal } from "~/reactive";
 import * as Sync from "~/sync";
 import { MockAuth, MockProjects } from "./resources";
@@ -16,7 +15,11 @@ export const routingControls = <E, R>(options: {
     Sync.gen(function* () {
       const auth = yield* Sync.service(MockAuth);
       const projects = yield* Sync.service(MockProjects);
-      const popover = yield* Popover.make({ context, initialOpen: false });
+      const popover = yield* Popover.make({
+        context,
+        initialOpen: false,
+        positioning: { placement: "bottom-end", gap: 8, padding: 12 },
+      });
       const trigger = yield* context.he("button", {
         props: { type: "button" },
         children: ["Controls"],
@@ -94,15 +97,6 @@ export const routingControls = <E, R>(options: {
       });
 
       yield* popover.attach({ trigger, panel });
-      yield* Positioning.attach({
-        context,
-        anchor: trigger,
-        floating: panel,
-        isOpen: popover.isOpen,
-        placement: "bottom-end",
-        gap: 8,
-        padding: 12,
-      });
       return { setup: () => Effect.succeed([trigger, panel]) };
     }),
   );

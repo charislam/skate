@@ -72,6 +72,7 @@ const RoutingControls = component((context) =>
     const popover = yield* Popover.make({
       context,
       initialOpen: false,
+      positioning: { placement: "bottom-end", gap: 8, padding: 12 },
     });
 
     const trigger = yield* context.he("button", {
@@ -96,8 +97,10 @@ const RoutingControls = component((context) =>
 );
 ```
 
-`Popover.make` takes a `SynchronousContext` and an initial open value. Its public
-surface is:
+`Popover.make` takes a `SynchronousContext`, an initial open value, and
+required `positioning` options (`placement`, `gap`, and `padding`). Attachment
+automatically wires positioning to the trigger, panel, and open signal. Its
+public surface is:
 
 | Member | Contract |
 | --- | --- |
@@ -188,7 +191,8 @@ measurements. Opening and closing must not accumulate subscriptions.
 ## Positioning
 
 Keep anchored positioning separate from disclosure state and focus behavior so
-it can later support other primitives. The routing controls compose both helpers.
+it can later support other primitives. Popover attachment composes both helpers
+using the positioning options supplied to `Popover.make`.
 
 The positioner accepts an anchor, a floating element, placement, gap, and viewport
 padding in a named options object. For the routing panel use bottom-end alignment

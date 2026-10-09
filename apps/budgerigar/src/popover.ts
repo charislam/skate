@@ -8,6 +8,7 @@ import {
   type ElementOutput,
   type SynchronousContext,
 } from "./framework";
+import * as Positioning from "./positioning";
 
 const panelIds = new WeakMap<Document, Set<string>>();
 
@@ -28,6 +29,7 @@ const validate = (valid: boolean, message: string) =>
 export const make = (options: {
   readonly context: SynchronousContext;
   readonly initialOpen: boolean;
+  readonly positioning: Positioning.Options;
 }) =>
   Sync.gen(function* () {
     const { context } = options;
@@ -124,6 +126,13 @@ export const make = (options: {
           element: elements.panel,
           props: { hidden },
           attrs: { id: Option.some(id) },
+        });
+        yield* Positioning.attach({
+          ...options.positioning,
+          context,
+          anchor: elements.trigger,
+          floating: elements.panel,
+          isOpen: readonlySignal(state),
         });
         ids.add(id);
         panelIds.set(panel.ownerDocument, ids);
