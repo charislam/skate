@@ -1,8 +1,10 @@
-import { Effect, Match, Option, Queue, Result, Stream, type Scope } from "effect";
+import { Effect, Match, Option, Predicate, Queue, Result, Stream, type Scope } from "effect";
+import { isElementOutput, nativeNode, type ElementOutput } from "~/output";
 import { lazy } from "~/synchronous";
 import {
   accessibleSync,
   calculate,
+  calculateSync,
   poison,
   reportFailure,
   requireValidSync,
@@ -167,42 +169,100 @@ export const subscribeStream = <A, E>(options: {
     ),
   );
 
-export const domEventsSync = <K extends keyof HTMLElementEventMap>(options: {
-  runtime: ReactiveRuntime;
-  element: HTMLElement;
-  name: K;
-  synchronous?: (event: HTMLElementEventMap[K]) => void;
-}): Result.Result<EventStream<HTMLElementEventMap[K]>, ReactiveError> =>
+export type DomEventTarget =
+  | ElementOutput<HTMLElement, unknown>
+  | Document
+  | Window
+  | VisualViewport;
+export type DomEventMap<T extends DomEventTarget> = T extends Document
+  ? DocumentEventMap
+  : T extends Window
+    ? WindowEventMap
+    : T extends VisualViewport
+      ? VisualViewportEventMap
+      : HTMLElementEventMap;
+export type DomEvent<T extends DomEventTarget, K extends keyof DomEventMap<T>> = Extract<
+  DomEventMap<T>[K],
+  Event
+>;
+export interface DomEventOptions<E extends Event> {
+  readonly capture?: boolean;
+  readonly passive?: boolean;
+  readonly synchronous?: (event: E) => void;
+}
+const isNativeGlobalTarget = (value: unknown): value is Document | Window | VisualViewport =>
+  (Predicate.hasProperty(value, "nodeType") &&
+    value.nodeType === 9 &&
+    Predicate.hasProperty(value, "createElement") &&
+    typeof value.createElement === "function") ||
+  (Predicate.hasProperty(value, "window") &&
+    value.window === value &&
+    Predicate.hasProperty(value, "document")) ||
+  Object.prototype.toString.call(value) === "[object VisualViewport]";
+
+export const nativeEventTarget = (
+  target: DomEventTarget,
+): Result.Result<EventTarget, ReactiveError> =>
+  Match.value(target).pipe(
+    Match.when(isElementOutput, (output) => Result.succeed(nativeNode(output))),
+    Match.when(isNativeGlobalTarget, (target) => Result.succeed(target)),
+    Match.orElse(() =>
+      Result.fail(
+        new ReactiveError({
+          message: "DOM events require an element output, Document, Window, or VisualViewport",
+        }),
+      ),
+    ),
+  );
+
+export const domEventsSync = <E extends Event>(
+  options: {
+    runtime: ReactiveRuntime;
+    element: EventTarget;
+    name: string;
+  } & DomEventOptions<E>,
+): Result.Result<EventStream<E>, ReactiveError> =>
   Result.gen(function* () {
     const { runtime, element, name } = options;
     yield* requireValidSync(runtime.lifetime.active(), "Reactive runtime has been disposed");
-    const source = createSource<HTMLElementEventMap[K]>(runtime);
+    const source = createSource<E>(runtime);
     let references = 0;
-    const listener = (event: HTMLElementEventMap[K]) => {
-      options.synchronous?.(event);
-      Match.value(runtime.lifetime.active()).pipe(
-        Match.when(true, () =>
+    const capture = options.capture ?? false;
+    const listener: EventListener = (event) =>
+      Match.value(references > 0 && runtime.lifetime.active()).pipe(
+        Match.when(true, () => {
+          // The public event-map signature proves E for this DOM target/name pair.
+          const value = event as E;
+          const synchronous = calculateSync(() => options.synchronous?.(value));
+          const dispatch = source.dispatch(value);
           Queue.offerUnsafe(runtime.eventQueue, {
             resource: source.events,
-            work: source.dispatch(event),
-          }),
-        ),
-        Match.orElse(() => false),
+            work: Effect.suspend(() =>
+              Match.value(runtime.lifetime.active()).pipe(
+                Match.when(true, () =>
+                  Effect.fromResult(synchronous).pipe(Effect.andThen(dispatch)),
+                ),
+                Match.when(false, () => Effect.void),
+                Match.exhaustive,
+              ),
+            ),
+          });
+        }),
+        Match.orElse(() => {}),
       );
-    };
-    runtime.lifetime.cleanups.add(() => element.removeEventListener(name, listener));
+    runtime.lifetime.cleanups.add(() => element.removeEventListener(name, listener, capture));
     return {
       [EventState]: {
         runtimes: eventData(source.events).runtimes,
-        connect: (delivery: Delivery<HTMLElementEventMap[K]>) => {
+        connect: (delivery: Delivery<E>) => {
           const disconnect = eventData(source.events).connect(delivery);
           references += 1;
-          element.addEventListener(name, listener);
+          element.addEventListener(name, listener, { capture, passive: options.passive ?? false });
           return () => {
             disconnect();
             references -= 1;
             Match.value(references === 0).pipe(
-              Match.when(true, () => element.removeEventListener(name, listener)),
+              Match.when(true, () => element.removeEventListener(name, listener, capture)),
               Match.orElse(() => {}),
             );
           };
@@ -215,9 +275,10 @@ export const checkEvents = (options: Parameters<typeof checkEventsSync>[0]) =>
   lazy(() => checkEventsSync(options));
 export const eventStream = <A>(options: { runtime: ReactiveRuntime; events: EventStream<A> }) =>
   lazy(() => eventStreamSync(options));
-export const domEvents = <K extends keyof HTMLElementEventMap>(options: {
-  runtime: ReactiveRuntime;
-  element: HTMLElement;
-  name: K;
-  synchronous?: (event: HTMLElementEventMap[K]) => void;
-}) => lazy(() => domEventsSync(options));
+export const domEvents = <E extends Event>(
+  options: {
+    runtime: ReactiveRuntime;
+    element: EventTarget;
+    name: string;
+  } & DomEventOptions<E>,
+) => lazy(() => domEventsSync(options));

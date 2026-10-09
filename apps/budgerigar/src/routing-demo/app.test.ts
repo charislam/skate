@@ -63,10 +63,46 @@ const fixture = async (initial: string) => {
     node?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
   };
   await shows("Resolving session");
+  expect(parent.querySelector<HTMLElement>(".routing-controls")?.hidden).toBe(true);
+  press("Controls");
+  await rendered({
+    parent,
+    check: () => parent.querySelector<HTMLElement>(".routing-controls")?.hidden === false,
+  });
   return { parent, history, shows, press, failures, ...resources };
 };
 
 describe("mock nested routing application", () => {
+  it("preserves the controls occurrence across sessions and updates pending counts while closed", async () => {
+    const { parent, press, shows, auth, projects } = await fixture("/routing");
+    const panel = parent.querySelector<HTMLElement>(".routing-controls");
+    const trigger = parent.querySelector<HTMLButtonElement>(".routing-heading button");
+    expect(
+      [...parent.querySelectorAll(".routing-controls h3")].map((node) => node.textContent),
+    ).toEqual(["Session", "Project loading", "History"]);
+    press("Discover Ada");
+    await shows("Dashboard for Ada");
+    expect(panel?.hidden).toBe(false);
+    press("Switch to Grace");
+    await shows("Dashboard for Grace");
+    expect(parent.querySelector(".routing-controls")).toBe(panel);
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    press("Controls");
+    await rendered({ parent, check: () => panel?.hidden === true });
+    await Effect.runPromise(projects.mode("Delayed"));
+    await Effect.runPromise(auth.signIn({ name: "Ada" }));
+    await shows("Dashboard for Ada");
+    press("Private deep link: project 123 settings");
+    await shows("Pending project acquisitions: 1");
+    expect(panel?.hidden).toBe(true);
+    press("Controls");
+    await rendered({ parent, check: () => panel?.hidden === false });
+    press("Complete acquisitions");
+    await shows("Pending project acquisitions: 0");
+    expect(parent.querySelector(".routing-controls")).toBe(panel);
+    expect(panel?.hidden).toBe(false);
+  });
+
   it("resumes a private deep link after discovery/login and retains eligible shell state", async () => {
     const f = await fixture("/routing/projects/123/settings");
     expect(f.parent.querySelector('[aria-label="Authenticated shell"]')).toBeNull();

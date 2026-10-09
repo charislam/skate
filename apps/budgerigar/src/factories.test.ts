@@ -193,12 +193,9 @@ it("retires pending descendants before attached finalizers and awaits cleanup on
             yield* ctx.addSyncFinalizer(() => {
               order.push(`pending:${parent.textContent}`);
             });
-            Effect.runSync(
-              Scope.addFinalizer(
-                ctx.scope,
-                Deferred.succeed(cleanupStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(cleanupRelease)),
-                ),
+            yield* ctx.addFinalizer(
+              Deferred.succeed(cleanupStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(cleanupRelease)),
               ),
             );
             return child;

@@ -477,8 +477,9 @@ it("replaces captured Scope and staging authority while cleanup retains the regi
   const foreignScope = await Effect.runPromise(Scope.make());
   const Consumer = component(() =>
     Sync.succeed({
-      setup: ({ scope, source, subscribe, batch, he }) =>
+      setup: ({ source, subscribe, batch, he }) =>
         Effect.gen(function* () {
+          const scope = yield* Scope.Scope;
           const events = yield* source<void>();
           yield* batch(
             subscribe(events.events, () =>

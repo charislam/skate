@@ -391,5 +391,53 @@
 	  }
 	}
   }
+
+  .routing-page {
+	padding-block: var(--space-content-block);
+
+	:where(.routing-heading) {
+	  display: flex;
+	  align-items: center;
+	  justify-content: space-between;
+	  gap: 1rem;
+
+	  :where(h1) {
+		margin: 0;
+	  }
+	}
+
+	:where(.routing-controls) {
+	  z-index: 10;
+      width: 320px;      
+      background: var(--color-surface, white);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+	  box-shadow: var(--shadow-card);
+	  padding: var(--space-card);
+
+	  :where(section) {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	  }
+
+	  :where(section + section) {
+		border-top: 1px solid var(--color-border);
+		margin-top: 1rem;
+		padding-top: 1rem;
+	  }
+
+	  :where(h3) {
+		flex-basis: 100%;
+	  }
+	}
+
+	:where(.routing-content) {
+	  border: 1px solid var(--color-border);
+	  border-radius: var(--radius-card);
+	  padding: var(--space-card);
+	  margin-block-start: 1rem;
+	}
+  }
 }
 

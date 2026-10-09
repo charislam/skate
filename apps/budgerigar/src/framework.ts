@@ -57,6 +57,7 @@ import {
 } from "./reactive";
 import { synchronousReactive, type SynchronousReactiveContext } from "./reactive/context";
 import { activateReactiveNode } from "./reactive/dom";
+import { registerOwner } from "./reactive/owner";
 import { CurrentTransaction, requireValidSync } from "./reactive/runtime";
 import { isSignal, makeCell, readonlySignal, signalData, type Signal } from "./reactive/signal";
 import type { OutputRequirements, Structural } from "./requirements";
@@ -75,6 +76,7 @@ export type {
   ElementOptions,
   ElementProperties,
   MountItem,
+  NativeProperties,
 } from "./construction";
 export * as Context from "./context";
 export { focus } from "./focus";
@@ -94,6 +96,9 @@ export {
   type Navigator,
 } from "./navigation";
 export { nativeNode, type ElementOutput } from "./output";
+export { occurrenceId } from "./occurrence";
+export * as Popover from "./popover";
+export * as Positioning from "./positioning";
 export { ReactiveError, mapEvents, mergeEvents } from "./reactive";
 export type {
   Signal,
@@ -104,7 +109,10 @@ export type {
   EventSource,
   ReactiveContext,
 } from "./reactive";
+export type { ElementBinding } from "./reactive/bind";
+export type { DomEventTarget, DomEventMap, DomEvent, DomEventOptions } from "./reactive/events";
 export { readonlySignal } from "./reactive/signal";
+export type { WatchOptions } from "./reactive/watch";
 export * as Resource from "./resource";
 export {
   arrayQuery,
@@ -132,7 +140,9 @@ export interface SynchronousContext extends SynchronousReactiveContext {
   ) => Sync<void, ConstructionError | ReactiveError, Structural<OutputRequirements<C>>>;
   readonly he: SyncConstruct;
   readonly importNative: SyncImportNative;
-  readonly scope: Scope.Scope;
+  readonly addFinalizer: <R>(
+    finalizer: Effect.Effect<unknown, never, R>,
+  ) => Sync<void, ReactiveError, Exclude<R, Scope.Scope>>;
   readonly addSyncFinalizer: (finalizer: () => undefined) => Sync<void, ReactiveError>;
   readonly fork: <A, E, R>(
     work: Effect.Effect<A, E, R>,
@@ -143,7 +153,10 @@ export interface OwnerContext extends ReactiveContext {
   readonly h: Mount;
   readonly he: Construct;
   readonly importNative: ImportNative;
-  readonly scope: Scope.Scope;
+  /** Registers asynchronous cleanup without exposing the owning scope. */
+  readonly addFinalizer: <R>(
+    finalizer: Effect.Effect<unknown, never, R>,
+  ) => Effect.Effect<void, ReactiveError, Exclude<R, Scope.Scope>>;
   /** Runs synchronously, descendants first, while outgoing DOM is still attached. */
   readonly addSyncFinalizer: (finalizer: () => undefined) => Effect.Effect<void, ReactiveError>;
   /** Cancels owned work before DOM finalizers and awaits interruption before resource cleanup. */
@@ -158,9 +171,16 @@ type AvailableResources<R extends ResourceIdentifier> = Exclude<R, Layer.Current
 
 export interface ApplicationContext<Resources extends ResourceIdentifier = never> extends Omit<
   OwnerContext,
-  "h" | "fork" | "batch" | "subscribe" | "subscribeStream" | "foldStream"
+  "h" | "fork" | "batch" | "subscribe" | "subscribeStream" | "foldStream" | "addFinalizer"
 > {
   readonly h: (parent: MountTarget, content: Output<Resources>) => Effect.Effect<void>;
+  readonly addFinalizer: <R>(
+    finalizer: Effect.Effect<unknown, never, R>,
+  ) => Effect.Effect<
+    void,
+    ReactiveError,
+    Exclude<Exclude<R, Scope.Scope>, AvailableResources<Resources>>
+  >;
   readonly fork: <A, E, R>(
     work: Effect.Effect<A, E, R>,
   ) => Effect.Effect<void, never, Exclude<Exclude<R, Scope.Scope>, AvailableResources<Resources>>>;
@@ -580,39 +600,74 @@ const registerSyncFinalizer = (options: {
     }),
   );
 
+const registerFinalizer = <R>(options: {
+  owner: Owner;
+  scope: Scope.Scope;
+  finalizer: Effect.Effect<unknown, never, R>;
+  context: EffectContext.Context<Exclude<R, Scope.Scope>>;
+}) =>
+  requireValidSync(options.owner.active, "Component owner has been disposed").pipe(
+    Result.map(() =>
+      Effect.runSync(
+        Scope.addFinalizer(
+          options.scope,
+          capturedWork({ work: options.finalizer, context: options.context }).pipe(
+            Scope.provide(options.scope),
+          ),
+        ),
+      ),
+    ),
+  );
+
 const synchronousContext = (options: {
   owner: Owner;
   scope: Scope.Scope;
   runtime: ReactiveRuntime;
   failureContext: FailureContext;
-}): SynchronousContext => ({
-  ...synchronousReactive(options.runtime),
-  h: (parent, content) =>
-    fromResultLazy(() => bindSync(options.owner)(nativeTarget(parent), content)),
-  he: constructSync(options.owner),
-  importNative: importNativeSync(options.owner),
-  scope: options.scope,
-  fork: (work) =>
-    withContext((context) => registerBackground(options)(capturedWork({ work, context }))),
-  addSyncFinalizer: (finalizer) =>
-    fromResultLazy(() => registerSyncFinalizer({ owner: options.owner, finalizer })),
-});
+}): SynchronousContext =>
+  registerOwner<SynchronousContext>(
+    {
+      ...synchronousReactive(options.runtime),
+      h: (parent, content) =>
+        fromResultLazy(() => bindSync(options.owner)(nativeTarget(parent), content)),
+      he: constructSync(options.owner),
+      importNative: importNativeSync(options.owner),
+      addFinalizer: <R>(finalizer: Effect.Effect<unknown, never, R>) =>
+        withContext((context: EffectContext.Context<Exclude<R, Scope.Scope>>) =>
+          registerFinalizer({ ...options, finalizer, context }),
+        ),
+      fork: (work) =>
+        withContext((context) => registerBackground(options)(capturedWork({ work, context }))),
+      addSyncFinalizer: (finalizer) =>
+        fromResultLazy(() => registerSyncFinalizer({ owner: options.owner, finalizer })),
+    },
+    options.runtime,
+  );
 
 const ownerContext = (options: {
   owner: Owner;
   scope: Scope.Scope;
   runtime: ReactiveRuntime;
   fork: OwnerContext["fork"];
-}): OwnerContext => ({
-  h: bind(options.owner),
-  he: construct(options.owner),
-  importNative: importNative(options.owner),
-  scope: options.scope,
-  addSyncFinalizer: (finalizer) =>
-    lazy(() => registerSyncFinalizer({ owner: options.owner, finalizer })),
-  fork: options.fork,
-  ...reactive(options.runtime),
-});
+}): OwnerContext =>
+  registerOwner<OwnerContext>(
+    {
+      h: bind(options.owner),
+      he: construct(options.owner),
+      importNative: importNative(options.owner),
+      addFinalizer: <R>(finalizer: Effect.Effect<unknown, never, R>) =>
+        Effect.context<Exclude<R, Scope.Scope>>().pipe(
+          Effect.flatMap((context) =>
+            lazy(() => registerFinalizer({ ...options, finalizer, context })),
+          ),
+        ),
+      addSyncFinalizer: (finalizer) =>
+        lazy(() => registerSyncFinalizer({ owner: options.owner, finalizer })),
+      fork: options.fork,
+      ...reactive(options.runtime),
+    },
+    options.runtime,
+  );
 
 const inspectOwned = (options: {
   roots: ReadonlyArray<Node>;
@@ -1501,8 +1556,9 @@ const mountResources = <Resources extends ResourceIdentifier, E, Inputs>(options
           subscribeStream: (stream, handler) =>
             supplyResources(context.subscribeStream(stream, handler)),
           foldStream: (options) => supplyResources(context.foldStream(options)),
+          addFinalizer: (finalizer) => supplyResources(context.addFinalizer(finalizer)),
         };
-        return application;
+        return registerOwner(application, runtime);
       }).pipe(
         Effect.onExit((exit) =>
           Exit.match(exit, { onSuccess: () => Effect.void, onFailure: () => close(exit) }),

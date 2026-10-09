@@ -6,12 +6,13 @@ import { navigator } from "~/navigation";
 import * as Sync from "~/sync";
 import { Anonymous, Authenticated, Resolving } from "./app-views";
 import { Navigation } from "./context";
+import { routingControls } from "./controls";
 import { controlledHistory } from "./history";
 import type { AppState } from "./model";
 import { MockAuth, MockProjects } from "./resources";
 import { ProjectId, projectDestination, urls } from "./routes";
 import { transition } from "./transitions";
-import { button, routeLink } from "./ui";
+import { routeLink } from "./ui";
 
 export const RoutingDemo = component(() =>
   Sync.succeed({
@@ -70,143 +71,71 @@ export const RoutingDemo = component(() =>
           compute: ({ pending }) => `Pending project acquisitions: ${pending}`,
         });
 
+        const controls = routingControls({
+          pendingLabel,
+          rejectNext,
+          reconcile: navigation.dispatch({ _tag: "Reconcile" }).pipe(Effect.andThen(error.set(""))),
+        });
+
         const root = component((context) =>
           Sync.gen(function* () {
-            const controls = yield* context.he("aside", {
-              attrs: {
-                class: Option.some("routing-controls"),
-                "aria-label": Option.some("Routing controls"),
-              },
-              children: [
-                yield* context.he("h2", { children: ["Controls"] }),
-                yield* context.he("section", {
-                  children: [
-                    yield* context.he("h3", { children: ["Session"] }),
-                    yield* button(context, {
-                      label: "Discover anonymous",
-                      action: auth.resolve(Option.none()),
-                    }),
-                    yield* button(context, {
-                      label: "Discover Ada",
-                      action: auth.resolve(Option.some({ name: "Ada" })),
-                    }),
-                    yield* button(context, {
-                      label: "Switch to Grace",
-                      action: auth.signIn({ name: "Grace" }),
-                    }),
-                    yield* button(context, {
-                      label: "New Ada session",
-                      action: auth.signIn({ name: "Ada" }),
-                    }),
-                    yield* button(context, { label: "Refresh session", action: auth.refresh }),
-                    yield* button(context, { label: "Log out", action: auth.logout }),
-                    yield* button(context, { label: "Expire session", action: auth.expire }),
-                  ],
-                }),
-                yield* context.he("section", {
-                  children: [
-                    yield* context.he("h3", { children: ["Project loading"] }),
-                    yield* button(context, {
-                      label: "Immediate projects",
-                      action: projects.mode("Immediate"),
-                    }),
-                    yield* button(context, {
-                      label: "Delay projects",
-                      action: projects.mode("Delayed"),
-                    }),
-                    yield* button(context, {
-                      label: "Fail projects",
-                      action: projects.mode("Failed"),
-                    }),
-                    yield* button(context, {
-                      label: "Complete acquisitions",
-                      action: projects.complete(true),
-                    }),
-                    yield* button(context, {
-                      label: "Fail acquisitions",
-                      action: projects.complete(false),
-                    }),
-                    yield* context.he("output", { children: [pendingLabel] }),
-                  ],
-                }),
-                yield* context.he("section", {
-                  children: [
-                    yield* context.he("h3", { children: ["History"] }),
-                    yield* button(context, {
-                      label: "Reject next history write",
-                      action: rejectNext,
-                    }),
-                    yield* button(context, {
-                      label: "Reconcile URL",
-                      action: navigation
-                        .dispatch({ _tag: "Reconcile" })
-                        .pipe(Effect.andThen(error.set(""))),
-                    }),
-                  ],
-                }),
-              ],
-            });
-
             const output = yield* context.he("section", {
               attrs: {
-                class: Option.some("routing-demo"),
+                class: Option.some("routing-page"),
                 "aria-label": Option.some("Typed routing demo"),
               },
               children: [
-                yield* context.he("h1", { children: ["Routing"] }),
+                yield* context.he("header", {
+                  attrs: { class: Option.some("routing-heading") },
+                  children: [yield* context.he("h1", { children: ["Routing"] }), controls],
+                }),
                 yield* context.he("p", {
                   children: [
                     "Session discovery is explicit. Delay projects to test cancellation, and use browser Back/Forward to reapply admission.",
                   ],
                 }),
                 yield* context.he("div", {
-                  attrs: { class: Option.some("routing-layout") },
+                  attrs: { class: Option.some("routing-content") },
                   children: [
-                    yield* context.he("div", {
-                      attrs: { class: Option.some("routing-content") },
+                    yield* context.he("nav", {
+                      attrs: { "aria-label": Option.some("Demo destinations") },
                       children: [
-                        yield* context.he("nav", {
-                          attrs: { "aria-label": Option.some("Demo destinations") },
-                          children: [
-                            yield* routeLink(context, {
-                              label: "Private deep link: project 123 settings",
-                              destination: projectDestination({
-                                id: ProjectId.make(123),
-                                settings: true,
-                              }),
-                            }),
-                            yield* routeLink(context, {
-                              label: "Project 456 overview",
-                              destination: projectDestination({ id: ProjectId.make(456) }),
-                            }),
-                            yield* context.he("a", {
-                              attrs: { href: Option.some("/routing/projects/wrong-id") },
-                              children: ["Malformed project URL (reload)"],
-                            }),
-                            yield* context.he("a", {
-                              attrs: { href: Option.some("/routing/projects/123/doesnt-exist") },
-                              children: ["Unknown project child (reload)"],
-                            }),
-                          ],
+                        yield* routeLink(context, {
+                          label: "Private deep link: project 123 settings",
+                          destination: projectDestination({
+                            id: ProjectId.make(123),
+                            settings: true,
+                          }),
                         }),
-                        yield* context.he("p", {
-                          attrs: { role: Option.some("alert") },
-                          children: [error],
+                        yield* routeLink(context, {
+                          label: "Project 456 overview",
+                          destination: projectDestination({ id: ProjectId.make(456) }),
                         }),
-                        cases({
-                          state,
-                          branches: {
-                            ResolvingSession: { branch: Resolving },
-                            Anonymous: { branch: Anonymous },
-                            Authenticated: {
-                              branch: Authenticated,
-                              key: (state) => state.sessionId,
-                            },
-                          },
+                        yield* context.he("a", {
+                          attrs: { href: Option.some("/routing/projects/wrong-id") },
+                          children: ["Malformed project URL (reload)"],
+                        }),
+                        yield* context.he("a", {
+                          attrs: { href: Option.some("/routing/projects/123/doesnt-exist") },
+                          children: ["Unknown project child (reload)"],
                         }),
                       ],
                     }),
-                    controls,
+                    yield* context.he("p", {
+                      attrs: { role: Option.some("alert") },
+                      children: [error],
+                    }),
+                    cases({
+                      state,
+                      branches: {
+                        ResolvingSession: { branch: Resolving },
+                        Anonymous: { branch: Anonymous },
+                        Authenticated: {
+                          branch: Authenticated,
+                          key: (state) => state.sessionId,
+                        },
+                      },
+                    }),
                   ],
                 }),
               ],

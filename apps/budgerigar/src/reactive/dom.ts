@@ -52,7 +52,7 @@ export const validateElementOwnerSync = (options: {
       !activated.has(options.element) &&
       !options.element.isConnected &&
       options.runtime.lifetime.active(),
-    "bindValue requires a detached element from its issuing runtime before adoption",
+    "Element binding requires a detached element from its issuing runtime before adoption",
   );
 
 const bindings = new WeakMap<Node, Binding[]>();
@@ -80,22 +80,37 @@ export const attributeNameValid = (name: string): boolean =>
   !name.toLowerCase().startsWith("on") &&
   name.toLowerCase() !== "srcdoc";
 
-export const claimDestinationSync = (options: {
+interface DestinationClaim {
+  readonly kind: "attribute" | "property";
+  readonly name: string;
+  readonly reactive: boolean;
+}
+
+/** Validate an entire proposed binding without reserving destinations. */
+export const validateDestinationsSync = (options: {
   element: HTMLElement;
-  kind: "attribute" | "property";
-  name: string;
-  reactive: boolean;
+  entries: ReadonlyArray<DestinationClaim>;
 }) =>
   Result.gen(function* () {
-    const key = destination(options);
-    const existing = declarations.get(options.element) ?? [];
-    yield* requireValidSync(
-      !existing.some((entry) => entry.destination === key && (entry.reactive || options.reactive)),
-      `Conflicting DOM destination ${options.name}`,
-    );
+    const proposed = [...(declarations.get(options.element) ?? [])];
+    for (const entry of options.entries) {
+      const key = destination({ element: options.element, ...entry });
+      yield* requireValidSync(
+        !proposed.some(
+          (existing) => existing.destination === key && (existing.reactive || entry.reactive),
+        ),
+        `Conflicting DOM destination ${entry.name}`,
+      );
+      proposed.push({ destination: key, reactive: entry.reactive });
+    }
+  });
+
+export const claimDestinationSync = (options: { element: HTMLElement } & DestinationClaim) =>
+  Result.gen(function* () {
+    yield* validateDestinationsSync({ element: options.element, entries: [options] });
     declarations.set(options.element, [
-      ...existing,
-      { destination: key, reactive: options.reactive },
+      ...(declarations.get(options.element) ?? []),
+      { destination: destination(options), reactive: options.reactive },
     ]);
   });
 

@@ -671,11 +671,10 @@ describe("scoped component mounting", () => {
 
     const definition = component(() =>
       Sync.succeed({
-        setup: ({ scope }) =>
+        setup: ({ addFinalizer }) =>
           Effect.gen(function* () {
             const instance = ++nextInstance;
-            yield* Scope.addFinalizer(
-              scope,
+            yield* addFinalizer(
               Effect.sync(() => {
                 finalized.push(instance);
               }),

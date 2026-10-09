@@ -61,7 +61,7 @@ export const Resolving = branch<Extract<AppState, { _tag: "ResolvingSession" }>>
   Sync.gen(function* () {
     const output = yield* message(
       context,
-      "Resolving session… choose a discovery result in the sidebar.",
+      "Resolving session… choose a discovery result in Controls.",
     );
     return { setup: () => Effect.succeed(output) };
   }),
