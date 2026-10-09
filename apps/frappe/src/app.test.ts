@@ -1,14 +1,15 @@
-import { Effect, Exit, Layer, Result, Scope } from "effect";
+import { Effect, Exit, Layer, Option, Result, Scope } from "effect";
 import { expect, it } from "vitest";
 import { App } from "./app";
 import { AuthLive } from "./auth";
-import { mounting } from "./framework";
+import { mounting, provideContext, Query } from "./framework";
 import { History, memoryHistory } from "./history";
 import { LocalStorageMemory } from "./local-storage";
+import { QueryDemoSession, queryDemoResources } from "./query-demo";
 import { mockResources } from "./routing-demo/resources";
 import { rendered } from "./test-helpers";
 
-it("routes between the home, examples, and routing pages and traverses browser history", async () => {
+it("routes between the home, examples, routing, and queries pages and traverses browser history", async () => {
   const scope = await Effect.runPromise(Scope.make());
   try {
     const history = await Effect.runPromise(
@@ -21,6 +22,7 @@ it("routes between the home, examples, and routing pages and traverses browser h
         resources: Layer.mergeAll(
           Layer.succeed(History, history),
           AuthLive,
+          queryDemoResources,
           LocalStorageMemory,
           mockResources,
         ),
@@ -30,7 +32,11 @@ it("routes between the home, examples, and routing pages and traverses browser h
       }),
     );
     const parent = document.createElement("div");
-    Effect.runSync(app.h(parent, App));
+    const partition = await Effect.runPromise(app.signal({ initial: Option.some("guest") }));
+    await Effect.runPromise(Query.configure({ context: app, partition }));
+    Effect.runSync(
+      app.h(parent, provideContext({ key: QueryDemoSession, value: partition, child: App })),
+    );
     const shows = (check: () => boolean) => rendered({ parent, check });
     const press = (label: string) => {
       const node = [
@@ -60,6 +66,11 @@ it("routes between the home, examples, and routing pages and traverses browser h
     await shows(() => parent.querySelector(".todos") !== null);
     Result.getOrThrow(history.traverse(1));
     await shows(() => parent.querySelector(".routing-controls") !== null);
+    press("Queries");
+    await shows(() => parent.textContent?.includes("Project sidebar") === true);
+    expect(history.location()).toBe("/queries");
+    expect(parent.textContent).toContain("Project overview");
+    expect(parent.textContent).toContain("Project sidebar");
     expect(failures).toEqual([]);
   } finally {
     await Effect.runPromise(Scope.close(scope, Exit.void));

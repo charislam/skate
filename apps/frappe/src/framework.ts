@@ -1,5 +1,6 @@
 import {
   Cause,
+  Clock,
   Context as EffectContext,
   Deferred,
   Effect,
@@ -62,6 +63,7 @@ import { CurrentTransaction, requireValidSync } from "./reactive/runtime";
 import { isSignal, makeCell, readonlySignal, signalData, type Signal } from "./reactive/signal";
 import type { OutputRequirements, Structural } from "./requirements";
 import type { Identifier as ResourceIdentifier } from "./resource";
+import { installResourceEnvironment } from "./resource-runtime";
 import { fromResultLazy, toEffect, withContext, type Sync } from "./sync";
 import { lazy } from "./synchronous";
 
@@ -114,6 +116,8 @@ export type { DomEventTarget, DomEventMap, DomEvent, DomEventOptions } from "./r
 export { readonlySignal } from "./reactive/signal";
 export type { WatchOptions } from "./reactive/watch";
 export * as Resource from "./resource";
+export * as Query from "./query";
+export * as QueryState from "./query/state";
 export {
   arrayQuery,
   defaultQuery,
@@ -1530,6 +1534,11 @@ const mountResources = <Resources extends ResourceIdentifier, E, Inputs>(options
           report: (failure) => report(runtimeOwner, { ...failureContext, ...failure }),
         });
         runtimeOwner.reactiveRuntime = Option.some(runtime);
+        installResourceEnvironment({
+          runtime,
+          environment: publicResources,
+          clock: yield* Clock.Clock,
+        });
         yield* Match.value(owner.active).pipe(
           Match.when(true, () => Effect.void),
           Match.when(false, () => Effect.interrupt),

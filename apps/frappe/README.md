@@ -865,3 +865,111 @@ descendant's source. Disposing the supplied context expires its projections and
 navigation work even when the source remains live. Signals retain their commit
 participant and authoritative write-root identity; they do not carry allocation
 runtime authority.
+
+Shared data queries are convenience functions over owned signals. Define a loader
+once, configure the mounting runtime after allocating its partition signal, and
+observe through an existing component context:
+
+```ts
+import { Effect, Match, Option } from "effect";
+import { Query, QueryState } from "./framework";
+
+const Project = Query.define({
+  name: "Project",
+  load: (input: { readonly id: string }) => projects.get(input.id),
+  staleTime: "30 seconds",
+});
+
+const partition = yield * app.signal({ initial: Option.some({ session: "anonymous" }) });
+const queries = yield * Query.configure({ context: app, partition });
+
+// In component setup: None detaches; Some always contains valid loader input.
+const input =
+  yield *
+  ui.derive({
+    sources: { selectedProject },
+    compute: ({ selectedProject }) => Option.map(selectedProject, (id) => ({ id })),
+  });
+const project = yield * Query.observe({ context: ui, query: Project, input });
+const label =
+  yield *
+  ui.derive({
+    sources: { state: project.state },
+    compute: ({ state }) =>
+      QueryState.match(state, {
+        onInitial: ({ waiting }) => (waiting ? "Loading" : "Choose a project"),
+        onSuccess: ({ value }) => value.name,
+        onFailure: () => "Could not load project",
+      }),
+  });
+yield * project.refresh; // Strict replacement, shared with other observers.
+yield * queries.get({ query: Project, input: { id: "123" } });
+yield * queries.refresh({ query: Project, input: { id: "123" } });
+yield * queries.invalidate({ query: Project, input: { id: "123" } });
+yield * queries.invalidateDefinition({ query: Project });
+```
+
+`projects` above is a self-contained dependency; resource-backed loaders should
+read `Resource.Service` tokens inside their Effect. Query requirements remain on
+the component until mounting supplies them. Ancestor context is only usable to
+construct explicit input. Local service overrides cannot change the query's
+runtime resource graph. Each attempt receives its own execution scope, released
+before publication; results must be plain data that outlives that scope.
+
+Definition identity and Effect's structural `Equal`/`Hash` identify entries. The
+name is diagnostic. Records (regardless of property order), ordered dense arrays,
+primitives, and Options are recursively copied into immutable snapshots before
+lookup. Cycles, functions, symbols, accessors, hidden properties, and opaque
+objects are rejected. A definition's `canonicalize` adapter may convert input to
+a supported immutable representation of the same loader input type. There is no
+string encoding. Effect's primitive equality rules apply, including equal `NaN`
+values and equal signed zeros.
+
+Configure exactly once, before observations, using a live partition signal owned
+by the application. `Some` includes public/anonymous identities; `None` disables
+querying. Each unequal committed partition change discards the entire old store
+and clears observer history atomically. Returning to an earlier identity fetches
+again. Commit identity changes together with the credentials used by loaders.
+Imperative reads fail with `Query.Unavailable`, `Query.PartitionChanged`, or
+`Query.Disposed` for these lifecycle conditions, separately from loader errors.
+
+Defaults are immediate staleness, five-minute idle retention, and no retries.
+Freshness precedence is observer `staleTime` > definition > runtime. Imperative
+reads use definition/runtime freshness. Retry and GC are shared policies with
+no observer override. Durations must be nonnegative; `Infinity` explicitly
+permits unlimited freshness/retention. Advancing time alone never fetches.
+Invalidation overrides even infinite freshness. Pending ordinary reads join;
+every explicit refresh supersedes. Canceling a caller releases its waiter without
+canceling shared work. Idle GC begins when the last observer/waiter leaves;
+completion does not extend it. Shutdown interrupts and awaits tracked work before
+releasing mounting resources.
+
+Use `Query.retry(Schedule.recurs(2))` for shared typed-failure retries, with an
+optional runtime default on `Query.configure`. A definition's `Query.inherit()`
+(the default), `Query.disabled()`, or `Query.retry(schedule)` selects inheritance,
+disablement, or replacement. Schedules preserve resource requirements and get a
+fresh driver for every execution sequence. Defects settle as Causes and reach
+the runtime error boundary once; retired generations cannot publish.
+
+`project.state` is read-only, pipeable `QueryState`: Initial, Success, or Failure.
+Success exposes plain current-key `value` and `DateTime.Utc` `timestamp`, including
+while refreshing. Initial/Failure expose one `previousSuccess`: `SameKey` holds
+`previousData`; `PreviousKey` additionally holds its immutable source `key`.
+`retainPrevious: true` enables observer-local previous-key history across key
+changes and failures. Omitted/false retention exposes only SameKey history.
+Disablement and partition changes erase it. Current-key cache data takes priority;
+retained data is never written to another key's cache. `QueryState.match`, guards,
+and dual `map` preserve waiting, provenance, Causes, and timestamps.
+
+The interactive query demo is the Queries page in the existing app. Run
+`pnpm dev:frappe` and open `/queries` to try two project observers sharing
+requests, optional selection, retained result pages, retry exhaustion, shared
+refresh failures, and session switches.
+
+The installed Effect Cache was evaluated and deliberately not used: its
+completion-based TTL and capacity eviction cannot express consumer-based idle GC,
+consumer-specific freshness, or strict generation supersession. The query entry
+coordinator uses Effect keyed collections, fibers, Deferred waiters, Clock, and
+Schedule, with AsyncResult as the sole shared asynchronous state. Persistence,
+polling, focus/reconnect refresh, mutation orchestration, hydration, and batching
+remain outside this API.

@@ -5,6 +5,7 @@ import { Examples } from "./examples";
 import { History } from "./history";
 import { Home } from "./home";
 import { navigator } from "./navigation";
+import { QueryExample } from "./query-demo";
 import { link } from "./router-link";
 import { route, router, type Destination, type ParseResult } from "./routes";
 import { RoutingDemo } from "./routing-demo/app";
@@ -14,11 +15,13 @@ const urls = router([
   route({ tag: "Home", path: [] }),
   route({ tag: "Examples", path: ["examples"] }),
   route({ tag: "Routing", path: ["routing"] }),
+  route({ tag: "Queries", path: ["queries"] }),
 ]);
 type Page =
   | { readonly _tag: "Home" }
   | { readonly _tag: "Examples" }
   | { readonly _tag: "Routing" }
+  | { readonly _tag: "Queries" }
   | { readonly _tag: "NotFound" };
 const page = (target: ParseResult<typeof urls.definitions>): Page =>
   Match.value(target).pipe(
@@ -38,6 +41,9 @@ const ExamplesPage = branch<Extract<Page, { _tag: "Examples" }>>()(() =>
 );
 const RoutingPage = branch<Extract<Page, { _tag: "Routing" }>>()(() =>
   Sync.succeed({ setup: () => Effect.succeed(RoutingDemo) }),
+);
+const QueriesPage = branch<Extract<Page, { _tag: "Queries" }>>()(() =>
+  Sync.succeed({ setup: () => Effect.succeed(QueryExample) }),
 );
 const NotFound = branch<Extract<Page, { _tag: "NotFound" }>>()(({ context }) =>
   Sync.gen(function* () {
@@ -83,7 +89,7 @@ export const App = component(() =>
         return component((context) =>
           Sync.gen(function* () {
             const links = [];
-            for (const tag of ["Home", "Examples", "Routing"] as const) {
+            for (const tag of ["Home", "Examples", "Routing", "Queries"] as const) {
               const destination: Destination<typeof urls.definitions> = {
                 _tag: tag,
                 params: {},
@@ -131,6 +137,7 @@ export const App = component(() =>
                     Home: { branch: HomePage },
                     Examples: { branch: ExamplesPage },
                     Routing: { branch: RoutingPage },
+                    Queries: { branch: QueriesPage },
                     NotFound: { branch: NotFound },
                   },
                 }),
